@@ -20,3 +20,4 @@
 | 2026-10-16 | Entra ID P2 **trial active** | Tenant Default Directory: Microsoft Entra ID P2, 100 licences, 0 assigned (Entra admin center > Licenses). Trial is 30 days: decide before ~15 Nov 2026 (let it lapse or buy). Not an Azure charge. | Gokul |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |
+| 2026-10-16 | Phase 2 stage A what-if | 1 create (`handoffs` container), 13 modify. Real changes: policy allowed types (+13 worker types), budget ₹1 → ₹2,000 with 50/80/100% alerts, `costProfile` tag. Other modify lines are read-only/default properties (what-if noise). Flex Consumption + .NET 10 available in centralindia. First stage-B attempt earlier was denied by the live policy (expected; led to the two-stage split). | Gokul / Claude |
