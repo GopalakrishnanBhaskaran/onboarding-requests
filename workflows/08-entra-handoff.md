@@ -48,6 +48,7 @@ Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script
 | # | Where | Step |
 |---|---|---|
 | 1 | Cloud Shell (Global Admin) | `bash tools/setup_entra.sh package <tenant>.onmicrosoft.com` — device-code sign-in, then creates/reuses the catalog, package and the "PMO Review auto-assign" policy, publishes mapping `A-MAP-ENG-DEV` with the link if needed, and sets `enableAutoAssign` + `entraCatalogId` in `.local/params.json`. |
+| 1b | Entra admin center (if device-code sign-in is unavailable) | Identity Governance > Access packages > the package > **Policies > + Add policy**: name exactly `PMO Review auto-assign`; Requests: **None (administrator direct assignments only)**; Lifecycle: expire after **180 days**; Create. Then in Cloud Shell write `.local/entra-package.json` with `catalogId`, `accessPackageId`, `myAccessLink` and run `tools/deploy_free.sh params <sub>`. |
 | 2 | Cloud Shell | `tools/deploy_free.sh whatif …` → **approved** → `apply …`. No new resources; changes worker + app settings, then `grant-graph` adds `EntitlementManagement.ReadWrite.All` and `User.ReadBasic.All`. |
 | 3 | App | A second person signs in once (e.g. `pilot.admin`), reads the user id from `/api/me`, and is registered: `seed_sample_data.py --register-user <id> --project SAMPLE-ALPHA --roles Reviewer`. |
 
