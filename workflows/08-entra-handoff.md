@@ -26,7 +26,8 @@ The app holds only Graph `EntitlementManagement.Read.All`. It cannot approve, as
 | 5 | Identity Governance > Access packages > **New** | Name `SAMPLE Data Engineer – Dev`, catalog PMO Pilot SAMPLE, resource role **Member** of the group. **Policy:** For users in your directory, specific users = `sample.joiner` (or all members). Require approval = **Yes**, single stage, approver = `pilot.admin`. Require requestor justification = **Yes**. Under Lifecycle: expiry **Number of days = 180**, and **Allow users to request a specific timeline = Yes**. Enable the policy. |
 | 6 | Access package > Overview | Copy the **My Access portal link**. |
 | 7 | App > Reference data | As Maintainer, create a new draft of mapping `A-MAP-ENG-DEV` (SAMPLE Data Engineer, Dev, `SAMPLE-GRP-ALPHA-DEV-ENG`) with that link, then **Publish** it. Register yourself as Maintainer first, via `seed_sample_data.py --register-user … --roles PMO,Reviewer,Maintainer`. |
-| 8 | Cloud Shell | `tools/deploy_free.sh whatif …` with `enableHandoff: true` → send the output → wait for **approved** → `apply`. Then `tools/deploy_free.sh grant-graph <sub>` if `apply` could not grant it. |
+| 8 | Cloud Shell | **Stage A** (`enableHandoff: true`, `deployWorker: false`): `whatif` → **approved** → `apply`. Changes policy, budget and container only; ₹0. Azure checks new resources against the policy that is *live*, so the worker cannot go in the same deployment. |
+| 9 | Cloud Shell | Wait ~30 min. **Stage B** (`deployWorker: true`): `whatif` → **approved** → `apply`. This deploys the worker, grants Graph read, and turns on `ENTRA_HANDOFF_ENABLED`. Run `tools/deploy_free.sh grant-graph <sub>` if `apply` could not grant it. |
 
 ## E2E test script
 1. As PMO: create a request with role `SAMPLE Data Engineer`, Dev, joiner `sample.joiner@<tenant>.onmicrosoft.com`, and dates within 180 days. Analyze it; it should show *Ready for human review* and *Matched*.

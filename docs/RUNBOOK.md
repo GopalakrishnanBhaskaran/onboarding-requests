@@ -39,7 +39,7 @@ Full steps and the E2E test script: `workflows/08-entra-handoff.md`. In short:
 1. Cloud admin account → start the Entra ID P2 / Governance trial (portal).
 2. `bash tools/setup_entra.sh identities <tenant>.onmicrosoft.com <approver-upn>` → group + test joiner + licences.
 3. Portal: catalog + access package (approval by the approver, requestor timeline allowed, expiry ≤ 180 days); copy the My Access link.
-4. `.local/params.json`: `budgetAmount 2000`, `enableHandoff true`, `workerLocation`, `workerRuntimeVersion` → `tools/deploy_free.sh whatif …` → approval → `apply … --approved-by "Gokul <date>"`.
+4. `.local/params.json`: `budgetAmount 2000`, `enableHandoff true`, `deployWorker false` → `whatif` → approval → `apply` (**stage A**: policy, budget, container, ₹0). Wait ~30 min. Set `deployWorker true` → `whatif` → approval → `apply` (**stage B**: worker). Two stages because Azure checks new resources against the policy that is live.
 5. `tools/deploy_free.sh grant-graph <sub>` if apply could not grant it (needs Global Administrator).
 6. App: Maintainer publishes a new `A-MAP-ENG-DEV` version with the My Access link.
 7. Run the E2E script; record results in `docs/DEPLOYMENT_LOG.md`.
