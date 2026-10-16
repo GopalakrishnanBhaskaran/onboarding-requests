@@ -21,3 +21,4 @@
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |
 | 2026-10-16 | Phase 2 stage A what-if | 1 create (`handoffs` container), 13 modify. Real changes: policy allowed types (+13 worker types), budget ₹1 → ₹2,000 with 50/80/100% alerts, `costProfile` tag. Other modify lines are read-only/default properties (what-if noise). Flex Consumption + .NET 10 available in centralindia. First stage-B attempt earlier was denied by the live policy (expected; led to the two-stage split). | Gokul / Claude |
+| 2026-10-16 | Phase 2 stage A **approved** | Gokul replied "approved" to the stage A what-if above (policy types, ₹2,000 budget, `handoffs` container, tags; ₹0). Apply pending. | Gokul |
