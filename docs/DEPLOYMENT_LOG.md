@@ -10,6 +10,7 @@
 | 2026-10-16 | Infra confirmed (`cost_check.sh`) | RG contains only `cosmos-pmo-pilot-pkt2ofpqmlf3e` (centralindia, enableFreeTier true, DB throughput 1000, autoscale null) and `swa-pmo-pilot-pkt2ofpqmlf3e` (eastasia, Free). Policy `pmo-pilot-allowed-types` enforcement Default. Budget `pmo-pilot-zero-cost` amount 1.0 INR, spent 0.0 INR. Cost Management query: NotFound (cost data not yet available for the subscription). | Gokul (Cloud Shell) |
 | 2026-10-16 | Decision | **A**: API runs on `dotnet-isolated:9.0` for the pilot (.NET 9 end of support 10 Nov 2026); switch back to 10.0 when the SWA CLI accepts it. App-only redeploy via `tools/deploy_free.sh app` — no infrastructure change. | Gokul |
 | 2026-10-16 | App-only redeploy #1 (`app`, dotnet-isolated 9.0) — **FAILED** | CLI accepted the config (no schema error) but the deploy client again reported "Function language info isn't provided". Same failure on 9.0 and 10.0, so the runtime version was not the cause. Fix: copy `staticwebapp.config.json` into `dist` (the uploaded app folder) before deploy. | Gokul / Claude |
-| — | App-only redeploy #2 | pending | — |
+| 2026-10-16 | App-only redeploy #2 (config inside `dist`) — **FAILED** | Same error. Direct verbose run of the deploy client (bypassing the CLI) found the config and the API folder, then failed the same way with `FUNCTION_LANGUAGE=dotnet-isolated`. Cause identified: the language flag must be `dotnetisolated` (no dash) — F21. `deploy_free.sh` fixed. | Gokul / Claude |
+| — | App-only redeploy #3 (`--api-language dotnetisolated`) | pending | — |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |

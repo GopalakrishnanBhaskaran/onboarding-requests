@@ -57,16 +57,18 @@ case "$CMD" in
     # InfraConsistencyTests checks it matches the API project's TargetFramework).
     RUNTIME=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['platform']['apiRuntime'])" "$ROOT/staticwebapp.config.json")
     API_LANG="${RUNTIME%%:*}"; API_VER="${RUNTIME##*:}"
-    echo "API runtime: $API_LANG $API_VER"
+    # The config file spells it "dotnet-isolated" (CLI schema); the deploy client only accepts
+    # "dotnetisolated" (no dash) for --api-language, else "Function language info isn't provided" (F21).
+    CLI_LANG="${API_LANG//-/}"
+    echo "API runtime: $API_LANG $API_VER (CLI flag: $CLI_LANG)"
     dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
     npm --prefix "$ROOT/src/web" ci
     npm --prefix "$ROOT/src/web" run build
-    # The deploy client reads platform.apiRuntime from the config INSIDE the uploaded app folder,
-    # not from --swa-config-location (first deploy failed with "Function language info isn't provided").
+    # Ship the config with the app (routes, auth, headers, platform.apiRuntime).
     cp "$ROOT/staticwebapp.config.json" "$ROOT/src/web/dist/staticwebapp.config.json"
     TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
     (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
-      --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
+      --api-location "$ROOT/.local/api" --api-language "$CLI_LANG" --api-version "$API_VER" \
       --swa-config-location "$ROOT/src/web/dist" --env production)
 
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
@@ -83,17 +85,19 @@ case "$CMD" in
     COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
     RUNTIME=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['platform']['apiRuntime'])" "$ROOT/staticwebapp.config.json")
     API_LANG="${RUNTIME%%:*}"; API_VER="${RUNTIME##*:}"
-    echo "API runtime: $API_LANG $API_VER -> $SWA"
+    # The config file spells it "dotnet-isolated" (CLI schema); the deploy client only accepts
+    # "dotnetisolated" (no dash) for --api-language, else "Function language info isn't provided" (F21).
+    CLI_LANG="${API_LANG//-/}"
+    echo "API runtime: $API_LANG $API_VER (CLI flag: $CLI_LANG) -> $SWA"
     rm -rf "$ROOT/.local/api"
     dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
     npm --prefix "$ROOT/src/web" ci
     npm --prefix "$ROOT/src/web" run build
-    # The deploy client reads platform.apiRuntime from the config INSIDE the uploaded app folder,
-    # not from --swa-config-location (first deploy failed with "Function language info isn't provided").
+    # Ship the config with the app (routes, auth, headers, platform.apiRuntime).
     cp "$ROOT/staticwebapp.config.json" "$ROOT/src/web/dist/staticwebapp.config.json"
     TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
     (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
-      --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
+      --api-location "$ROOT/.local/api" --api-language "$CLI_LANG" --api-version "$API_VER" \
       --swa-config-location "$ROOT/src/web/dist" --env production)
     unset TOKEN
     CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
