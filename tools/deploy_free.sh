@@ -66,8 +66,17 @@ deploy_worker() {
   rm -rf "$ROOT/.local/worker" "$ROOT/.local/worker.zip"
   dotnet publish "$ROOT/src/worker/PmoReview.Worker" -c Release -o "$ROOT/.local/worker"
   (cd "$ROOT/.local/worker" && zip -qr "$ROOT/.local/worker.zip" .)
-  az functionapp deployment source config-zip -g "$RG_DEFAULT" -n "$name" --src "$ROOT/.local/worker.zip" -o none
-  echo "Worker deployed: $name (commit $(git -C "$ROOT" rev-parse --short HEAD)). It runs every 5 minutes."
+  # A just-created role assignment (Blob Data Owner on the package container) can take minutes to apply: retry.
+  local i
+  for i in 1 2 3 4; do
+    if az functionapp deployment source config-zip -g "$RG_DEFAULT" -n "$name" --src "$ROOT/.local/worker.zip" -o none; then
+      echo "Worker deployed: $name (commit $(git -C "$ROOT" rev-parse --short HEAD)). It runs every 5 minutes."
+      return 0
+    fi
+    [[ $i -lt 4 ]] && { echo "Worker upload failed (attempt $i/4), likely role propagation. Retrying in 90 s..."; sleep 90; }
+  done
+  echo "Worker upload failed 4 times. Later run: tools/deploy_free.sh worker <subscriptionId>"
+  return 1
 }
 
 # Graph application permission for the worker identity. Read-only; idempotent.
@@ -176,7 +185,7 @@ case "$CMD" in
     echo "Next: each test user signs in once, reads userId from /.auth/me, then:"
     echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles PMO"
     if worker_enabled; then
-      deploy_worker
+      deploy_worker || true
       grant_graph || echo "Graph permission NOT granted (needs Global Administrator). Run: tools/deploy_free.sh grant-graph $SUB"
     elif handoff_enabled; then
       echo "Phase 2 stage A applied. Wait ~30 minutes for the policy change, set deployWorker=true, then run whatif again (stage B)."
