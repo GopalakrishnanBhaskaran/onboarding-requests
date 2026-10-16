@@ -12,6 +12,9 @@
 #       connection string as a SWA app setting (never printed or written to disk), deploys the app,
 #       seeds SAMPLE data. With enableHandoff=true (Phase 2) also deploys the hand-off sync worker.
 #
+#   tools/deploy_free.sh status <subscriptionId>
+#       Read-only. Shows where the deployment stands (use after a Cloud Shell disconnect).
+#
 #   tools/deploy_free.sh worker <subscriptionId>
 #       Phase 2: redeploy the hand-off sync worker code only.
 #
@@ -22,7 +25,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CMD="${1:?whatif|apply|app}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
-if [[ "$CMD" != "app" && "$CMD" != "worker" && "$CMD" != "grant-graph" ]]; then
+if [[ "$CMD" != "app" && "$CMD" != "worker" && "$CMD" != "grant-graph" && "$CMD" != "status" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
   LOCATION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters']['location']['value'])" "$PARAMS")"
 fi
@@ -180,6 +183,26 @@ case "$CMD" in
     fi
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
+  status)
+    RG=$RG_DEFAULT
+    ok() { if eval "$2" >/dev/null 2>&1; then echo "  [OK]   $1"; else echo "  [--]   $1"; fi; }
+    echo "== Last deployment =="
+    az deployment sub show --name "$DEPLOYMENT" --query "{state:properties.provisioningState, finished:properties.timestamp}" -o tsv 2>/dev/null || echo "  none"
+    echo "== Phase 2 stage A =="
+    ok "policy allows the worker types" policy_allows_worker
+    BUDGET=$(az consumption budget list --query "[?name=='pmo-pilot-zero-cost'].amount | [0]" -o tsv 2>/dev/null)
+    echo "  budget amount: ${BUDGET:-not found} (stage A sets 2000)"
+    COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
+    ok "Cosmos container 'handoffs' exists" "az cosmosdb sql container show -g $RG -a $COSMOS -d pmoreview -n handoffs"
+    echo "== Phase 2 stage B =="
+    W=$(worker_name); echo "  worker: ${W:-not deployed}"
+    SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
+    FLAG=$(az staticwebapp appsettings list -n "$SWA" -g "$RG" --query "properties.ENTRA_HANDOFF_ENABLED" -o tsv 2>/dev/null)
+    echo "  ENTRA_HANDOFF_ENABLED on the app: ${FLAG:-not set (off)}"
+    echo "== App =="
+    HOST=$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)
+    echo "  https://$HOST  (new code if 'New request' shows a 'New joiner sign-in name' field)"
+    ;;
   worker)
     deploy_worker
     ;;
@@ -214,5 +237,5 @@ case "$CMD" in
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|worker|grant-graph ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|worker|grant-graph ..."; exit 1 ;;
 esac
