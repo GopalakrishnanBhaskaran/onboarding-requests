@@ -28,8 +28,11 @@ echo "== Budgets on $RG =="
 az consumption budget list --resource-group "$RG" --query "[].{name:name, amount:amount, spent:currentSpend.amount, unit:currentSpend.unit}" -o table 2>/dev/null || echo "(budget query not available for this account type)"
 
 echo "== Month-to-date actual cost for $RG =="
-az rest --method post \
+if ! az rest --method post \
   --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.CostManagement/query?api-version=2023-11-01" \
   --body '{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceType"}]}}' \
-  --query "properties.rows" -o json
+  --query "properties.rows" -o json; then
+  echo "Cost query not available yet (common for new subscriptions: data can take 24-48 h, and some offer types"
+  echo "do not support RG-scope queries). Use the budget 'spent' value above, and Cost analysis in the portal."
+fi
 echo "Checked at $(date -u +%Y-%m-%dT%H:%MZ). Record this output in docs/COSTS.md."

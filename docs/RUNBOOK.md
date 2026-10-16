@@ -19,7 +19,7 @@ Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Cor
 
 **Why `tools/local-api` exists.** Azure Functions Core Tools could not be downloaded in the build environment. `tools/local-api` is a loopback-only, dev-only host that serves the *same* `ApiHost` (routing, auth, processing) as the Functions entry point. It refuses to start without `PILOT_LOCAL_DEV=true`. With Core Tools installed you can instead run `func start` in `src/api/PmoReview.Api` (copy `local.settings.example.json` to `local.settings.json`).
 
-**Why `.local/staticwebapp.config.json`.** SWA CLI 2.0.10 rejects `apiRuntime: dotnet-isolated:10.0` and then ignores the whole config (F21). `run_local.sh` writes a copy without `platform` for the emulator only.
+**API runtime.** The managed API runs on `dotnet-isolated:9.0` because SWA CLI 2.0.10 rejects 10.0 (F21). To move to .NET 10 later: set `<TargetFramework>net10.0</TargetFramework>` in `src/api/PmoReview.Api/PmoReview.Api.csproj` and `platform.apiRuntime` to `dotnet-isolated:10.0`, run `dotnet test`, then `tools/deploy_free.sh app <subscriptionId>`.
 
 ## Deploy (Phase 6 — only after approval)
 
@@ -42,6 +42,7 @@ Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Cor
 | User reports an error | Ask for the "Reference" (correlation id) shown in the error bar; search logs for it. |
 | New test user | Step 5 above. Unregistered users see their own user id and no data. |
 | Change a rule or mapping | Maintainer creates a new **Draft** version and publishes it. Published versions are immutable; old runs keep their pinned versions. |
+| Redeploy app only (code change, failed upload) | `tools/deploy_free.sh app <subscriptionId>` — no infrastructure change. |
 | Rotate Cosmos key | `az cosmosdb keys regenerate --key-kind primary`; then re-run the app-setting step from `deploy_free.sh` (secondary first if you need zero downtime). |
 | Cost alert | `workflows/incident-recovery.md`. |
 | Tear down | `az group delete -n rg-pmo-review-pilot` (deletes data; the Cosmos free-tier slot is freed for the subscription). |

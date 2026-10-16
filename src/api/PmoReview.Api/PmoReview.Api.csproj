@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- SWA managed Functions: C# isolated worker, HTTP trigger only (apiRuntime dotnet-isolated:10.0). -->
+  <!-- SWA managed Functions: C# isolated worker, HTTP trigger only.
+       TargetFramework MUST match staticwebapp.config.json platform.apiRuntime (test: InfraConsistencyTests).
+       net9.0 because the SWA deploy tooling rejects dotnet-isolated:10.0 (VERIFIED_FACTS F21). Switch both back to 10.0 when it is accepted. -->
   <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Exe</OutputType>
     <RootNamespace>PmoReview.Api</RootNamespace>

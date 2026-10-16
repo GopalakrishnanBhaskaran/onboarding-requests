@@ -27,7 +27,7 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 | Reviewer | `RuleOnlyReviewModel` | `AzureOpenAIReviewModel` |
 | Logs | Structured logs only | App Insights with sampling |
 
-.NET target: **.NET 10, isolated worker** (`apiRuntime: dotnet-isolated:10.0`; Q1 = A, see VERIFIED_FACTS F4).
+.NET target: libraries **net9.0 + net10.0**; SWA managed API **.NET 9 isolated** (`apiRuntime: dotnet-isolated:9.0`) because the SWA CLI rejects 10.0 (VERIFIED_FACTS F21, decision A). .NET 9 support ends 10 Nov 2026 — switch API csproj + `staticwebapp.config.json` back to 10.0 as soon as the CLI accepts it; `InfraConsistencyTests` keeps the two in step.
 
 ## Layout (WAT)
 - `workflows/` SOPs Claude Code follows, one per phase plus cost guardrails and incident recovery.
@@ -50,6 +50,7 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 | Free-tier check | `tools/check_free_tier.sh <subscriptionId>` |
 | What-if (read-only) | `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` |
 | Deploy (after "approved") | `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "<name> <date>"` |
+| App-only redeploy | `tools/deploy_free.sh app <subscriptionId>` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 
 ## Security rules for API code

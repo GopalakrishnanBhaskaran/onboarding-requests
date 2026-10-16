@@ -4,15 +4,21 @@
 #   tools/deploy_free.sh whatif <subscriptionId> <params.json>
 #       Read-only. Writes the what-if to .local/whatif.txt for Gokul to review.
 #
+#   tools/deploy_free.sh app <subscriptionId>
+#       App-only redeploy (no infrastructure change): API + SPA + SAMPLE seed. Covered by the original approval.
+#
 #   tools/deploy_free.sh apply <subscriptionId> <params.json> --approved-by "<name> <date>"
 #       ONLY after Gokul replied "approved" to that exact what-if. Creates resources, sets the Cosmos
 #       connection string as a SWA app setting (never printed or written to disk), deploys the app,
 #       seeds SAMPLE data.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="${1:?whatif|apply}"; SUB="${2:?subscriptionId}"; PARAMS="${3:?params.json}"
+CMD="${1:?whatif|apply|app}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
-LOCATION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters']['location']['value'])" "$PARAMS")"
+if [[ "$CMD" != "app" ]]; then
+  [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
+  LOCATION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters']['location']['value'])" "$PARAMS")"
+fi
 mkdir -p "$ROOT/.local"
 az account set --subscription "$SUB"
 
@@ -47,13 +53,17 @@ case "$CMD" in
       "REVIEW_MODEL_PROVIDER=RuleOnly" "REVIEW_DISPATCHER=Inline" "ALLOW_PAID_SERVICES=false" \
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
 
-    # Build + deploy (SWA CLI). See VERIFIED_FACTS F4: if the CLI rejects dotnet-isolated:10.0, stop and report.
+    # Build + deploy (SWA CLI). The API runtime comes from staticwebapp.config.json (single source of truth;
+    # InfraConsistencyTests checks it matches the API project's TargetFramework).
+    RUNTIME=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['platform']['apiRuntime'])" "$ROOT/staticwebapp.config.json")
+    API_LANG="${RUNTIME%%:*}"; API_VER="${RUNTIME##*:}"
+    echo "API runtime: $API_LANG $API_VER"
     dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
     npm --prefix "$ROOT/src/web" ci
     npm --prefix "$ROOT/src/web" run build
     TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
     (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
-      --api-location "$ROOT/.local/api" --api-language dotnet-isolated --api-version 10.0 \
+      --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
       --swa-config-location "$ROOT" --env production)
 
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
@@ -63,5 +73,28 @@ case "$CMD" in
     echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles PMO"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply ..."; exit 1 ;;
+  app)
+    # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
+    RG=rg-pmo-review-pilot
+    SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
+    COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
+    RUNTIME=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['platform']['apiRuntime'])" "$ROOT/staticwebapp.config.json")
+    API_LANG="${RUNTIME%%:*}"; API_VER="${RUNTIME##*:}"
+    echo "API runtime: $API_LANG $API_VER -> $SWA"
+    rm -rf "$ROOT/.local/api"
+    dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
+    npm --prefix "$ROOT/src/web" ci
+    npm --prefix "$ROOT/src/web" run build
+    TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
+    (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
+      --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
+      --swa-config-location "$ROOT" --env production)
+    unset TOKEN
+    CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+    COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
+    unset CS
+    echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
+    "$ROOT/tools/cost_check.sh" "$RG"
+    ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app ..."; exit 1 ;;
 esac

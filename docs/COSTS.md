@@ -1,6 +1,6 @@
 # Costs — zero-cost pilot
 
-Status: **not deployed.** No Azure resource exists yet, so there is no cost evidence. This file is filled in from `tools/cost_check.sh` output after the Phase 6 deploy and again 24–48 h later.
+Status: **infrastructure deployed 16 Oct 2026; app redeploy pending.** Evidence below comes from `tools/cost_check.sh`; re-check 24–48 h after the app goes live.
 
 ## Why the design should cost ₹0 (to be proven, not assumed)
 
@@ -24,5 +24,5 @@ Status: **not deployed.** No Azure resource exists yet, so there is no cost evid
 
 | Date (UTC) | Check | Result | By |
 |---|---|---|---|
-| — | after deploy | not deployed yet | — |
+| 2026-10-16 | after infra deploy (app not yet deployed) | Only SWA (Free) + Cosmos (free tier, 1000 RU/s, no autoscale) in RG; policy enforcing; budget spent **0.0 INR**; Cost Management query not yet available (NotFound) | Gokul |
 | — | +24–48 h | not deployed yet | — |

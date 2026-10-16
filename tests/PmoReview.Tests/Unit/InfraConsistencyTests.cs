@@ -57,6 +57,22 @@ public partial class InfraConsistencyTests
         Assert.All(types, t => Assert.Contains(t, allowed));
     }
 
+    /// <summary>
+    /// The SWA managed API runtime and the API project must agree, and the runtime must be one the SWA
+    /// deploy tooling accepts (VERIFIED_FACTS F21: dotnet-isolated:10.0 is rejected as of 16 Oct 2026).
+    /// </summary>
+    [Fact]
+    public void Api_target_framework_matches_swa_api_runtime()
+    {
+        var config = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(Repo(), "staticwebapp.config.json")));
+        var runtime = config.RootElement.GetProperty("platform").GetProperty("apiRuntime").GetString()!;
+        var csproj = File.ReadAllText(Path.Combine(Repo(), "src", "api", "PmoReview.Api", "PmoReview.Api.csproj"));
+        var tfm = Regex.Match(csproj, "<TargetFramework>net(?<v>[0-9.]+)</TargetFramework>").Groups["v"].Value;
+
+        Assert.Equal($"dotnet-isolated:{tfm}", runtime);
+        Assert.Contains(runtime, new[] { "dotnet-isolated:8.0", "dotnet-isolated:9.0", "dotnet-isolated:10.0" });
+    }
+
     [GeneratedRegex(@"\{ name: '(?<name>\w+)', pk: '(?<pk>[^']+)', uniqueKeys: \[(?<keys>.*?)\] \}$", RegexOptions.Multiline)]
     private static partial Regex ContainerLine();
 
