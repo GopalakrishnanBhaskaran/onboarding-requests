@@ -78,7 +78,8 @@ public sealed record SyncSummary(int Checked, int Changed, int Errors);
 /// Queued records, and only when a writer is configured (auto-assign mode); otherwise it is read-only.
 /// </summary>
 public sealed class HandoffSync(
-    DataStores stores, IEntraGovernanceReader entra, IClock clock, ILogger<HandoffSync> logger, IEntraAssignmentWriter? writer = null)
+    DataStores stores, IEntraGovernanceReader entra, IClock clock, ILogger<HandoffSync> logger,
+    IEntraAssignmentWriter? writer = null, JoinerProvisioning? joiners = null)
 {
     /// <summary>A request created a little before the hand-off record still counts (clock skew, quick joiners).</summary>
     public static readonly TimeSpan MatchWindow = TimeSpan.FromMinutes(10);
@@ -138,6 +139,17 @@ public sealed class HandoffSync(
     private async Task<EntraHandoff> SubmitAsync(EntraHandoff h, CancellationToken ct)
     {
         if (writer is null) return h with { LastSyncError = "AutoAssignOff" };
+        if (joiners is not null)
+        {
+            // Phase 2c: make sure the joiner's account exists (create, licence, pass) before asking Entra for the access.
+            var (ready, failed) = await joiners.EnsureAsync(h, ct);
+            if (failed is not null)
+            {
+                logger.LogWarning("handoff sync: joiner provisioning failed {Category} handoff={HandoffId}", failed, h.Id);
+                return ready with { LastSyncError = failed };
+            }
+            h = ready;
+        }
         try
         {
             var created = await writer.RequestAssignmentAsync(AssignmentOrder.For(h, clock.UtcNow), ct);

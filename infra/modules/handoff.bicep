@@ -5,6 +5,9 @@
 //   Worker -> Graph: EntitlementManagement.Read.All; with auto-assign also EntitlementManagement.ReadWrite.All and
 //   User.ReadBasic.All (granted by tools/deploy_free.sh grant-graph, not ARM). The code writes only adminAdd requests
 //   on packages in ENTRA_ALLOWED_CATALOG_ID, through the ENTRA_AUTO_ASSIGN_POLICY policy.
+//   Phase 2c (approved 16 Oct 2026): + User.ReadWrite.All, LicenseAssignment.ReadWrite.All,
+//   UserAuthenticationMethod.ReadWrite.All (joiner accounts) and Group.ReadWrite.All (package set-up); the code creates
+//   only SAMPLE-prefixed users/groups in the tenant domain and never changes or deletes existing ones.
 // No Application Insights / Log Analytics (CLAUDE.md rule 2).
 param location string
 param tags object
@@ -18,6 +21,18 @@ param autoAssign bool = false
 
 @description('The only Entra catalog the worker may assign from (GUID). Required when autoAssign is true.')
 param entraCatalogId string = ''
+
+@description('Phase 2c: create the joiner account (P2 licence + Temporary Access Pass) after a second Reviewer accepts.')
+param provisionJoiners bool = false
+
+@description('Phase 2c: set up the Entra group, access package and policy for published role mappings.')
+param autoCreatePackages bool = false
+
+@description('Tenant domain for new joiner UPNs and My Access links, e.g. contoso.onmicrosoft.com.')
+param entraTenantDomain string = ''
+
+@description('skuId of the licence given to new joiner accounts (Entra ID P2).')
+param entraLicenseSkuId string = ''
 
 var suffix = uniqueString(resourceGroup().id)
 var storageName = 'stpmowork${suffix}'
@@ -100,6 +115,13 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ENTRA_AUTO_ASSIGN', value: string(autoAssign) }
         { name: 'ENTRA_ALLOWED_CATALOG_ID', value: entraCatalogId }
         { name: 'ENTRA_AUTO_ASSIGN_POLICY', value: 'PMO Review auto-assign' }
+        { name: 'ENTRA_PROVISION_JOINERS', value: string(provisionJoiners) }
+        { name: 'ENTRA_AUTO_CREATE_PACKAGES', value: string(autoCreatePackages) }
+        { name: 'ENTRA_TENANT_DOMAIN', value: entraTenantDomain }
+        { name: 'ENTRA_LICENSE_SKU_ID', value: entraLicenseSkuId }
+        { name: 'ENTRA_JOINER_UPN_PREFIX', value: 'sample.' }
+        { name: 'ENTRA_GROUP_PREFIX', value: 'SAMPLE-GRP-' }
+        { name: 'ENTRA_TAP_LIFETIME_MINUTES', value: '480' }
       ]
     }
     functionAppConfig: {
@@ -159,6 +181,28 @@ resource cosmosHandoffWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssig
     roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosBuiltInDataContributor}'
     principalId: worker.identity.principalId
     scope: '${cosmos.id}/dbs/${databaseName}/colls/handoffs'
+  }
+}
+
+// Phase 2c: Temporary Access Passes the worker issues (shown once by the app, TTL-deleted).
+resource cosmosPassWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (provisionJoiners) {
+  parent: cosmos
+  name: guid(cosmos.id, worker.id, cosmosBuiltInDataContributor, 'joinerPasses')
+  properties: {
+    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosBuiltInDataContributor}'
+    principalId: worker.identity.principalId
+    scope: '${cosmos.id}/dbs/${databaseName}/colls/joinerPasses'
+  }
+}
+
+// Phase 2c: publishes the next role-mapping version with the Entra link (or records the set-up error).
+resource cosmosMappingWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (autoCreatePackages) {
+  parent: cosmos
+  name: guid(cosmos.id, worker.id, cosmosBuiltInDataContributor, 'roleMappings')
+  properties: {
+    roleDefinitionId: '${cosmos.id}/sqlRoleDefinitions/${cosmosBuiltInDataContributor}'
+    principalId: worker.identity.principalId
+    scope: '${cosmos.id}/dbs/${databaseName}/colls/roleMappings'
   }
 }
 

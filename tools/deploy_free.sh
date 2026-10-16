@@ -37,6 +37,8 @@ param_true() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(ope
 handoff_enabled() { param_true enableHandoff; }
 worker_enabled() { handoff_enabled && param_true deployWorker; }
 auto_assign_enabled() { worker_enabled && param_true enableAutoAssign; }
+provision_enabled() { auto_assign_enabled && param_true enableJoinerProvisioning; }
+packages_enabled() { auto_assign_enabled && param_true enablePackageAutoCreate; }
 
 # Stage B needs stage A's policy to be live: Azure checks new resources against the CURRENT assignment.
 policy_allows_worker() {
@@ -83,13 +85,18 @@ deploy_worker() {
 # Graph application permissions for the worker identity; idempotent. Read-only unless the worker runs in
 # auto-assign mode (app setting ENTRA_AUTO_ASSIGN=true), which adds the write + user lookup it needs.
 grant_graph() {
-  local name mi graph auto perm role have roles
+  local name mi graph auto prov pkgs perm role have roles
   name=$(worker_name); [[ -n "$name" ]] || { echo "No hand-off worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
   auto=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" --query "[?name=='ENTRA_AUTO_ASSIGN'].value | [0]" -o tsv 2>/dev/null)
   roles=(EntitlementManagement.Read.All)
   [[ "${auto,,}" == "true" ]] && roles+=(EntitlementManagement.ReadWrite.All User.ReadBasic.All)
+  # Phase 2c: joiner accounts (create, licence, Temporary Access Pass) and package set-up (groups).
+  prov=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" --query "[?name=='ENTRA_PROVISION_JOINERS'].value | [0]" -o tsv 2>/dev/null)
+  pkgs=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" --query "[?name=='ENTRA_AUTO_CREATE_PACKAGES'].value | [0]" -o tsv 2>/dev/null)
+  [[ "${prov,,}" == "true" ]] && roles+=(User.ReadWrite.All LicenseAssignment.ReadWrite.All UserAuthenticationMethod.ReadWrite.All)
+  [[ "${pkgs,,}" == "true" ]] && roles+=(Group.ReadWrite.All)
   for perm in "${roles[@]}"; do
     role=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?value=='$perm'].id | [0]" -o tsv)
     [[ -n "$role" ]] || { echo "Could not find $perm on Microsoft Graph."; return 1; }
@@ -141,6 +148,13 @@ case "$CMD" in
       echo "  After apply, grant-graph adds EntitlementManagement.ReadWrite.All + User.ReadBasic.All to the worker identity;"
       echo "  the app sets REQUIRE_SEPARATE_REVIEWER=true (a second Reviewer's acceptance is the access decision)."
     fi
+    if provision_enabled || packages_enabled; then
+      echo "PHASE 2c (approved 16 Oct 2026): + Cosmos container 'joinerPasses' (shared free-tier throughput, per-item TTL) and"
+      echo "  container-scoped Cosmos roles for the worker. No new paid resources, cost unchanged."
+      provision_enabled && echo "  Joiner accounts ON: grant-graph adds User.ReadWrite.All, LicenseAssignment.ReadWrite.All, UserAuthenticationMethod.ReadWrite.All."
+      packages_enabled && echo "  Package set-up ON: grant-graph adds Group.ReadWrite.All."
+      echo "  Tenant prerequisite: Temporary Access Pass enabled (Entra admin center > Protection > Authentication methods)."
+    fi
     if handoff_enabled; then
       WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
       LOCATION_CHECK="$WLOC"
@@ -172,7 +186,8 @@ case "$CMD" in
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
     if auto_assign_enabled; then
       # Auto-assign: a SECOND Reviewer's acceptance is the access decision; the worker files the Entra assignment.
-      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "ENTRA_AUTO_ASSIGN=true" "REQUIRE_SEPARATE_REVIEWER=true" -o none
+      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "ENTRA_AUTO_ASSIGN=true" "REQUIRE_SEPARATE_REVIEWER=true" \
+        "ENTRA_AUTO_CREATE_PACKAGES=$(packages_enabled && echo true || echo false)" -o none
     elif worker_enabled; then
       # Link mode: the joiner requests in My Access and Entra's approver decides. One tester, so separate-reviewer is off.
       az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "ENTRA_AUTO_ASSIGN=false" "REQUIRE_SEPARATE_REVIEWER=false" -o none
@@ -238,10 +253,18 @@ case "$CMD" in
   params)
     # Rebuild .local/params.json after a Cloud Shell reset: live budget email/start date, Phase 2 stages A+B on,
     # auto-assign on only if tools/setup_entra.sh package has written .local/entra-package.json.
+    # "--provision" (Phase 2c) also turns on joiner accounts + package set-up, with the tenant domain and P2 skuId read live.
     B=$(az consumption budget show --budget-name pmo-pilot-zero-cost --resource-group "$RG_DEFAULT" -o json 2>/dev/null)
-    python3 - "$B" "$ROOT/.local/params.json" "$ROOT/.local/entra-package.json" <<'PY'
+    PROV=""; DOM=""; SKU=""
+    if [[ "${3:-}" == "--provision" ]]; then
+      PROV=1
+      DOM=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/domains" --query "value[?isInitial].id | [0]" -o tsv)
+      SKU=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/subscribedSkus" --query "value[?skuPartNumber=='AAD_PREMIUM_P2'].skuId | [0]" -o tsv)
+      echo "tenant domain: ${DOM:-NOT FOUND} | Entra ID P2 skuId: ${SKU:-NOT FOUND}"
+    fi
+    python3 - "$B" "$ROOT/.local/params.json" "$ROOT/.local/entra-package.json" "$PROV" "$DOM" "$SKU" <<'PY'
 import json, os, sys
-b, out, pkg = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+b, out, pkg, prov, dom, sku = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 v = lambda x: {"value": x}
 p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"), "swaLocation": v("eastasia"),
      "budgetEmail": v(next(iter(b["notifications"].values()))["contactEmails"][0]), "budgetAmount": v(2000),
@@ -250,9 +273,15 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
 if os.path.exists(pkg):
     p["enableAutoAssign"] = v(True)
     p["entraCatalogId"] = v(json.load(open(pkg))["catalogId"])
+    if prov:
+        if not dom or not sku:
+            sys.exit("STOP: tenant domain or Entra ID P2 skuId not found; Phase 2c not enabled.")
+        p.update({"enableJoinerProvisioning": v(True), "enablePackageAutoCreate": v(True),
+                  "entraTenantDomain": v(dom), "entraLicenseSkuId": v(sku)})
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
-print("wrote", out, "| auto-assign:", "on" if "enableAutoAssign" in p else "off (run setup_entra.sh package first)")
+print("wrote", out, "| auto-assign:", "on" if "enableAutoAssign" in p else "off (run setup_entra.sh package first)",
+      "| phase 2c:", "on" if "enableJoinerProvisioning" in p else "off")
 PY
     ;;
   worker)

@@ -85,7 +85,14 @@ public static class Endpoints
     public static ApiHost MapHandoffs(this ApiHost host, Handoff.HandoffService handoffs)
     {
         host.Map("GET", "projects/{projectId}/requests/{requestId}/handoffs", async c =>
-            Ok(new { enabled = handoffs.Enabled, autoAssign = handoffs.AutoAssign, items = (await handoffs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)).Select(ToItem) }));
+        {
+            var items = await handoffs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct);
+            var passes = await handoffs.ListPassesAsync(c.Caller, c["projectId"], items, c.Ct);
+            return Ok(new { enabled = handoffs.Enabled, autoAssign = handoffs.AutoAssign, items = items.Select(ToItem), passes });
+        });
+        // Phase 2c: show a joiner's Temporary Access Pass once. POST (not GET): it changes state and must not be cached or prefetched.
+        host.Map("POST", "projects/{projectId}/handoffs/{handoffId}/pass/reveal", async c =>
+            Ok(await handoffs.RevealPassAsync(c.Caller, c["projectId"], c["handoffId"], c.Ct)));
         return host;
     }
 

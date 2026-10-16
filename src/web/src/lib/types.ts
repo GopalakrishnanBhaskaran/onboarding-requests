@@ -161,6 +161,7 @@ export interface RoleMapping {
   publicationStatus: PublicationStatus;
   sourceReference: string;
   isSample: boolean;
+  entraSetupError?: string | null;
 }
 
 export type HandoffStatus =
@@ -194,5 +195,25 @@ export interface EntraHandoff {
   createdAt: string;
   lastCheckedAt: string | null;
   lastSyncError: string | null;
+  joinerObjectId?: string | null;
+  joinerAccountCreatedByApp?: boolean;
+  joinerLicensedAt?: string | null;
+  tapIssuedAt?: string | null;
   history: { at: string; status: HandoffStatus; note: string }[];
+}
+
+/** Temporary Access Pass status for a hand-off (never the pass itself). */
+export interface JoinerPassSummary {
+  handoffId: string;
+  available: boolean;
+  validFrom: string;
+  expiresAt: string;
+  revealedBy: string | null;
+  revealedAt: string | null;
+}
+
+export interface TemporaryAccessPass {
+  secret: string;
+  validFrom: string;
+  expiresAt: string;
 }

@@ -22,7 +22,17 @@ When on, a **second Reviewer** (not the person who created or analysed the reque
 |---|---|
 | One Graph write: `POST assignmentRequests` with `requestType=adminAdd`, only for packages in the one allowed catalog | Any other Graph write (no removals, no updates, no group/user/policy changes) from the app or worker |
 | Graph `User.ReadBasic.All` to resolve the joiner's object id | Creating users; looking up anything else about the joiner |
-| Admin setup script (catalog, package, policy, mapping link) run by a Global Administrator | The worker creating or changing access packages or policies |
+| Admin setup script (catalog, package, policy, mapping link) run by a Global Administrator | The worker creating or changing access packages or policies (until Phase 2c) |
+
+### Phase 2c — automatic accounts and packages (approved by Gokul, 16 Oct 2026, in this session)
+Choices: **Temporary Access Pass** for the first sign-in (shown once in the app), **packages set up automatically when a mapping is published**, **P2 licence assigned**. Off by default (`enableJoinerProvisioning`, `enablePackageAutoCreate`; both need auto-assign).
+
+| Now included (Phase 2c) | Still excluded |
+|---|---|
+| Worker creates the joiner's account when no user has the reviewed UPN (`sample.` prefix, tenant domain only), random password nobody sees | Changing, disabling or deleting any existing user; passwords shown to anyone |
+| Entra ID P2 licence on accounts the app created | Licences for existing users |
+| Temporary Access Pass (starts on the reviewed start date, 8 h), shown **once** to a PMO/Reviewer, then removed; TTL deletes the record | Sending the pass by email/Teams; TAPs for existing users |
+| Package set-up for published mappings: group (`SAMPLE-GRP-`, security, never role-assignable), catalog resource, access package `<role> – <env> [<mapping id>]`, Member role, "PMO Review auto-assign" policy; next mapping version with the link | Using existing role-assignable or non-security groups; any package outside the PMO catalog |
 
 ## Included
 | Area | What the pilot does |

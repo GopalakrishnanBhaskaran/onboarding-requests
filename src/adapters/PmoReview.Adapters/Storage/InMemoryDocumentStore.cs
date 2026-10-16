@@ -95,5 +95,6 @@ public static class InMemoryDataStores
         new InMemoryDocumentStore<ReviewRun>(r => r.IdempotencyKey),
         new InMemoryDocumentStore<ReviewDecision>(d => $"{d.ReviewRunId}|{d.Reviewer}"),
         new InMemoryDocumentStore<UserAccess>(),
-        new InMemoryDocumentStore<Core.Handoff.EntraHandoff>());
+        new InMemoryDocumentStore<Core.Handoff.EntraHandoff>(),
+        new InMemoryDocumentStore<Core.Handoff.JoinerPass>());
 }

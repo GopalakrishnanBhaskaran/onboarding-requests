@@ -44,6 +44,18 @@ param enableAutoAssign bool = false
 @description('GUID of the Entra catalog the worker may assign from (printed by: bash tools/setup_entra.sh package ...).')
 param entraCatalogId string = ''
 
+@description('Phase 2c (approved by Gokul 16 Oct 2026): create joiner accounts (P2 licence + Temporary Access Pass). Needs enableAutoAssign.')
+param enableJoinerProvisioning bool = false
+
+@description('Phase 2c: set up Entra groups, access packages and policies for published role mappings. Needs enableAutoAssign.')
+param enablePackageAutoCreate bool = false
+
+@description('Tenant domain, e.g. contoso.onmicrosoft.com (joiner UPNs, My Access links).')
+param entraTenantDomain string = ''
+
+@description('skuId of the Entra ID P2 licence for new joiner accounts.')
+param entraLicenseSkuId string = ''
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -83,6 +95,10 @@ module handoff 'modules/handoff.bicep' = if (enableHandoff && deployWorker) {
     workerRuntimeVersion: workerRuntimeVersion
     autoAssign: enableAutoAssign
     entraCatalogId: entraCatalogId
+    provisionJoiners: enableAutoAssign && enableJoinerProvisioning
+    autoCreatePackages: enableAutoAssign && enablePackageAutoCreate
+    entraTenantDomain: entraTenantDomain
+    entraLicenseSkuId: entraLicenseSkuId
   }
 }
 

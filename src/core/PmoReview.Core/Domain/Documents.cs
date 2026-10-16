@@ -73,6 +73,9 @@ public sealed record RoleMapping : IDocument
     public required PublicationStatus PublicationStatus { get; init; }
     public required string SourceReference { get; init; }
     public bool IsSample { get; init; }
+    /// <summary>Phase 2c: category of the last failed automatic Entra package setup for this version (worker-written).</summary>
+    public string? EntraSetupError { get; init; }
+    public DateTimeOffset? EntraSetupAttemptAt { get; init; }
     public int SchemaVersion { get; init; } = 1;
     [JsonIgnore] public string PartitionKey => ProjectId;
 

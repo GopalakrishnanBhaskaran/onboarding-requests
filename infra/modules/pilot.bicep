@@ -176,13 +176,14 @@ var containers = [
   { name: 'reviewDecisions', pk: '/projectId', uniqueKeys: [ { paths: [ '/reviewRunId', '/reviewer' ] } ] }
   { name: 'userAccess', pk: '/userId', uniqueKeys: [] }
   { name: 'handoffs', pk: '/projectId', uniqueKeys: [] }
+  { name: 'joinerPasses', pk: '/projectId', uniqueKeys: [], defaultTtl: -1 } // per-item TTL: passes delete themselves
 ]
 
 resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = [for c in containers: {
   parent: database
   name: c.name
   properties: {
-    resource: {
+    resource: union({
       id: c.name
       partitionKey: {
         paths: [
@@ -193,7 +194,7 @@ resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
       uniqueKeyPolicy: {
         uniqueKeys: c.uniqueKeys
       }
-    }
+    }, contains(c, 'defaultTtl') ? { defaultTtl: c.defaultTtl } : {})
   }
 }]
 

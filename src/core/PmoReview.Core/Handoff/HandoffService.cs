@@ -18,6 +18,8 @@ public sealed record HandoffSettings
     /// </summary>
     public bool AutoAssign { get; init; }
     public bool SeparateReviewerRequired => RequireSeparateReviewer || AutoAssign;
+    /// <summary>Phase 2c: the worker sets up Entra packages for published mappings (changes the "no package" message).</summary>
+    public bool AutoCreatePackages { get; init; }
 }
 
 /// <summary>
@@ -52,6 +54,44 @@ public sealed class HandoffService(DataStores stores, HandoffSettings settings, 
         {
             // Another acceptance won the race; its record stands.
         }
+    }
+
+    /// <summary>Pass status for the request's hand-offs. Never the secret.</summary>
+    public async Task<IReadOnlyList<JoinerPassSummary>> ListPassesAsync(CallerContext caller, string projectId, IReadOnlyList<Versioned<EntraHandoff>> handoffs, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.ViewRuns);
+        if (!settings.Enabled) return [];
+        var result = new List<JoinerPassSummary>();
+        foreach (var h in handoffs.Where(h => h.Value.TapIssuedAt is not null))
+        {
+            var p = await stores.Passes.GetAsync(projectId, h.Value.Id, ct);
+            if (p is not null && p.Value.ProjectId == projectId) result.Add(JoinerPassSummary.From(p.Value, clock.UtcNow));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Shows the Temporary Access Pass once (PMO or Reviewer of the project), then removes the secret (ETag: only one caller wins).
+    /// </summary>
+    public async Task<TemporaryAccessPass> RevealPassAsync(CallerContext caller, string projectId, string handoffId, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.RevealJoinerPass);
+        if (!settings.Enabled) throw AppException.NotFound("Temporary Access Pass");
+        var p = await stores.Passes.GetAsync(projectId, handoffId, ct);
+        if (p is null || p.Value.ProjectId != projectId) throw AppException.NotFound("Temporary Access Pass");
+        if (p.Value.Secret is null)
+            throw new AppException(ErrorKind.Conflict, "pass_already_shown", $"This pass was already shown{(p.Value.RevealedAt is { } at ? $" on {at:yyyy-MM-dd HH:mm} UTC" : "")}. Issue a new one in Entra if it was lost.");
+        if (p.Value.ExpiresAt <= clock.UtcNow)
+            throw new AppException(ErrorKind.Conflict, "pass_expired", "This pass has expired. Issue a new one in Entra.");
+        try
+        {
+            await stores.Passes.ReplaceAsync(p.Value with { Secret = null, RevealedBy = caller.UserId, RevealedAt = clock.UtcNow }, p.ETag, ct);
+        }
+        catch (ConcurrencyException)
+        {
+            throw new AppException(ErrorKind.Conflict, "pass_already_shown", "This pass was just shown to someone else.");
+        }
+        return new TemporaryAccessPass(p.Value.Secret, p.Value.ValidFrom, p.Value.ExpiresAt);
     }
 
     public async Task<IReadOnlyList<Versioned<EntraHandoff>>> ListForRequestAsync(CallerContext caller, string projectId, string requestId, CancellationToken ct)
@@ -102,7 +142,9 @@ public sealed class HandoffService(DataStores stores, HandoffSettings settings, 
         // The pinned version, not the current one: the hand-off uses exactly what was reviewed.
         var mapping = await stores.Mappings.GetAsync(run.ProjectId, $"{m.MappingId}:v{m.MappingVersion}", ct);
         if (mapping?.Value.AccessPackageId is null || mapping.Value.MyAccessLink is null)
-            return NotEligible($"Role mapping {m.MappingId} v{m.MappingVersion} has no Entra access package. A Maintainer must publish a version with the My Access link, then the request is analysed again.");
+            return NotEligible(settings.AutoCreatePackages
+                ? $"Role mapping {m.MappingId} v{m.MappingVersion} has no Entra access package yet. The app is setting it up: Analyze again in about 10 minutes and accept the new review."
+                : $"Role mapping {m.MappingId} v{m.MappingVersion} has no Entra access package. A Maintainer must publish a version with the My Access link, then the request is analysed again.");
 
         if (string.IsNullOrWhiteSpace(s.JoinerUpn))
             return NotEligible("The reviewed revision has no new joiner sign-in name. Add it, Analyze again and accept the new review.");

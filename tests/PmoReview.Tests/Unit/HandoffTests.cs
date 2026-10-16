@@ -201,7 +201,9 @@ public class HandoffTests
         Assert.Equal(403, (await app.Call(TestApp.Mark, "GET", $"projects/{TestApp.Alpha}/requests/{id}/handoffs")).Status); // Maintainer: no ViewRuns
         foreach (var method in new[] { "POST", "PUT" })
             Assert.Equal(405, (await app.Call(TestApp.Rita, method, $"projects/{TestApp.Alpha}/requests/{id}/handoffs", new { status = "Delivered" })).Status);
-        Assert.DoesNotContain(app.Host.Routes, r => r.Contains("handoffs") && !r.StartsWith("GET ", StringComparison.Ordinal));
+        // The one non-GET hand-off route reveals a Temporary Access Pass (writes the pass document, never the hand-off).
+        Assert.Equal(["POST projects/{projectId}/handoffs/{handoffId}/pass/reveal"],
+            app.Host.Routes.Where(r => r.Contains("handoffs") && !r.StartsWith("GET ", StringComparison.Ordinal)));
     }
 
     [Fact]

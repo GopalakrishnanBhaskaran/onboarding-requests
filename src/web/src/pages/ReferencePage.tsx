@@ -110,7 +110,9 @@ export function ReferencePage({ project }: { project: ProjectSummary }) {
                   <TableCell>
                     {m.myAccessLink
                       ? <Link href={m.myAccessLink} target="_blank" rel="noopener noreferrer">{m.accessPackageId?.slice(0, 8)}…</Link>
-                      : '—'}
+                      : m.entraSetupError
+                        ? <Badge color="danger" appearance="tint" title="The app retries every few minutes">Set-up failed: {m.entraSetupError}</Badge>
+                        : '—'}
                   </TableCell>
                   <TableCell>{m.effectiveFrom} → {m.effectiveTo ?? 'open'}</TableCell>
                   <TableCell><Badge appearance="outline">{m.publicationStatus}</Badge></TableCell>

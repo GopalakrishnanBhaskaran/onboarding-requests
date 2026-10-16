@@ -95,6 +95,7 @@ public static class CosmosSchema
         (ContainerNames.ReviewDecisions, "/projectId", [["/reviewRunId", "/reviewer"]]),
         (ContainerNames.UserAccess, "/userId", []),
         (ContainerNames.Handoffs, "/projectId", []),
+        (ContainerNames.JoinerPasses, "/projectId", []),
     ];
 }
 
@@ -139,7 +140,8 @@ public static class CosmosDataStores
             new CosmosDocumentStore<ReviewRun>(db.GetContainer(ContainerNames.ReviewRuns)),
             new CosmosDocumentStore<ReviewDecision>(db.GetContainer(ContainerNames.ReviewDecisions)),
             new CosmosDocumentStore<UserAccess>(db.GetContainer(ContainerNames.UserAccess)),
-            new CosmosDocumentStore<Core.Handoff.EntraHandoff>(db.GetContainer(ContainerNames.Handoffs)));
+            new CosmosDocumentStore<Core.Handoff.EntraHandoff>(db.GetContainer(ContainerNames.Handoffs)),
+            new CosmosDocumentStore<Core.Handoff.JoinerPass>(db.GetContainer(ContainerNames.JoinerPasses)));
     }
 
     /// <summary>

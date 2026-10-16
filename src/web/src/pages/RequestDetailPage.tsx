@@ -4,9 +4,9 @@ import {
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Textarea,
 } from '@fluentui/react-components';
 import { ArrowClockwise20Regular, Copy20Regular, Edit20Regular, Search20Regular } from '@fluentui/react-icons';
-import { api, newNonce } from '../lib/api';
+import { api, newNonce, type HandoffList } from '../lib/api';
 import { href } from '../lib/router';
-import type { AccessRequest, DecisionOutcome, EntraHandoff, Item, ProjectSummary, ReviewDecision, ReviewRun } from '../lib/types';
+import type { AccessRequest, DecisionOutcome, EntraHandoff, Item, JoinerPassSummary, ProjectSummary, ReviewDecision, ReviewRun, TemporaryAccessPass } from '../lib/types';
 import { dateTime, fieldLabel, handoffColor, handoffLabel, inProgress, readinessColor, readinessLabel, severityColor } from '../lib/format';
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
@@ -26,7 +26,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [handoffs, setHandoffs] = useState<{ enabled: boolean; autoAssign?: boolean; items: Item<EntraHandoff>[] }>({ enabled: false, items: [] });
+  const [handoffs, setHandoffs] = useState<HandoffList>({ enabled: false, items: [] });
   const pollStarted = useRef<number>(0);
   const nonce = useRef<string>(newNonce());
 
@@ -124,7 +124,11 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
         <div aria-live="polite" role="status"><Caption1>{status}</Caption1></div>
       </section>
 
-      {handoffs.enabled && <HandoffPanel items={handoffs.items} currentRevision={r.revision} autoAssign={handoffs.autoAssign === true} />}
+      {handoffs.enabled && (
+        <HandoffPanel items={handoffs.items} currentRevision={r.revision} autoAssign={handoffs.autoAssign === true}
+          passes={handoffs.passes ?? []} projectId={project.projectId}
+          canReveal={project.roles.includes('PMO') || project.roles.includes('Reviewer')} onChanged={() => void load()} />
+      )}
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'results' | 'history')} aria-label="Review views">
         <Tab value="results">Review results</Tab>
@@ -340,7 +344,16 @@ function History({ runs, onSelect }: { runs: Item<ReviewRun>[]; onSelect: (id: s
  * and Entra's approver decides. Auto-assign mode: a second Reviewer's acceptance is the decision and the worker files
  * the Entra request. Either way Entra adds the access and removes it on the end date.
  */
-function HandoffPanel({ items, currentRevision, autoAssign }: { items: Item<EntraHandoff>[]; currentRevision: number; autoAssign: boolean }) {
+function HandoffPanel(props: {
+  items: Item<EntraHandoff>[];
+  currentRevision: number;
+  autoAssign: boolean;
+  passes: JoinerPassSummary[];
+  projectId: string;
+  canReveal: boolean;
+  onChanged: () => void;
+}) {
+  const { items, currentRevision, autoAssign, passes, projectId, canReveal, onChanged } = props;
   const s = useStyles();
   const [copied, setCopied] = useState(false);
   const h = items[0]?.value;
@@ -392,6 +405,15 @@ function HandoffPanel({ items, currentRevision, autoAssign }: { items: Item<Entr
             <Body1><Badge color="warning">Check</Badge> Entra's end date is later than the reviewed end date (or has none). Ask the Entra administrator to correct the assignment.</Body1>
           )}
           {h.preExistingAssignment && <Body1><Badge color="informative">Note</Badge> The new joiner already held this access package before the hand-off.</Body1>}
+          {h.joinerObjectId && (
+            <Body1>
+              Joiner account: {h.joinerAccountCreatedByApp ? 'created by the app' : 'already existed (not changed)'}
+              {h.joinerAccountCreatedByApp && h.joinerLicensedAt ? ' · Entra ID P2 licence assigned' : ''}
+            </Body1>
+          )}
+          {passes.filter((p) => p.handoffId === h.id).map((p) => (
+            <PassBox key={p.handoffId} pass={p} projectId={projectId} canReveal={canReveal} onChanged={onChanged} />
+          ))}
           {h.lastSyncError && <Caption1>Last status check failed ({h.lastSyncError}); the previous status is shown.</Caption1>}
           {h.history.length > 0 && (
             <ol style={{ margin: 0 }} aria-label="Hand-off timeline">
@@ -406,6 +428,62 @@ function HandoffPanel({ items, currentRevision, autoAssign }: { items: Item<Entr
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * The joiner's Temporary Access Pass (accounts the app created). The server returns it once and then deletes it,
+ * so it is shown here once and kept only in this page's memory.
+ */
+function PassBox({ pass, projectId, canReveal, onChanged }: { pass: JoinerPassSummary; projectId: string; canReveal: boolean; onChanged: () => void }) {
+  const s = useStyles();
+  const [shown, setShown] = useState<TemporaryAccessPass | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function reveal() {
+    if (!window.confirm('The Temporary Access Pass is shown only once. Give it to the new joiner securely (not by email). Show it now?')) return;
+    setError(null);
+    try {
+      setShown(await api.revealPass(projectId, pass.handoffId));
+    } catch (e) {
+      setError(e);
+    } finally {
+      onChanged();
+    }
+  }
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className={s.stack} aria-label="Temporary Access Pass">
+      <ErrorBar error={error} />
+      {shown ? (
+        <div className={s.row}>
+          <Body1>Temporary Access Pass:</Body1>
+          <code style={{ fontSize: 16, padding: '2px 6px', border: '1px solid currentColor', borderRadius: 4 }}>{shown.secret}</code>
+          <Button size="small" icon={<Copy20Regular />} onClick={() => void copy(shown.secret)}>{copied ? 'Copied' : 'Copy'}</Button>
+          <Caption1>Valid {dateTime(shown.validFrom)} → {dateTime(shown.expiresAt)}. It will not be shown again.</Caption1>
+        </div>
+      ) : pass.available ? (
+        <div className={s.row}>
+          <Body1>A Temporary Access Pass is ready for the joiner's first sign-in (valid {dateTime(pass.validFrom)} → {dateTime(pass.expiresAt)}).</Body1>
+          {canReveal && <Button size="small" onClick={() => void reveal()}>Show pass (once)</Button>}
+        </div>
+      ) : pass.revealedAt ? (
+        <Caption1>Temporary Access Pass shown to {pass.revealedBy} on {dateTime(pass.revealedAt)}. It is not stored any more.</Caption1>
+      ) : (
+        <Caption1>The Temporary Access Pass has expired. Issue a new one in Entra if needed.</Caption1>
+      )}
+    </div>
   );
 }
 

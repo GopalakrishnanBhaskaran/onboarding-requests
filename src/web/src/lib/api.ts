@@ -1,7 +1,4 @@
-import type {
-  AccessRequest, AnalyzeResponse, AttentionItem, DecisionOutcome, EntraHandoff, Item, Me, PublicationStatus,
-  RequestFields, RequirementRule, ReviewDecision, ReviewRun, RoleMapping,
-} from './types';
+import type { AccessRequest, AnalyzeResponse, AttentionItem, DecisionOutcome, EntraHandoff, Item, Me, PublicationStatus, RequestFields, RequirementRule, ReviewDecision, ReviewRun, RoleMapping, JoinerPassSummary, TemporaryAccessPass } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
 export class ApiError extends Error {
@@ -49,6 +46,14 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
   return json as T;
 }
 
+/** Hand-offs of one request, with Temporary Access Pass status. */
+export interface HandoffList {
+  enabled: boolean;
+  autoAssign?: boolean;
+  items: Item<EntraHandoff>[];
+  passes?: JoinerPassSummary[];
+}
+
 const p = (projectId: string) => `projects/${encodeURIComponent(projectId)}`;
 const id = (value: string) => encodeURIComponent(value);
 
@@ -77,7 +82,10 @@ export const api = {
     call<Item<ReviewDecision>>('POST', `${p(projectId)}/runs/${id(runId)}/decisions`, { outcome, comment: comment || null }),
   attention: () => call<{ items: AttentionItem[] }>('GET', 'attention'),
   listHandoffs: (projectId: string, requestId: string) =>
-    call<{ enabled: boolean; autoAssign?: boolean; items: Item<EntraHandoff>[] }>('GET', `${p(projectId)}/requests/${id(requestId)}/handoffs`),
+    call<HandoffList>('GET', `${p(projectId)}/requests/${id(requestId)}/handoffs`),
+  /** Shows a joiner's Temporary Access Pass once; the server removes it afterwards. */
+  revealPass: (projectId: string, handoffId: string) =>
+    call<TemporaryAccessPass>('POST', `${p(projectId)}/handoffs/${id(handoffId)}/pass/reveal`, {}),
 
   listRules: (projectId: string) => call<{ items: Item<RequirementRule>[] }>('GET', `${p(projectId)}/rules`),
   createRule: (projectId: string, rule: Record<string, unknown>) => call<Item<RequirementRule>>('POST', `${p(projectId)}/rules`, rule),

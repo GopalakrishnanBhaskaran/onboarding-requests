@@ -130,6 +130,38 @@ public partial class InfraConsistencyTests
         Assert.Contains("\"ENTRA_AUTO_ASSIGN=true\" \"REQUIRE_SEPARATE_REVIEWER=true\"", deploy);
     }
 
+    /// <summary>
+    /// Phase 2c (approved 16 Oct 2026): joiner accounts and package set-up are off by default, need auto-assign, add
+    /// container-scoped Cosmos roles only when on, and grant the extra Graph permissions only when the worker says so.
+    /// </summary>
+    [Fact]
+    public void Phase2c_provisioning_is_off_by_default_and_least_privilege_per_switch()
+    {
+        var main = File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep"));
+        var bicep = HandoffBicep();
+        Assert.Contains("param enableJoinerProvisioning bool = false", main);
+        Assert.Contains("param enablePackageAutoCreate bool = false", main);
+        Assert.Contains("provisionJoiners: enableAutoAssign && enableJoinerProvisioning", main);
+        Assert.Contains("autoCreatePackages: enableAutoAssign && enablePackageAutoCreate", main);
+        Assert.Contains("resource cosmosPassWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (provisionJoiners)", bicep);
+        Assert.Contains("/colls/joinerPasses'", bicep);
+        Assert.Contains("resource cosmosMappingWriter 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-11-15' = if (autoCreatePackages)", bicep);
+        Assert.Contains("/colls/roleMappings'", bicep);
+        Assert.Contains("{ name: 'ENTRA_JOINER_UPN_PREFIX', value: 'sample.' }", bicep);
+        Assert.Contains("{ name: 'ENTRA_GROUP_PREFIX', value: 'SAMPLE-GRP-' }", bicep);
+
+        var pilot = File.ReadAllText(Path.Combine(Repo(), "infra", "modules", "pilot.bicep"));
+        Assert.Contains("{ name: 'joinerPasses', pk: '/projectId', uniqueKeys: [], defaultTtl: -1 }", pilot);
+
+        var deploy = File.ReadAllText(Path.Combine(Repo(), "tools", "deploy_free.sh"));
+        Assert.Contains("[[ \"${prov,,}\" == \"true\" ]] && roles+=(User.ReadWrite.All LicenseAssignment.ReadWrite.All UserAuthenticationMethod.ReadWrite.All)", deploy);
+        Assert.Contains("[[ \"${pkgs,,}\" == \"true\" ]] && roles+=(Group.ReadWrite.All)", deploy);
+
+        var worker = File.ReadAllText(Path.Combine(Repo(), "src", "worker", "PmoReview.Worker", "Program.cs"));
+        Assert.Contains("var provisionJoiners = autoAssign &&", worker);
+        Assert.Contains("var autoCreatePackages = autoAssign &&", worker);
+    }
+
     [Fact]
     public void Budget_is_the_approved_phase2_cap_with_staged_alerts()
     {
@@ -164,7 +196,7 @@ public partial class InfraConsistencyTests
         Assert.Contains(runtime, new[] { "dotnet-isolated:8.0", "dotnet-isolated:9.0", "dotnet-isolated:10.0" });
     }
 
-    [GeneratedRegex(@"\{ name: '(?<name>\w+)', pk: '(?<pk>[^']+)', uniqueKeys: \[(?<keys>.*?)\] \}$", RegexOptions.Multiline)]
+    [GeneratedRegex(@"\{ name: '(?<name>\w+)', pk: '(?<pk>[^']+)', uniqueKeys: \[(?<keys>.*?)\](, defaultTtl: -?\d+)? \}( //.*)?$", RegexOptions.Multiline)]
     private static partial Regex ContainerLine();
 
     [GeneratedRegex(@"paths: \[[^\]]*\]")]

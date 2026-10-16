@@ -70,6 +70,12 @@ public sealed record EntraHandoff : IDocument
     public bool PreExistingAssignment { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? LastCheckedAt { get; init; }
+    /// <summary>Joiner provisioning (Phase 2c): the joiner's Entra object id once found or created.</summary>
+    public string? JoinerObjectId { get; init; }
+    /// <summary>True only when the worker created the account; licence and Temporary Access Pass are issued only then.</summary>
+    public bool JoinerAccountCreatedByApp { get; init; }
+    public DateTimeOffset? JoinerLicensedAt { get; init; }
+    public DateTimeOffset? TapIssuedAt { get; init; }
     /// <summary>Error category of the last failed sync (no details), cleared on success.</summary>
     public string? LastSyncError { get; init; }
     public IReadOnlyList<HandoffEvent> History { get; init; } = [];

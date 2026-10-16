@@ -73,6 +73,34 @@ Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script
 
 To switch auto-assign off: set `enableAutoAssign` false, what-if, apply (the worker and app go back to link mode; queued records stay queued and show `AutoAssignOff`).
 
+## Phase 2c — automatic accounts and packages (approved by Gokul, 16 Oct 2026)
+Choices: **Temporary Access Pass** (shown once), **packages set up on mapping publish**, **P2 licence**. Off by default; both need auto-assign.
+
+**Flow:** Maintainer publishes a mapping (group `SAMPLE-GRP-…`) → within 5 min the worker creates the group if missing, the access package `<role> – <env> [<mapping id>]`, its Member role and the auto-assign policy, and publishes the next mapping version with the link → PMO request (joiner `sample.…@<tenant>`) → Analyze → second Reviewer accepts → worker: creates the account if missing → P2 licence → Temporary Access Pass (from the reviewed start date, 8 h) → `adminAdd` → Delivered. A PMO/Reviewer clicks **Show pass (once)** on the request and gives it to the joiner in person or by phone.
+
+**Setup (once):**
+| # | Where | Step |
+|---|---|---|
+| 1 | Entra admin center (pilot.admin) | **Protection > Authentication methods > Policies > Temporary Access Pass**: Enable, target **All users**; Configure: maximum lifetime at least **8 hours**, one-time use **No**. |
+| 2 | Cloud Shell | `tools/deploy_free.sh params <sub> --provision` (reads tenant domain + P2 skuId) → `whatif` → **approved** → `apply`. Adds the `joinerPasses` container and two container-scoped Cosmos roles; no new paid resources. |
+| 3 | Cloud Shell | `tools/deploy_free.sh grant-graph <sub>` if `apply` could not; expect also User.ReadWrite.All, LicenseAssignment.ReadWrite.All, UserAuthenticationMethod.ReadWrite.All, Group.ReadWrite.All. Wait ~15 min. |
+
+**E2E test (2c):**
+1. Maintainer: new draft mapping `A-MAP-ENG-TEST2` (SAMPLE Data Engineer, **Test**, group `SAMPLE-GRP-ALPHA-TEST2-ENG`, no link) → Publish. Within 5–10 min Reference data shows **v2** with a link (or "Set-up failed: <category>").
+2. PMO: request for `sample.joiner3@<tenant>` (a user that does **not** exist), SAMPLE Data Engineer, Test, start today, end ≤ 180 days → Analyze → Gmail Accepts (blocked) → pilot.admin Accepts → *queued*.
+3. Within 5–15 min the panel shows *Joiner account: created by the app · licence assigned*, a **Show pass (once)** button, then *Access delivered by Entra*.
+4. Show the pass; sign in at https://myaccess.microsoft.com as the joiner with it (InPrivate); a second click shows "already shown".
+5. Entra: user exists with P2 licence; member of `SAMPLE-GRP-ALPHA-TEST2-ENG`.
+
+| Category | Meaning / action |
+|---|---|
+| `JoinerNameNotAllowed` / `JoinerDomainNotAllowed` | UPN must start `sample.` and end with the tenant domain. |
+| `JoinerCreateRejected` | Graph refused the user (e.g. UPN domain not verified). |
+| `LicenseUnavailable` | No free P2 seat (or usage location missing). |
+| `TapRejected` | TAP method not enabled, or lifetime outside the policy (setup step 1). |
+| `GroupNameNotAllowed` / `GroupNotAllowed` | Mapping group must start `SAMPLE-GRP-`; an existing group must be a security group and not role-assignable. |
+| `CatalogResourcePending` | The group is being added to the catalog; continues on the next run. |
+
 ## Validation
 - The worker log shows `handoff-sync done checked=… changed=…`.
 - No write call to Graph: the worker identity holds only `EntitlementManagement.Read.All` (`grant-graph` prints the list).

@@ -14,6 +14,8 @@ public enum Permission
     ViewReferenceData,
     ManageReferenceData,
     RecoverRuns,
+    /// <summary>Phase 2c: show a joiner's Temporary Access Pass once.</summary>
+    RevealJoinerPass,
 }
 
 /// <summary>Role → permission table. Single place to change who can do what.</summary>
@@ -21,8 +23,8 @@ public static class AccessPolicy
 {
     private static readonly Dictionary<AppRole, Permission[]> Table = new()
     {
-        [AppRole.PMO] = [Permission.ViewRequests, Permission.EditRequests, Permission.AnalyzeRequests, Permission.ViewRuns, Permission.ViewReferenceData],
-        [AppRole.Reviewer] = [Permission.ViewRequests, Permission.ViewRuns, Permission.RecordDecision, Permission.ViewReferenceData],
+        [AppRole.PMO] = [Permission.ViewRequests, Permission.EditRequests, Permission.AnalyzeRequests, Permission.ViewRuns, Permission.ViewReferenceData, Permission.RevealJoinerPass],
+        [AppRole.Reviewer] = [Permission.ViewRequests, Permission.ViewRuns, Permission.RecordDecision, Permission.ViewReferenceData, Permission.RevealJoinerPass],
         [AppRole.Maintainer] = [Permission.ViewReferenceData, Permission.ManageReferenceData],
         [AppRole.Operator] = [Permission.ViewRuns, Permission.RecoverRuns],
     };
