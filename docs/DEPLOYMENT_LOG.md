@@ -17,5 +17,6 @@
 | — | Optional live check 3: same request edited to `SAMPLE Data Engineer` / Dev, re-analysed (expect mapping Matched, new run for revision 2) | optional | — |
 | — | Cost re-check +24–48 h (`tools/cost_check.sh`) | pending (on/after 2026-10-17 03:00 UTC) | — |
 | 2026-10-16 | Decision: **Phase 2 Entra hand-off** | Option A (access packages), Entra approves, background worker (Flex Consumption + storage, managed identity, Graph read-only), budget ₹2,000/month with 50/80/100% alerts, paid from Azure credits. Built and tested locally; **not deployed** (needs the Phase 2 what-if + "approved"). | Gokul |
+| 2026-10-16 | Entra ID P2 **trial active** | Tenant Default Directory: Microsoft Entra ID P2, 100 licences, 0 assigned (Entra admin center > Licenses). Trial is 30 days: decide before ~15 Nov 2026 (let it lapse or buy). Not an Azure charge. | Gokul |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |
