@@ -86,11 +86,11 @@ Choices: **Temporary Access Pass** (shown once), **packages set up on mapping pu
 | 3 | Cloud Shell | `tools/deploy_free.sh grant-graph <sub>` if `apply` could not; expect also User.ReadWrite.All, LicenseAssignment.ReadWrite.All, UserAuthenticationMethod.ReadWrite.All, Group.ReadWrite.All. Wait ~15 min. |
 
 **E2E test (2c):**
-1. Maintainer: new draft mapping `A-MAP-ENG-TEST2` (SAMPLE Data Engineer, **Test**, group `SAMPLE-GRP-ALPHA-TEST2-ENG`, no link) → Publish. Within 5–10 min Reference data shows **v2** with a link (or "Set-up failed: <category>").
+1. After apply, every latest published SAMPLE mapping without a package is set up within 5–10 min (sample data: `A-MAP-ENG-TEST`, `A-MAP-ENG-PROD-1`, `A-MAP-ENG-PROD-2`, `B-MAP-TESTER-DEV`). Reference data shows a new version of each with a link (or "Set-up failed: <category>"). Use `A-MAP-ENG-TEST` (SAMPLE Data Engineer, **Test**, group `SAMPLE-GRP-ALPHA-TEST-ENG`) for the test; do not add a second Test mapping for the same role (that makes the review *Ambiguous*).
 2. PMO: request for `sample.joiner3@<tenant>` (a user that does **not** exist), SAMPLE Data Engineer, Test, start today, end ≤ 180 days → Analyze → Gmail Accepts (blocked) → pilot.admin Accepts → *queued*.
 3. Within 5–15 min the panel shows *Joiner account: created by the app · licence assigned*, a **Show pass (once)** button, then *Access delivered by Entra*.
 4. Show the pass; sign in at https://myaccess.microsoft.com as the joiner with it (InPrivate); a second click shows "already shown".
-5. Entra: user exists with P2 licence; member of `SAMPLE-GRP-ALPHA-TEST2-ENG`.
+5. Entra: user exists with P2 licence; member of `SAMPLE-GRP-ALPHA-TEST-ENG`.
 
 | Category | Meaning / action |
 |---|---|
