@@ -119,7 +119,7 @@ def main() -> int:
         "",
         "- **90% reviewer agreement** and **25% time saving** targets need real reviewers and the AI model on real (non-SAMPLE) requests. "
         "They are measured after promotion to the paid environment, not here.",
-        "- Live Azure behaviour (SWA Free gateway, Cosmos free tier, Entra sign-in, cost) is verified in Phase 6 after deployment approval.",
+        "- Live Azure behaviour is recorded in `docs/DEPLOYMENT_LOG.md` (16 Oct 2026: Entra sign-in, deny-by-default, one SAMPLE request analysed end to end on SWA Free + Cosmos free tier) and cost in `docs/COSTS.md` (24–48 h re-check pending).",
         "",
     ]
     args.out.write_text("\n".join(lines), encoding="utf-8")
