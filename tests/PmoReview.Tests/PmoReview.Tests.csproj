@@ -16,6 +16,10 @@
     <ProjectReference Include="../../src/adapters/PmoReview.Adapters/PmoReview.Adapters.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Acceptance suite lives in tests/acceptance (run via tools/run_acceptance.sh). -->
+    <Compile Include="../acceptance/**/*.cs" LinkBase="Acceptance" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="../../tools/sample_data/sample-data.json" Link="sample-data.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../fixtures/*.json" LinkBase="fixtures" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

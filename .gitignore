@@ -12,3 +12,6 @@ TestResults/
 tests/acceptance/out/
 __pycache__/
 .local/
+src/web/test-results/
+src/web/playwright-report/
+*.tsbuildinfo

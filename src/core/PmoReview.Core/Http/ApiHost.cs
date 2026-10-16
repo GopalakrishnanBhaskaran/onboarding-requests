@@ -61,6 +61,9 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
     public const int MaxBodyBytes = 64 * 1024;
     private readonly List<(string Method, string[] Segments, RouteHandler Handler)> _routes = [];
 
+    /// <summary>"METHOD template" for every mapped route. Used by acceptance gates (no fulfilment routes).</summary>
+    public IReadOnlyList<string> Routes => _routes.Select(r => $"{r.Method} {string.Join('/', r.Segments)}").ToList();
+
     public ApiHost Map(string method, string template, RouteHandler handler)
     {
         _routes.Add((method.ToUpperInvariant(), template.Trim('/').Split('/'), handler));
