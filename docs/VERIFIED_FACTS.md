@@ -9,7 +9,7 @@ Every free-tier limit, runtime and platform behaviour this pilot depends on. Not
 | F1 | SWA managed Functions trigger types | HTTP triggers and bindings only. No Durable Functions. | https://learn.microsoft.com/azure/static-web-apps/apis-functions | 2026-10-16 | SEARCH |
 | F2 | SWA managed Functions managed identity | Not supported. Key Vault references not supported. | https://learn.microsoft.com/azure/static-web-apps/apis-functions | 2026-10-16 | SEARCH |
 | F3 | SWA API request timeout (all backends) | **45 seconds** max per API request. Gateway returns 500; function may keep running. | https://learn.microsoft.com/azure/static-web-apps/apis-overview | 2026-10-16 | SEARCH — **CONFLICT** with 60 s model budget in prompt (see Q3) |
-| F4 | SWA managed Functions .NET runtime | Search extract showed `dotnet:8.0` (in-process) and isolated 6.0/7.0 (retired 30 Apr 2025). `dotnet-isolated:8.0` seen in use (GitHub issue, Jun 2026) but **not confirmed in the docs table**. No newer isolated version confirmed. | https://learn.microsoft.com/azure/static-web-apps/languages-runtimes | 2026-10-16 | **UNVERIFIED — blocker** (see Q1) |
+| F4 | SWA managed Functions .NET runtime | Current docs table lists **.NET 10.0 isolated, `dotnet-isolated:10.0`** (no end date); .NET 8/9 isolated end 10 Nov 2026. Older Q&A posts (pre-Oct 2026) said 10.0 was not yet supported; an Oct 2026 GitHub comment says it now is. **Decision Q1 = A: .NET 10 isolated.** Confirm on first deploy. | https://learn.microsoft.com/azure/static-web-apps/languages-runtimes , https://github.com/Azure/static-web-apps-cli/issues/1002 | 2026-10-16 | SEARCH — re-read page; prove with the Phase 6 deploy |
 | F5 | Azure Functions in-process .NET model | End of support **10 Nov 2026**. | https://azure.microsoft.com/updates/retirement-support-for-the-inprocess-model-for-net-apps-in-azure-functions-ends-10-november-2026 | 2026-10-16 | SEARCH |
 | F6 | .NET 8 end of support | **10 Nov 2026** (25 days from today). .NET 10 LTS supported to 14 Nov 2028. | https://learn.microsoft.com/azure/azure-functions/migrate-dotnet-to-isolated-model | 2026-10-16 | SEARCH — **CONFLICT** (see Q1) |
 | F7 | SWA Free plan quotas | 10 apps/subscription, 250 MB storage/app, 100 GB bandwidth/month, 3 preview envs, 2 custom domains, 30 MB request size. | https://learn.microsoft.com/azure/static-web-apps/quotas | 2026-10-16 | SEARCH |
@@ -25,6 +25,17 @@ Every free-tier limit, runtime and platform behaviour this pilot depends on. Not
 | F17 | Cosmos DB unique keys | Scoped to a logical partition; defined only at container creation. | https://learn.microsoft.com/azure/cosmos-db/unique-keys | — | **UNVERIFIED** (prior knowledge) |
 | F18 | Azure Policy built-in "Allowed resource types" | Mode **Indexed**: only resource types that support tags and location are evaluated. Behaviour for Cosmos child types (`sqlDatabases`, `containers`) and SWA child types not confirmed. | https://learn.microsoft.com/azure/governance/policy/tutorials/disallowed-resources | 2026-10-16 | SEARCH — see Q5 |
 | F19 | Cost Management budget currency | Budget amount is in the billing account currency. ₹1 only works if billing currency is INR. | https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets | 2026-10-16 | **UNVERIFIED** — see Q4 |
+
+| F20 | SWA config: whole-site sign-in | `routes: [{route:"/*", allowedRoles:["authenticated"]}]` + `responseOverrides.401` redirect to `/.auth/login/aad`; unused providers blocked with `statusCode: 404` routes. Works on Free. | https://learn.microsoft.com/azure/static-web-apps/configuration | — | **UNVERIFIED** (prior knowledge; re-read) |
+
+### SWA auth: Free vs Standard (as used by this pilot)
+| Feature | Free | Standard | Pilot uses |
+|---|---|---|---|
+| Pre-configured Entra ID provider | Yes | Yes | Yes |
+| Route `allowedRoles` (`authenticated`) | Yes | Yes | Yes |
+| Custom roles via invitations | Yes (F9 extract) | Yes | No |
+| Custom roles via serverless function | No (F9) | Yes | No — roles live in Cosmos `userAccess` |
+| Custom Entra registration (tenant restriction) | Unverified (F11) | Yes | No (Q2 accepted) |
 
 ## Re-verification rule
 Before Phase 6 what-if, every row must be `VERIFIED` (live page read, date recorded) or explicitly accepted by Gokul.

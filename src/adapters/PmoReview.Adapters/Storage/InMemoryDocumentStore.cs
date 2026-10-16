@@ -1,0 +1,89 @@
+using PmoReview.Core.Common;
+using PmoReview.Core.Domain;
+using PmoReview.Core.Storage;
+
+namespace PmoReview.Adapters.Storage;
+
+/// <summary>
+/// Test and local-dev store with the same semantics as Cosmos: partition-scoped reads,
+/// id + unique-key conflicts per partition, ETag checks on replace, deep copies on every read.
+/// </summary>
+public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys) : IDocumentStore<T> where T : class, IDocument
+{
+    private readonly Lock _gate = new();
+    private readonly Dictionary<(string Pk, string Id), (string Json, string ETag)> _docs = [];
+
+    public Task<Versioned<T>?> GetAsync(string partitionKey, string id, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(_docs.TryGetValue((partitionKey, id), out var e) ? Read(e) : null);
+        }
+    }
+
+    public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<Versioned<T>> items = _docs.Where(d => d.Key.Pk == partitionKey).Select(d => Read(d.Value)).ToList();
+            return Task.FromResult(items);
+        }
+    }
+
+    public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var key = (document.PartitionKey, document.Id);
+            if (_docs.ContainsKey(key)) throw new DocumentConflictException("id exists");
+            EnsureUnique(document, except: null);
+            var entry = (Json.Serialize(document), NewEtag());
+            _docs[key] = entry;
+            return Task.FromResult(Read(entry));
+        }
+    }
+
+    public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var key = (document.PartitionKey, document.Id);
+            if (!_docs.TryGetValue(key, out var current) || current.ETag != ifMatchETag)
+                throw new ConcurrencyException("etag mismatch");
+            EnsureUnique(document, except: document.Id);
+            var entry = (Json.Serialize(document), NewEtag());
+            _docs[key] = entry;
+            return Task.FromResult(Read(entry));
+        }
+    }
+
+    private void EnsureUnique(T document, string? except)
+    {
+        foreach (var keyOf in uniqueKeys)
+        {
+            var value = keyOf(document);
+            var clash = _docs
+                .Where(d => d.Key.Pk == document.PartitionKey && d.Key.Id != except)
+                .Select(d => Json.Deserialize<T>(d.Value.Json)!)
+                .Any(other => keyOf(other) == value);
+            if (clash) throw new DocumentConflictException("unique key exists");
+        }
+    }
+
+    private static Versioned<T> Read((string Json, string ETag) e) => new(Json.Deserialize<T>(e.Json)!, e.ETag);
+
+    private static string NewEtag() => $"\"{Guid.NewGuid():n}\"";
+}
+
+public static class InMemoryDataStores
+{
+    /// <summary>Unique keys mirror the Cosmos container definitions in <see cref="CosmosSchema"/>.</summary>
+    public static DataStores Create() => new(
+        new InMemoryDocumentStore<Project>(),
+        new InMemoryDocumentStore<RequirementRule>(r => $"{r.RuleId}|{r.Version}"),
+        new InMemoryDocumentStore<RoleMapping>(m => $"{m.MappingId}|{m.Version}"),
+        new InMemoryDocumentStore<AccessRequest>(),
+        new InMemoryDocumentStore<ReviewRun>(r => r.IdempotencyKey),
+        new InMemoryDocumentStore<ReviewDecision>(d => $"{d.ReviewRunId}|{d.Reviewer}"),
+        new InMemoryDocumentStore<UserAccess>());
+}

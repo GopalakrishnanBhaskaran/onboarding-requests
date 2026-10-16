@@ -27,7 +27,7 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 | Reviewer | `RuleOnlyReviewModel` | `AzureOpenAIReviewModel` |
 | Logs | Structured logs only | App Insights with sampling |
 
-.NET target version: **pending Q1 in `docs/PHASE0_PLAN.md`.**
+.NET target: **.NET 10, isolated worker** (`apiRuntime: dotnet-isolated:10.0`; Q1 = A, see VERIFIED_FACTS F4).
 
 ## Layout (WAT)
 - `workflows/` SOPs Claude Code follows, one per phase plus cost guardrails and incident recovery.
@@ -40,8 +40,9 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 ## Commands (filled in as each phase lands)
 | Task | Command |
 |---|---|
-| Build API + core | `dotnet build` (Phase 1) |
-| Unit/contract/security tests | `dotnet test` (Phase 1) |
+| Build API + core | `dotnet build` |
+| Unit/contract/security tests | `dotnet test` (Microsoft.Testing.Platform runner, set in `global.json`) |
+| Validate sample data | `python3 tools/seed_sample_data.py --dry-run` |
 | Web dev | `npm --prefix src/web run dev` (Phase 4) |
 | Local end-to-end | `swa start` (Phase 4) |
 | Acceptance | `tools/run_acceptance.sh` (Phase 5) |

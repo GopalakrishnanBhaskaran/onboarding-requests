@@ -1,0 +1,13 @@
+bin/
+obj/
+node_modules/
+dist/
+.vs/
+*.user
+local.settings.json
+.env
+.env.*
+!.env.example
+TestResults/
+tests/acceptance/out/
+__pycache__/
