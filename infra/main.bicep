@@ -38,6 +38,12 @@ param workerLocation string = location
 @description('Worker .NET version on Flex Consumption. Must match the worker TargetFramework.')
 param workerRuntimeVersion string = '10.0'
 
+@description('Auto-assign (approved by Gokul 16 Oct 2026): the worker files the Entra assignment after a second Reviewer accepts. Needs entraCatalogId.')
+param enableAutoAssign bool = false
+
+@description('GUID of the Entra catalog the worker may assign from (printed by: bash tools/setup_entra.sh package ...).')
+param entraCatalogId string = ''
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -75,6 +81,8 @@ module handoff 'modules/handoff.bicep' = if (enableHandoff && deployWorker) {
     tags: tags
     cosmosAccountName: pilot.outputs.cosmosAccountName
     workerRuntimeVersion: workerRuntimeVersion
+    autoAssign: enableAutoAssign
+    entraCatalogId: entraCatalogId
   }
 }
 

@@ -1,6 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
-const BANNER = 'This checks request readiness. It does not approve or grant access.';
+const BANNER = 'This checks request readiness. A ready review is not an access decision.';
 
 /** SWA CLI emulator reads the mock client principal from this cookie (same shape SWA injects in Azure). */
 async function signIn(context: BrowserContext, userId: string) {

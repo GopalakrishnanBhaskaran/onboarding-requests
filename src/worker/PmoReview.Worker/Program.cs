@@ -17,6 +17,12 @@ if (!Uri.TryCreate(Env("COSMOS_ENDPOINT"), UriKind.Absolute, out var cosmosEndpo
 
 var credential = new Azure.Identity.DefaultAzureCredential();
 
+// Auto-assign (approved 16 Oct 2026): the worker files Entra assignment requests for Queued hand-offs, only on
+// access packages in the one allowed catalog and only through the app's own assignment policy.
+var autoAssign = string.Equals(Env("ENTRA_AUTO_ASSIGN"), "true", StringComparison.OrdinalIgnoreCase);
+if (autoAssign && !Guid.TryParse(Env("ENTRA_ALLOWED_CATALOG_ID"), out _))
+    throw new InvalidOperationException("ENTRA_AUTO_ASSIGN=true needs ENTRA_ALLOWED_CATALOG_ID (the PMO catalog's GUID).");
+
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
     .ConfigureServices(services =>
@@ -28,7 +34,11 @@ var host = new HostBuilder()
             new GraphEntraGovernanceReader(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, credential));
         services.AddSingleton(sp => new HandoffSync(
             sp.GetRequiredService<DataStores>(), sp.GetRequiredService<IEntraGovernanceReader>(),
-            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger<HandoffSync>()));
+            sp.GetRequiredService<IClock>(), sp.GetRequiredService<ILoggerFactory>().CreateLogger<HandoffSync>(),
+            autoAssign
+                ? new GraphEntraAssignmentWriter(new HttpClient { Timeout = TimeSpan.FromSeconds(30) }, credential,
+                    Env("ENTRA_ALLOWED_CATALOG_ID")!, Env("ENTRA_AUTO_ASSIGN_POLICY") ?? "PMO Review auto-assign")
+                : null));
     })
     .Build();
 

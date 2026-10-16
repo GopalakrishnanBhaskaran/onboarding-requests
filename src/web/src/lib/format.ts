@@ -31,6 +31,7 @@ export const fieldLabel: Record<string, string> = {
 
 export const handoffLabel: Record<string, string> = {
   NotEligible: 'Cannot hand off',
+  Queued: 'Accepted, Entra request queued',
   AwaitingJoinerRequest: 'Waiting for the new joiner to request',
   PendingApproval: 'Waiting for Entra approval',
   Delivering: 'Approved, access being added',
@@ -43,6 +44,7 @@ export const handoffLabel: Record<string, string> = {
 
 export const handoffColor: Record<string, 'informative' | 'warning' | 'success' | 'danger' | 'subtle'> = {
   NotEligible: 'danger',
+  Queued: 'informative',
   AwaitingJoinerRequest: 'informative',
   PendingApproval: 'warning',
   Delivering: 'informative',

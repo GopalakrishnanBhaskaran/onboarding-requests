@@ -10,17 +10,25 @@ public sealed record HandoffSettings
 {
     /// <summary>Off in the zero-cost pilot; on once the Entra access packages and the sync worker exist.</summary>
     public bool Enabled { get; init; }
-    /// <summary>The Reviewer who accepts must not be the person who created or analysed the request.</summary>
+    /// <summary>The Reviewer who accepts must not be the person who created or analysed the request. Always on with <see cref="AutoAssign"/>.</summary>
     public bool RequireSeparateReviewer { get; init; }
+    /// <summary>
+    /// The acceptance is the access decision: the record starts Queued and the worker files the Entra assignment.
+    /// Off: the record carries the My Access link and the joiner requests; Entra's approver decides.
+    /// </summary>
+    public bool AutoAssign { get; init; }
+    public bool SeparateReviewerRequired => RequireSeparateReviewer || AutoAssign;
 }
 
 /// <summary>
-/// Turns an accepted review into an Entra hand-off record: the My Access link for the mapped access package.
-/// Nothing here approves or assigns. Entra applies its own approval policy and expiry.
+/// Turns an accepted review into an Entra hand-off record. Link mode: the My Access link for the mapped access
+/// package. Auto-assign mode: a Queued record the worker turns into one Entra assignment request.
+/// Nothing here calls Entra; Entra adds the access and removes it on the end date.
 /// </summary>
 public sealed class HandoffService(DataStores stores, HandoffSettings settings, IClock clock)
 {
     public bool Enabled => settings.Enabled;
+    public bool AutoAssign => settings.Enabled && settings.AutoAssign;
 
     /// <summary>
     /// Called after a Reviewer records a decision. Only "Accepted" on a completed, ready review creates a record;
@@ -84,7 +92,7 @@ public sealed class HandoffService(DataStores stores, HandoffSettings settings, 
         if (request is null || request.Value.Revision != run.RequestRevision)
             return NotEligible("The request was edited after this review. Analyze the new revision and accept that review.");
 
-        if (settings.RequireSeparateReviewer && (decision.Reviewer == request.Value.CreatedBy || decision.Reviewer == run.InitiatedBy))
+        if (settings.SeparateReviewerRequired && (decision.Reviewer == request.Value.CreatedBy || decision.Reviewer == run.InitiatedBy))
             return NotEligible("The accepting Reviewer created or analysed this request. A different Reviewer must accept it.");
 
         var m = run.Result!.MappingAssessment;
@@ -99,13 +107,22 @@ public sealed class HandoffService(DataStores stores, HandoffSettings settings, 
         if (string.IsNullOrWhiteSpace(s.JoinerUpn))
             return NotEligible("The reviewed revision has no new joiner sign-in name. Add it, Analyze again and accept the new review.");
 
-        return baseRecord with
+        var ready = baseRecord with
         {
             MappingId = m.MappingId,
             MappingVersion = m.MappingVersion,
             AccessPackageId = mapping.Value.AccessPackageId,
             MyAccessLink = mapping.Value.MyAccessLink,
-            History = [new HandoffEvent(clock.UtcNow, HandoffStatus.AwaitingJoinerRequest, "Review accepted. Send the My Access link to the new joiner.")],
+        };
+        if (!settings.AutoAssign)
+            return ready with { History = [new HandoffEvent(clock.UtcNow, HandoffStatus.AwaitingJoinerRequest, "Review accepted. Send the My Access link to the new joiner.")] };
+
+        if (s.EndDate is null)
+            return NotEligible("The reviewed revision has no end date. Access is only added for a fixed period.");
+        return ready with
+        {
+            Status = HandoffStatus.Queued,
+            History = [new HandoffEvent(clock.UtcNow, HandoffStatus.Queued, "Review accepted by a second Reviewer. The app files the Entra assignment within 5 minutes.")],
         };
     }
 }

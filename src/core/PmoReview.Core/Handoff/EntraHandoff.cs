@@ -4,13 +4,17 @@ using PmoReview.Core.Domain;
 namespace PmoReview.Core.Handoff;
 
 /// <summary>
-/// Where the request stands in Microsoft Entra. This app never approves or assigns:
-/// Entra entitlement management does both. These values mirror what Entra reports.
+/// Where the request stands in Microsoft Entra. Two modes:
+/// link mode (the joiner requests in My Access, the Entra approver decides) and auto-assign mode
+/// (a second Reviewer's acceptance is the access decision; the worker files one Entra "adminAdd" request).
+/// Entra adds the access and removes it on the end date in both modes; these values mirror what Entra reports.
 /// </summary>
 public enum HandoffStatus
 {
     /// <summary>Accepted review, but something stops the hand-off (see <see cref="EntraHandoff.Reason"/>).</summary>
     NotEligible,
+    /// <summary>Auto-assign mode: accepted; the worker will file the Entra assignment request on its next run.</summary>
+    Queued,
     /// <summary>Link issued; the new joiner has not requested the access package yet.</summary>
     AwaitingJoinerRequest,
     /// <summary>Request is in Entra waiting for the approver.</summary>

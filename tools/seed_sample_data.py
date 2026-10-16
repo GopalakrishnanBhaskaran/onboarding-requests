@@ -71,6 +71,47 @@ def user_access_doc(user_id: str, project: str, roles: list[str]) -> dict:
     return {"id": f"{user_id}:{project}", "userId": user_id, "projectId": project, "roles": roles, "isSample": True, "schemaVersion": 1}
 
 
+MY_ACCESS = re.compile(r"^https://myaccess\.microsoft\.com/(@[A-Za-z0-9.-]+)?#/access-packages/(?P<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$")
+
+
+def next_mapping_version(versions: list[dict], link: str) -> dict | None:
+    """Pure: the new version to publish, or None if the latest published version already carries the link."""
+    m = MY_ACCESS.match(link)
+    if not m:
+        raise SystemExit("not a My Access access package link")
+    if not versions:
+        raise SystemExit("mapping not found; create it in the app first")
+    latest = max(versions, key=lambda v: v["version"])
+    published = [v for v in versions if v.get("publicationStatus") == "Published"]
+    if published and max(published, key=lambda v: v["version"]) is latest and latest.get("myAccessLink") == link:
+        return None
+    base = max(published or versions, key=lambda v: v["version"])
+    version = latest["version"] + 1
+    doc = {k: v for k, v in base.items() if not k.startswith("_")}
+    doc.update({"id": f"{base['mappingId']}:v{version}", "version": version, "myAccessLink": link,
+                "accessPackageId": m.group("id").lower(), "publicationStatus": "Published", "owner": "setup-script"})
+    return doc
+
+
+def publish_mapping_link(db, project: str, mapping_id: str, link: str, dry_run: bool = False) -> int:
+    if not project.startswith("SAMPLE-"):
+        raise SystemExit("Pilot only changes SAMPLE- projects")
+    container = db.get_container_client("roleMappings")
+    versions = list(container.query_items(
+        "SELECT * FROM c WHERE c.projectId = @p AND c.mappingId = @m",
+        parameters=[{"name": "@p", "value": project}, {"name": "@m", "value": mapping_id}], partition_key=project))
+    doc = next_mapping_version(versions, link)
+    if doc is None:
+        print(f"mapping {mapping_id}: latest published version already has this link (no change)")
+        return 0
+    if dry_run:
+        print(json.dumps(doc, indent=2))
+        return 0
+    container.create_item(doc)
+    print(f"published {doc['id']} with the access package link")
+    return 0
+
+
 def connect(database: str):
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
@@ -90,6 +131,8 @@ def main() -> int:
     ap.add_argument("--register-user", metavar="USER_ID", help="SWA client principal userId of a test account")
     ap.add_argument("--project", help="SAMPLE- project for --register-user")
     ap.add_argument("--roles", help="comma-separated roles for --register-user")
+    ap.add_argument("--publish-mapping-link", nargs=2, metavar=("MAPPING_ID", "MY_ACCESS_LINK"),
+                    help="admin setup: publish the next version of a SAMPLE mapping with this Entra My Access link (no-op if the latest published version has it)")
     args = ap.parse_args()
 
     if args.register_user:
@@ -102,6 +145,11 @@ def main() -> int:
         connect(args.database).get_container_client("userAccess").upsert_item(doc)
         print(f"registered {doc['id']} roles={doc['roles']}")
         return 0
+
+    if args.publish_mapping_link:
+        if not args.project:
+            ap.error("--publish-mapping-link needs --project")
+        return publish_mapping_link(connect(args.database), args.project, *args.publish_mapping_link, dry_run=args.dry_run)
 
     data = json.loads(args.data.read_text(encoding="utf-8"))
     problems = validate(data)

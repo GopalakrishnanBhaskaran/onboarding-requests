@@ -7,6 +7,12 @@
 #       (temporary password shown ONCE, must be changed at first sign-in). Assigns an Entra ID P2 / Governance
 #       licence (trial) to the joiner and to the approver, if one is available.
 #
+#   bash tools/setup_entra.sh package <tenant-domain> [mapping-id] [group] [package-name] [project]
+#       Auto-assign setup for one role mapping (defaults: A-MAP-ENG-DEV, SAMPLE-GRP-ALPHA-DEV-ENG,
+#       "SAMPLE Data Engineer – Dev", SAMPLE-ALPHA). Signs in to Microsoft Graph (device code) and creates or reuses
+#       the catalog, access package and the "PMO Review auto-assign" policy (tools/setup_entra_package.ps1); then
+#       publishes the mapping with the My Access link and sets enableAutoAssign + entraCatalogId in .local/params.json.
+#
 #   tools/setup_entra.sh check
 #       Read-only: lists Entra ID P2 / Governance licences in the tenant and the SAMPLE group/user.
 set -euo pipefail
@@ -76,5 +82,39 @@ case "$CMD" in
     fi
     echo "Next: create the catalog and access package in the Entra admin center (workflows/08-entra-handoff.md, steps 4-6)."
     ;;
-  *) echo "usage: setup_entra.sh identities <tenant-domain> [approver-upn] | check"; exit 1 ;;
+  package)
+    DOMAIN="${2:?tenant domain, e.g. contoso.onmicrosoft.com}"
+    MAPPING="${3:-A-MAP-ENG-DEV}"; PGROUP="${4:-$GROUP}"; PNAME="${5:-SAMPLE Data Engineer – Dev}"; PROJECT="${6:-SAMPLE-ALPHA}"
+    ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    OUT="$ROOT/.local/entra-package.json"
+    rm -f "$OUT"
+    echo "== Entra: catalog, access package, auto-assign policy (sign in with the device code shown) =="
+    pwsh -NoProfile -File "$ROOT/tools/setup_entra_package.ps1" -TenantDomain "$DOMAIN" -GroupName "$PGROUP" -PackageName "$PNAME" -OutFile "$OUT"
+    [[ -s "$OUT" ]] || { echo "Entra setup did not finish; nothing else changed."; exit 1; }
+    CAT=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['catalogId'])" "$OUT")
+    LINK=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['myAccessLink'])" "$OUT")
+
+    echo "== App: publish $MAPPING with the access package link =="
+    pip install --user -q -r "$ROOT/tools/requirements.txt"
+    COSMOS=$(az cosmosdb list -g rg-pmo-review-pilot --query "[0].name" -o tsv)
+    COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g rg-pmo-review-pilot -n "$COSMOS" --type connection-strings \
+      --query "connectionStrings[0].connectionString" -o tsv 2>/dev/null) \
+      python3 "$ROOT/tools/seed_sample_data.py" --project "$PROJECT" --publish-mapping-link "$MAPPING" "$LINK"
+
+    if [[ -f "$ROOT/.local/params.json" ]]; then
+      python3 - "$ROOT/.local/params.json" "$CAT" <<'PY'
+import json, sys
+p, cat = sys.argv[1], sys.argv[2]
+d = json.load(open(p))
+d["parameters"]["enableAutoAssign"] = {"value": True}
+d["parameters"]["entraCatalogId"] = {"value": cat}
+json.dump(d, open(p, "w"), indent=2)
+print(f"params: enableAutoAssign=true, entraCatalogId={cat}")
+PY
+    else
+      echo "No .local/params.json: add enableAutoAssign=true and entraCatalogId=$CAT before the what-if."
+    fi
+    echo "Next: tools/deploy_free.sh whatif <subscriptionId> .local/params.json  (then 'approved', apply)."
+    ;;
+  *) echo "usage: setup_entra.sh identities <tenant-domain> [approver-upn] | package <tenant-domain> [...] | check"; exit 1 ;;
 esac

@@ -164,10 +164,10 @@ export interface RoleMapping {
 }
 
 export type HandoffStatus =
-  | 'NotEligible' | 'AwaitingJoinerRequest' | 'PendingApproval' | 'Delivering' | 'Delivered'
+  | 'NotEligible' | 'Queued' | 'AwaitingJoinerRequest' | 'PendingApproval' | 'Delivering' | 'Delivered'
   | 'Denied' | 'Cancelled' | 'Failed' | 'Expired';
 
-/** Where an accepted review stands in Microsoft Entra. Entra approves and assigns; this app only reports. */
+/** Where an accepted review stands in Microsoft Entra (link mode or auto-assign mode). Entra adds and removes the access. */
 export interface EntraHandoff {
   id: string;
   requestId: string;

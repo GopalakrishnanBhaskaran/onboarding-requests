@@ -39,6 +39,37 @@ The app holds only Graph `EntitlementManagement.Read.All`. It cannot approve, as
 7. Optional: request a later end date than reviewed. The app should flag *Entra's end date is later than the reviewed end date*.
 8. Optional: deny a second request. The app should show *Denied in Entra*.
 
+## Phase 2b — automatic assignment (approved by Gokul, 16 Oct 2026)
+Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script for setup**. Off by default.
+
+**Flow:** PMO creates the request (with joiner UPN) → Analyze → a **second Reviewer** (not the creator or analyser) records *Accepted* → hand-off is **Queued** → within 5 minutes the worker files one Entra `adminAdd` request (allowed catalog, "PMO Review auto-assign" policy, reviewed start/end) → Entra adds the joiner to the group → *Access delivered by Entra* → Entra removes it on the end date (*Expired*). No My Access clicks, no Entra approver.
+
+**Setup (once):**
+| # | Where | Step |
+|---|---|---|
+| 1 | Cloud Shell (Global Admin) | `bash tools/setup_entra.sh package <tenant>.onmicrosoft.com` — device-code sign-in, then creates/reuses the catalog, package and the "PMO Review auto-assign" policy, publishes mapping `A-MAP-ENG-DEV` with the link if needed, and sets `enableAutoAssign` + `entraCatalogId` in `.local/params.json`. |
+| 2 | Cloud Shell | `tools/deploy_free.sh whatif …` → **approved** → `apply …`. No new resources; changes worker + app settings, then `grant-graph` adds `EntitlementManagement.ReadWrite.All` and `User.ReadBasic.All`. |
+| 3 | App | A second person signs in once (e.g. `pilot.admin`), reads the user id from `/api/me`, and is registered: `seed_sample_data.py --register-user <id> --project SAMPLE-ALPHA --roles Reviewer`. |
+
+**E2E test (auto):**
+1. As PMO (Gmail): new request, `SAMPLE Data Engineer`, Dev, joiner `sample.joiner@<tenant>`, start today, end within 180 days. Analyze → *Ready for human review*, mapping *Matched*.
+2. Still as Gmail, record *Accepted* → the panel shows *Cannot hand off* (same person; expected four-eyes check).
+3. In a private window as `pilot.admin` (second Reviewer): open the request, record *Accepted* → *Accepted, Entra request queued*.
+4. Within 5 minutes: *Waiting for Entra approval* or *Approved, access being added*, then *Access delivered by Entra* with the reviewed end date.
+5. Entra admin center > Groups > `SAMPLE-GRP-ALPHA-DEV-ENG` > Members shows `sample.joiner`; Identity Governance > the access package > Assignments shows it under policy "PMO Review auto-assign".
+
+**Failure categories (panel: "Last status check failed (…)")**
+| Category | Meaning / action |
+|---|---|
+| `GraphForbidden` | Permissions not granted or not yet effective: `grant-graph`, wait ~30 min. |
+| `PolicyNotFound` | The package has no "PMO Review auto-assign" policy: re-run `setup_entra.sh package`. |
+| `CatalogNotAllowed` | The mapping's package is in a different catalog than `entraCatalogId`: fix the mapping or the parameter. |
+| `JoinerNotFound` | No user with that UPN in the tenant: correct the request, Analyze, accept again. |
+| `AssignmentRejected` | Entra refused the request (e.g. an open request already exists, or the schedule breaks the policy, F37). Check the access package's Requests tab. |
+| `AutoAssignOff` | The app queued it but the worker is not in auto-assign mode: check `ENTRA_AUTO_ASSIGN` on the worker. |
+
+To switch auto-assign off: set `enableAutoAssign` false, what-if, apply (the worker and app go back to link mode; queued records stay queued and show `AutoAssignOff`).
+
 ## Validation
 - The worker log shows `handoff-sync done checked=… changed=…`.
 - No write call to Graph: the worker identity holds only `EntitlementManagement.Read.All` (`grant-graph` prints the list).

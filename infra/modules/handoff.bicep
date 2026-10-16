@@ -2,7 +2,9 @@
 // Flex Consumption Function App + its storage account. Managed identity only: no keys, no secrets.
 //   Worker -> Cosmos: data-plane RBAC on the 'handoffs' container only.
 //   Worker -> Storage: Storage Blob Data Owner (host locks + deployment package).
-//   Worker -> Graph: EntitlementManagement.Read.All, granted by tools/setup_entra.sh (not ARM).
+//   Worker -> Graph: EntitlementManagement.Read.All; with auto-assign also EntitlementManagement.ReadWrite.All and
+//   User.ReadBasic.All (granted by tools/deploy_free.sh grant-graph, not ARM). The code writes only adminAdd requests
+//   on packages in ENTRA_ALLOWED_CATALOG_ID, through the ENTRA_AUTO_ASSIGN_POLICY policy.
 // No Application Insights / Log Analytics (CLAUDE.md rule 2).
 param location string
 param tags object
@@ -10,6 +12,12 @@ param cosmosAccountName string
 
 @description('MUST match src/worker/PmoReview.Worker TargetFramework (test: InfraConsistencyTests). Check: az functionapp list-flexconsumption-runtimes -l <region> --runtime dotnet-isolated')
 param workerRuntimeVersion string = '10.0'
+
+@description('Auto-assign (approved 16 Oct 2026): a second Reviewer\'s acceptance is the access decision; the worker files the Entra assignment.')
+param autoAssign bool = false
+
+@description('The only Entra catalog the worker may assign from (GUID). Required when autoAssign is true.')
+param entraCatalogId string = ''
 
 var suffix = uniqueString(resourceGroup().id)
 var storageName = 'stpmowork${suffix}'
@@ -89,6 +97,9 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'COSMOS_ENDPOINT', value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE', value: databaseName }
         { name: 'HANDOFF_SYNC_SCHEDULE', value: '0 */5 * * * *' }
+        { name: 'ENTRA_AUTO_ASSIGN', value: string(autoAssign) }
+        { name: 'ENTRA_ALLOWED_CATALOG_ID', value: entraCatalogId }
+        { name: 'ENTRA_AUTO_ASSIGN_POLICY', value: 'PMO Review auto-assign' }
       ]
     }
     functionAppConfig: {

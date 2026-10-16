@@ -70,7 +70,7 @@ export const api = {
     call<Item<ReviewDecision>>('POST', `${p(projectId)}/runs/${id(runId)}/decisions`, { outcome, comment: comment || null }),
   attention: () => call<{ items: AttentionItem[] }>('GET', 'attention'),
   listHandoffs: (projectId: string, requestId: string) =>
-    call<{ enabled: boolean; items: Item<EntraHandoff>[] }>('GET', `${p(projectId)}/requests/${id(requestId)}/handoffs`),
+    call<{ enabled: boolean; autoAssign?: boolean; items: Item<EntraHandoff>[] }>('GET', `${p(projectId)}/requests/${id(requestId)}/handoffs`),
 
   listRules: (projectId: string) => call<{ items: Item<RequirementRule>[] }>('GET', `${p(projectId)}/rules`),
   createRule: (projectId: string, rule: Record<string, unknown>) => call<Item<RequirementRule>>('POST', `${p(projectId)}/rules`, rule),

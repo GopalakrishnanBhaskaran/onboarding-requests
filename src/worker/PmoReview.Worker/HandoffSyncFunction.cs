@@ -4,7 +4,7 @@ using PmoReview.Core.Handoff;
 
 namespace PmoReview.Worker;
 
-/// <summary>Every 5 minutes (HANDOFF_SYNC_SCHEDULE): read Entra, update open hand-off records. Reads Entra only.</summary>
+/// <summary>Every 5 minutes (HANDOFF_SYNC_SCHEDULE): read Entra, update open hand-off records, and in auto-assign mode file the Entra assignment for Queued ones.</summary>
 public sealed class HandoffSyncFunction(HandoffSync sync, ILogger<HandoffSyncFunction> logger)
 {
     [Function("handoff-sync")]

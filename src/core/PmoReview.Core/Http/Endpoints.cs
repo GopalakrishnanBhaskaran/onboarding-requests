@@ -85,7 +85,7 @@ public static class Endpoints
     public static ApiHost MapHandoffs(this ApiHost host, Handoff.HandoffService handoffs)
     {
         host.Map("GET", "projects/{projectId}/requests/{requestId}/handoffs", async c =>
-            Ok(new { enabled = handoffs.Enabled, items = (await handoffs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)).Select(ToItem) }));
+            Ok(new { enabled = handoffs.Enabled, autoAssign = handoffs.AutoAssign, items = (await handoffs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)).Select(ToItem) }));
         return host;
     }
 

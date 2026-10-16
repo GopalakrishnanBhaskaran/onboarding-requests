@@ -14,6 +14,16 @@ Option A: after a Reviewer accepts a ready review, the app gives the new joiner 
 | Hand-off record + My Access link on Accepted | Approval screens in the app |
 | Read-only status sync (requested, pending approval, delivered, denied, expired, end-date check) | Emails/Teams from the app (Entra sends its own) |
 
+### Phase 2b — automatic Entra assignment (approved by Gokul, 16 Oct 2026, in this session)
+Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script for the Entra setup**. Off by default (`enableAutoAssign` / `ENTRA_AUTO_ASSIGN`).
+When on, a **second Reviewer** (not the person who created or analysed the request) accepting a *Ready for human review* run is the access decision. The worker then files **one** Entra `adminAdd` assignment request for the snapshot joiner, on the pinned mapping's access package, through the **"PMO Review auto-assign"** policy (direct assignments only, no self-requests, no approval stage, max 180 days), for the reviewed start/end dates. Entra adds the group membership and removes it on the end date; the worker reads the status back.
+
+| Now included (Phase 2b) | Still excluded |
+|---|---|
+| One Graph write: `POST assignmentRequests` with `requestType=adminAdd`, only for packages in the one allowed catalog | Any other Graph write (no removals, no updates, no group/user/policy changes) from the app or worker |
+| Graph `User.ReadBasic.All` to resolve the joiner's object id | Creating users; looking up anything else about the joiner |
+| Admin setup script (catalog, package, policy, mapping link) run by a Global Administrator | The worker creating or changing access packages or policies |
+
 ## Included
 | Area | What the pilot does |
 |---|---|
@@ -47,4 +57,4 @@ Option A: after a Reviewer accepts a ready review, the app gives the new joiner 
 | 90% reviewer agreement and 25% time-saving targets | Measured later with real reviewers and the AI model |
 
 ## UI must never contain
-Approve, grant access, payment or self-sign-up controls. Permanent banner: *"This checks request readiness. It does not approve or grant access."*
+Approve, grant access, payment or self-sign-up controls. Permanent banner: *"This checks request readiness. A ready review is not an access decision."* (changed 16 Oct 2026 for Phase 2b: with auto-assign on, the second Reviewer's acceptance — not the readiness check — leads to an Entra assignment).

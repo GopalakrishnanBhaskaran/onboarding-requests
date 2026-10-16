@@ -26,7 +26,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [handoffs, setHandoffs] = useState<{ enabled: boolean; items: Item<EntraHandoff>[] }>({ enabled: false, items: [] });
+  const [handoffs, setHandoffs] = useState<{ enabled: boolean; autoAssign?: boolean; items: Item<EntraHandoff>[] }>({ enabled: false, items: [] });
   const pollStarted = useRef<number>(0);
   const nonce = useRef<string>(newNonce());
 
@@ -124,7 +124,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
         <div aria-live="polite" role="status"><Caption1>{status}</Caption1></div>
       </section>
 
-      {handoffs.enabled && <HandoffPanel items={handoffs.items} currentRevision={r.revision} />}
+      {handoffs.enabled && <HandoffPanel items={handoffs.items} currentRevision={r.revision} autoAssign={handoffs.autoAssign === true} />}
 
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'results' | 'history')} aria-label="Review views">
         <Tab value="results">Review results</Tab>
@@ -141,6 +141,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
             canReview={isReviewer}
             onRetry={(id) => void start('retry', id)}
             onFeedback={() => void load()}
+            autoAssign={handoffs.enabled && handoffs.autoAssign === true}
           />
         ) : (
           <Empty>No review yet.{isPmo ? ' Select “Analyze request”.' : ''}</Empty>
@@ -173,8 +174,9 @@ function RunView(props: {
   canReview: boolean;
   onRetry: (runId: string) => void;
   onFeedback: () => void;
+  autoAssign: boolean;
 }) {
-  const { run, project, currentRevision, canRetry, canReview, onRetry, onFeedback } = props;
+  const { run, project, currentRevision, canRetry, canReview, onRetry, onFeedback, autoAssign } = props;
   const s = useStyles();
   const result = run.result;
   const [copied, setCopied] = useState(false);
@@ -285,7 +287,7 @@ function RunView(props: {
           </section>
 
           {canReview && (run.processingStatus === 'Completed' || run.processingStatus === 'Superseded') && (
-            <Feedback projectId={project.projectId} runId={run.id} onSaved={onFeedback} />
+            <Feedback projectId={project.projectId} runId={run.id} onSaved={onFeedback} autoAssign={autoAssign} />
           )}
         </>
       )}
@@ -334,10 +336,11 @@ function History({ runs, onSelect }: { runs: Item<ReviewRun>[]; onSelect: (id: s
 }
 
 /**
- * Entra hand-off for the latest accepted review. The app never approves or assigns: the new joiner requests the
- * access package in My Access, the Entra approver decides, Entra adds and later removes the access.
+ * Entra hand-off for the latest accepted review. Link mode: the new joiner requests the access package in My Access
+ * and Entra's approver decides. Auto-assign mode: a second Reviewer's acceptance is the decision and the worker files
+ * the Entra request. Either way Entra adds the access and removes it on the end date.
  */
-function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[]; currentRevision: number }) {
+function HandoffPanel({ items, currentRevision, autoAssign }: { items: Item<EntraHandoff>[]; currentRevision: number; autoAssign: boolean }) {
   const s = useStyles();
   const [copied, setCopied] = useState(false);
   const h = items[0]?.value;
@@ -357,7 +360,9 @@ function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[];
       <Subtitle2 as="h2" id="handoff-h">Access in Microsoft Entra</Subtitle2>
       {!h ? (
         <Caption1 className={s.muted}>
-          Not handed off yet. A Reviewer accepts a review that is ready for human review; the new joiner then requests the access package in My Access.
+          {autoAssign
+            ? 'Not handed off yet. When a second Reviewer accepts a review that is ready for human review, the app requests the access package in Microsoft Entra for the reviewed period.'
+            : 'Not handed off yet. A Reviewer accepts a review that is ready for human review; the new joiner then requests the access package in My Access.'}
         </Caption1>
       ) : (
         <>
@@ -368,7 +373,7 @@ function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[];
             </Caption1>
           </div>
           {h.status === 'NotEligible' && <Body1>{h.reason}</Body1>}
-          {h.myAccessLink && h.status !== 'NotEligible' && (
+          {h.myAccessLink && h.status !== 'NotEligible' && h.entraRequestType !== 'adminAdd' && h.status !== 'Queued' && (
             <div className={s.row}>
               <Body1>Send this link to {h.joinerUpn}:</Body1>
               <Link href={h.myAccessLink} target="_blank" rel="noopener noreferrer">Request access in My Access</Link>
@@ -384,7 +389,7 @@ function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[];
             </dl>
           )}
           {h.endDateExceedsRequest && (
-            <Body1><Badge color="warning">Check</Badge> Entra's end date is later than the reviewed end date (or has none). Ask the approver to correct the assignment.</Body1>
+            <Body1><Badge color="warning">Check</Badge> Entra's end date is later than the reviewed end date (or has none). Ask the Entra administrator to correct the assignment.</Body1>
           )}
           {h.preExistingAssignment && <Body1><Badge color="informative">Note</Badge> The new joiner already held this access package before the hand-off.</Body1>}
           {h.lastSyncError && <Caption1>Last status check failed ({h.lastSyncError}); the previous status is shown.</Caption1>}
@@ -393,7 +398,11 @@ function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[];
               {h.history.map((e, i) => <li key={i}><Caption1>{dateTime(e.at)} · {handoffLabel[e.status] ?? e.status} — {e.note}</Caption1></li>)}
             </ol>
           )}
-          <Caption1 className={s.muted}>Status is read from Microsoft Entra every 5 minutes. This app does not approve or grant access.</Caption1>
+          <Caption1 className={s.muted}>
+            {autoAssign
+              ? 'Every 5 minutes the app files queued Entra requests and reads their status. Entra adds the access and removes it on the end date.'
+              : 'Status is read from Microsoft Entra every 5 minutes. This app does not approve or grant access.'}
+          </Caption1>
         </>
       )}
     </section>
@@ -401,7 +410,7 @@ function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[];
 }
 
 /** Reviewer feedback on review QUALITY. It is not an access decision. */
-function Feedback({ projectId, runId, onSaved }: { projectId: string; runId: string; onSaved: () => void }) {
+function Feedback({ projectId, runId, onSaved, autoAssign }: { projectId: string; runId: string; onSaved: () => void; autoAssign: boolean }) {
   const s = useStyles();
   const [decisions, setDecisions] = useState<Item<ReviewDecision>[] | null>(null);
   const [outcome, setOutcome] = useState<DecisionOutcome>('Accepted');
@@ -435,7 +444,9 @@ function Feedback({ projectId, runId, onSaved }: { projectId: string; runId: str
     <section className={s.section} aria-labelledby="feedback-h">
       <Subtitle2 as="h2" id="feedback-h">Reviewer feedback on this review</Subtitle2>
       <Caption1 className={s.muted}>
-        Rates the quality of the automated review. It does not approve the request. When the hand-off is on, “Accepted” on a review that is ready for human review issues the new joiner's My Access link; Entra still approves.
+        {autoAssign
+          ? 'Automatic Entra assignment is on: “Accepted” by a second Reviewer (not the person who created or analysed the request) on a review that is ready for human review is the access decision. The app then requests the access package in Microsoft Entra for the reviewed period.'
+          : 'Rates the quality of the automated review. It does not approve the request. When the hand-off is on, “Accepted” on a review that is ready for human review issues the new joiner\'s My Access link; Entra still approves.'}
       </Caption1>
       <ErrorBar error={error} />
       {decisions?.map(({ value: d }) => (

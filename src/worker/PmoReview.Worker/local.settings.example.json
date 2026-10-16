@@ -6,6 +6,9 @@
     "ALLOW_PAID_SERVICES": "true",
     "COSMOS_ENDPOINT": "https://<cosmos-account>.documents.azure.com:443/",
     "COSMOS_DATABASE": "pmoreview",
-    "HANDOFF_SYNC_SCHEDULE": "0 */5 * * * *"
+    "HANDOFF_SYNC_SCHEDULE": "0 */5 * * * *",
+    "ENTRA_AUTO_ASSIGN": "false",
+    "ENTRA_ALLOWED_CATALOG_ID": "<pmo-catalog-guid>",
+    "ENTRA_AUTO_ASSIGN_POLICY": "PMO Review auto-assign"
   }
 }

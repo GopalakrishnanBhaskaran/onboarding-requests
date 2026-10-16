@@ -36,6 +36,7 @@ RG_DEFAULT=rg-pmo-review-pilot
 param_true() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];sys.exit(0 if p.get(sys.argv[2],{}).get('value') else 1)" "$PARAMS" "$1"; }
 handoff_enabled() { param_true enableHandoff; }
 worker_enabled() { handoff_enabled && param_true deployWorker; }
+auto_assign_enabled() { worker_enabled && param_true enableAutoAssign; }
 
 # Stage B needs stage A's policy to be live: Azure checks new resources against the CURRENT assignment.
 policy_allows_worker() {
@@ -79,25 +80,31 @@ deploy_worker() {
   return 1
 }
 
-# Graph application permission for the worker identity. Read-only; idempotent.
+# Graph application permissions for the worker identity; idempotent. Read-only unless the worker runs in
+# auto-assign mode (app setting ENTRA_AUTO_ASSIGN=true), which adds the write + user lookup it needs.
 grant_graph() {
-  local name mi graph role have
+  local name mi graph auto perm role have roles
   name=$(worker_name); [[ -n "$name" ]] || { echo "No hand-off worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
-  role=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?value=='EntitlementManagement.Read.All'].id | [0]" -o tsv)
-  [[ -n "$role" ]] || { echo "Could not find EntitlementManagement.Read.All on Microsoft Graph."; return 1; }
-  have=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
-    --query "length(value[?appRoleId=='$role'])" -o tsv)
-  if [[ "$have" == "0" ]]; then
-    az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
-      --headers "Content-Type=application/json" \
-      --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
-    echo "Granted EntitlementManagement.Read.All (application) to $name. Allow a few minutes to take effect."
-  else
-    echo "Already granted: EntitlementManagement.Read.All -> $name"
-  fi
-  echo "Graph permissions now held by $name:"
+  auto=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" --query "[?name=='ENTRA_AUTO_ASSIGN'].value | [0]" -o tsv 2>/dev/null)
+  roles=(EntitlementManagement.Read.All)
+  [[ "${auto,,}" == "true" ]] && roles+=(EntitlementManagement.ReadWrite.All User.ReadBasic.All)
+  for perm in "${roles[@]}"; do
+    role=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?value=='$perm'].id | [0]" -o tsv)
+    [[ -n "$role" ]] || { echo "Could not find $perm on Microsoft Graph."; return 1; }
+    have=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+      --query "length(value[?appRoleId=='$role'])" -o tsv)
+    if [[ "$have" == "0" ]]; then
+      az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+        --headers "Content-Type=application/json" \
+        --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+      echo "Granted $perm (application) to $name. Allow a few minutes to take effect."
+    else
+      echo "Already granted: $perm -> $name"
+    fi
+  done
+  echo "Graph permissions now held by $name (expected: ${roles[*]}):"
   az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[].appRoleId" -o tsv \
     | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done
 }
@@ -126,6 +133,13 @@ case "$CMD" in
       echo "Phase 2 STAGE B (deployWorker=true, paid from credits): + Flex Consumption plan + Function App (system identity) + storage account"
       echo "  (Standard_LRS, no shared keys) + Storage Blob Data Owner role + Cosmos data role on the 'handoffs' container."
       echo "  Expected cost: roughly ₹50-300/month (storage + Flex executions; Flex has a monthly free grant). Budget: ₹2,000 with 50/80/100% alerts."
+    fi
+    if auto_assign_enabled; then
+      CAT=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters'].get('entraCatalogId',{}).get('value',''))" "$PARAMS")
+      [[ "$CAT" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "STOP: enableAutoAssign=true needs entraCatalogId (run: bash tools/setup_entra.sh package ...)."; exit 2; }
+      echo "AUTO-ASSIGN (enableAutoAssign=true): worker app settings ENTRA_AUTO_ASSIGN=true, ENTRA_ALLOWED_CATALOG_ID=$CAT. No new resources, cost unchanged."
+      echo "  After apply, grant-graph adds EntitlementManagement.ReadWrite.All + User.ReadBasic.All to the worker identity;"
+      echo "  the app sets REQUIRE_SEPARATE_REVIEWER=true (a second Reviewer's acceptance is the access decision)."
     fi
     if handoff_enabled; then
       WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
@@ -156,9 +170,12 @@ case "$CMD" in
       "COSMOS_CONNECTION_STRING=$CS" "COSMOS_DATABASE=pmoreview" "STORAGE_MODE=Cosmos" \
       "REVIEW_MODEL_PROVIDER=RuleOnly" "REVIEW_DISPATCHER=Inline" "ALLOW_PAID_SERVICES=false" \
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
-    if worker_enabled; then
-      # Phase 2: accepted reviews create Entra hand-off records. One tester in the pilot, so separate-reviewer is off.
-      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "REQUIRE_SEPARATE_REVIEWER=false" -o none
+    if auto_assign_enabled; then
+      # Auto-assign: a SECOND Reviewer's acceptance is the access decision; the worker files the Entra assignment.
+      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "ENTRA_AUTO_ASSIGN=true" "REQUIRE_SEPARATE_REVIEWER=true" -o none
+    elif worker_enabled; then
+      # Link mode: the joiner requests in My Access and Entra's approver decides. One tester, so separate-reviewer is off.
+      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "ENTRA_AUTO_ASSIGN=false" "REQUIRE_SEPARATE_REVIEWER=false" -o none
     fi
 
     # Build + deploy (SWA CLI). The API runtime comes from staticwebapp.config.json (single source of truth;
@@ -208,6 +225,12 @@ case "$CMD" in
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     FLAG=$(az staticwebapp appsettings list -n "$SWA" -g "$RG" --query "properties.ENTRA_HANDOFF_ENABLED" -o tsv 2>/dev/null)
     echo "  ENTRA_HANDOFF_ENABLED on the app: ${FLAG:-not set (off)}"
+    AUTO=$(az staticwebapp appsettings list -n "$SWA" -g "$RG" --query "properties.ENTRA_AUTO_ASSIGN" -o tsv 2>/dev/null)
+    echo "  ENTRA_AUTO_ASSIGN on the app: ${AUTO:-not set (off)}"
+    if [[ -n "$W" ]]; then
+      WAUTO=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='ENTRA_AUTO_ASSIGN'].value | [0]" -o tsv 2>/dev/null)
+      echo "  ENTRA_AUTO_ASSIGN on the worker: ${WAUTO:-not set (off)}"
+    fi
     echo "== App =="
     HOST=$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)
     echo "  https://$HOST  (new code if 'New request' shows a 'New joiner sign-in name' field)"

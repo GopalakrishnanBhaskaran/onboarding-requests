@@ -14,7 +14,7 @@ import { QueuePage } from './pages/QueuePage';
 import { ReferencePage } from './pages/ReferencePage';
 import { OperatorPage } from './pages/OperatorPage';
 
-export const BANNER = 'This checks request readiness. It does not approve or grant access.';
+export const BANNER = 'This checks request readiness. A ready review is not an access decision.';
 const PROJECT_KEY = 'pmo-review.project';
 
 const useStyles = makeStyles({

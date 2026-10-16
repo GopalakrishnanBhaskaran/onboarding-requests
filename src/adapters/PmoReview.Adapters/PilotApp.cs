@@ -31,6 +31,8 @@ public sealed record PilotSettings
     /// <summary>Phase 2: create Entra hand-off records on accepted reviews (needs access packages + the sync worker).</summary>
     public bool EntraHandoffEnabled { get; init; }
     public bool RequireSeparateReviewer { get; init; }
+    /// <summary>ENTRA_AUTO_ASSIGN: a second Reviewer's acceptance is the access decision (forces separate reviewers).</summary>
+    public bool EntraAutoAssign { get; init; }
 
     public static PilotSettings FromEnvironment(Func<string, string?> get) => new()
     {
@@ -46,6 +48,7 @@ public sealed record PilotSettings
         AzureOpenAIApiVersion = get("AZURE_OPENAI_API_VERSION"),
         EntraHandoffEnabled = string.Equals(get("ENTRA_HANDOFF_ENABLED"), "true", StringComparison.OrdinalIgnoreCase),
         RequireSeparateReviewer = string.Equals(get("REQUIRE_SEPARATE_REVIEWER"), "true", StringComparison.OrdinalIgnoreCase),
+        EntraAutoAssign = string.Equals(get("ENTRA_AUTO_ASSIGN"), "true", StringComparison.OrdinalIgnoreCase),
     };
 }
 
@@ -60,7 +63,7 @@ public static class PilotApp
         var reviewer = model ?? ReviewModelFactory.Create(settings);
         var (processor, _) = BuildProcessing(stores, settings, clock, loggers, reviewer);
         var dispatcher = DispatcherFactory.Create(settings, processor, queue);
-        var handoffs = new HandoffService(stores, new HandoffSettings { Enabled = settings.EntraHandoffEnabled, RequireSeparateReviewer = settings.RequireSeparateReviewer }, clock);
+        var handoffs = new HandoffService(stores, new HandoffSettings { Enabled = settings.EntraHandoffEnabled, RequireSeparateReviewer = settings.RequireSeparateReviewer, AutoAssign = settings.EntraAutoAssign }, clock);
         var runs = new RunService(stores, dispatcher, reviewer.Info, clock, TimeSpan.FromMinutes(settings.StuckRunMinutes), handoffs);
 
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());

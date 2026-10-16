@@ -99,6 +99,37 @@ public partial class InfraConsistencyTests
             Assert.Contains($"'{t}'", pilot);
     }
 
+    /// <summary>
+    /// Auto-assign (approved 16 Oct 2026) is off by default, pinned to one catalog, and uses the same policy name
+    /// in Bicep, the worker default and the admin setup script.
+    /// </summary>
+    [Fact]
+    public void Auto_assign_is_off_by_default_and_pinned_to_one_catalog_and_policy()
+    {
+        var main = File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep"));
+        var bicep = HandoffBicep();
+        Assert.Contains("param enableAutoAssign bool = false", main);
+        Assert.Contains("param autoAssign bool = false", bicep);
+        Assert.Contains("{ name: 'ENTRA_AUTO_ASSIGN', value: string(autoAssign) }", bicep);
+        Assert.Contains("{ name: 'ENTRA_ALLOWED_CATALOG_ID', value: entraCatalogId }", bicep);
+
+        const string policy = "PMO Review auto-assign";
+        Assert.Contains($"{{ name: 'ENTRA_AUTO_ASSIGN_POLICY', value: '{policy}' }}", bicep);
+        Assert.Contains($"[string] $PolicyName = '{policy}'", File.ReadAllText(Path.Combine(Repo(), "tools", "setup_entra_package.ps1")));
+        var worker = File.ReadAllText(Path.Combine(Repo(), "src", "worker", "PmoReview.Worker", "Program.cs"));
+        Assert.Contains($"?? \"{policy}\"", worker);
+        Assert.Contains("ENTRA_AUTO_ASSIGN=true needs ENTRA_ALLOWED_CATALOG_ID", worker);
+
+        // The admin policy grants no self-requests and no approval stage: the second Reviewer's acceptance is the decision.
+        var ps1 = File.ReadAllText(Path.Combine(Repo(), "tools", "setup_entra_package.ps1"));
+        Assert.Contains("allowedTargetScope     = 'notSpecified'", ps1);
+        Assert.Contains("enableTargetsToSelfAddAccess = $false", ps1);
+        // Write permissions are only granted when the worker runs in auto-assign mode.
+        var deploy = File.ReadAllText(Path.Combine(Repo(), "tools", "deploy_free.sh"));
+        Assert.Contains("[[ \"${auto,,}\" == \"true\" ]] && roles+=(EntitlementManagement.ReadWrite.All User.ReadBasic.All)", deploy);
+        Assert.Contains("\"ENTRA_AUTO_ASSIGN=true\" \"REQUIRE_SEPARATE_REVIEWER=true\"", deploy);
+    }
+
     [Fact]
     public void Budget_is_the_approved_phase2_cap_with_staged_alerts()
     {
