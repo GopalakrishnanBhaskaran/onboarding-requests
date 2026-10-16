@@ -20,12 +20,19 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (ifMatch) headers['If-Match'] = ifMatch;
 
-  const res = await fetch(`/api/${path}`, {
-    method,
-    headers,
-    credentials: 'same-origin',
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/${path}`, {
+      method,
+      headers,
+      credentials: 'same-origin',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // The browser blocked or lost the call. On SWA this is usually an expired sign-in: the 401 override redirects the
+    // API call to the Entra sign-in page, which fetch cannot follow cross-origin ("Failed to fetch").
+    throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
+  }
 
   if (res.status === 401) {
     // Session expired: SWA redirects to Entra sign-in.
