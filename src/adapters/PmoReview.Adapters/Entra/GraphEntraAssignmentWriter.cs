@@ -43,14 +43,15 @@ public sealed class GraphEntraAssignmentWriter : IEntraAssignmentWriter
         using (var policies = await SendAsync(HttpMethod.Get, policyUrl, null, "AccessPackageNotFound", ct))
         {
             var mine = policies.RootElement.TryGetProperty("value", out var ps) && ps.ValueKind == JsonValueKind.Array
-                ? ps.EnumerateArray().Where(p => string.Equals(Str(p, "displayName"), _policyName, StringComparison.Ordinal)).ToList()
+                ? ps.EnumerateArray().Where(p => SameName(Str(p, "displayName"), _policyName)).ToList()
                 : [];
             if (mine.Count == 0) throw new EntraWriteException("PolicyNotFound");
             var policy = mine[0];
             var catalogId = policy.TryGetProperty("catalog", out var c) && c.ValueKind == JsonValueKind.Object ? Str(c, "id") : null;
             var packageId = policy.TryGetProperty("accessPackage", out var a) && a.ValueKind == JsonValueKind.Object ? Str(a, "id") : null;
             if (!string.Equals(catalogId, _allowedCatalogId, StringComparison.OrdinalIgnoreCase)) throw new EntraWriteException("CatalogNotAllowed");
-            if (!string.Equals(packageId, pkg, StringComparison.OrdinalIgnoreCase)) throw new EntraWriteException("PolicyNotFound");
+            // The $filter already selects this package; an explicit different id is refused.
+            if (packageId is not null && !string.Equals(packageId, pkg, StringComparison.OrdinalIgnoreCase)) throw new EntraWriteException("PolicyPackageMismatch");
             policyId = Str(policy, "id") ?? throw new EntraWriteException("PolicyNotFound");
         }
 
@@ -128,6 +129,11 @@ public sealed class GraphEntraAssignmentWriter : IEntraAssignmentWriter
             }
         }
     }
+
+    /// <summary>Policy names typed in the portal: ignore case, surrounding and repeated spaces.</summary>
+    private static bool SameName(string? a, string b) =>
+        a is not null && string.Equals(string.Join(' ', a.Split(' ', StringSplitOptions.RemoveEmptyEntries)),
+                                       string.Join(' ', b.Split(' ', StringSplitOptions.RemoveEmptyEntries)), StringComparison.OrdinalIgnoreCase);
 
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

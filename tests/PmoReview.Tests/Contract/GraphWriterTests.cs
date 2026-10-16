@@ -98,6 +98,13 @@ public class GraphWriterTests
     }
 
     [Fact]
+    public async Task Policy_name_match_ignores_case_and_extra_spaces()
+    {
+        var h = new Handler(Graph(policies: Policies(name: "  pmo review  AUTO-ASSIGN ")));
+        Assert.Equal("req-app-1", (await Writer(h).RequestAssignmentAsync(Order, CancellationToken.None)).Id);
+    }
+
+    [Fact]
     public async Task Unknown_joiner_stops_before_any_write()
     {
         var h = new Handler(Graph(user: HttpStatusCode.NotFound));

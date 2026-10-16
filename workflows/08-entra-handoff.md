@@ -63,7 +63,8 @@ Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script
 | Category | Meaning / action |
 |---|---|
 | `GraphForbidden` | Permissions not granted or not yet effective: `grant-graph`, wait ~30 min. |
-| `PolicyNotFound` | The package has no "PMO Review auto-assign" policy: re-run `setup_entra.sh package`. |
+| `PolicyNotFound` | The package has no policy named "PMO Review auto-assign" (case and spaces ignored): check the policy name in the portal or re-run `setup_entra.sh package`. |
+| `PolicyPackageMismatch` | Graph returned the policy for a different package: report it (should not happen). |
 | `CatalogNotAllowed` | The mapping's package is in a different catalog than `entraCatalogId`: fix the mapping or the parameter. |
 | `JoinerNotFound` | No user with that UPN in the tenant: correct the request, Analyze, accept again. |
 | `AssignmentRejected` | Entra refused the request (e.g. an open request already exists, or the schedule breaks the policy, F37). Check the access package's Requests tab. |
