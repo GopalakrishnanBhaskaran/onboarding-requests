@@ -41,3 +41,4 @@ Stop all Phase 2 cost: `az functionapp stop -g rg-pmo-review-pilot -n <worker>` 
 | — | +24–48 h (on or after 2026-10-17 03:00 UTC) | pending | — |
 | 2026-10-16 16:01 | `cost_check.sh` after Phase 2 stage B | Resources: Cosmos (free tier, 1000 RU/s, autoscale null), SWA Free, FC1 plan, Standard_LRS storage, Function App. Budget ₹2,000, spent ₹0.0. MTD: Cosmos ₹0.0, SWA ₹0.0 (worker costs not yet reported; data lags 24–48 h). Re-check 17–18 Oct. | Gokul |
 | 2026-10-16 16:58 | `cost_check.sh` after Phase 2b apply | Same 5 resources; OK only allowed types; budget ₹2,000, spent ₹0.0; MTD Cosmos ₹0.0, SWA ₹0.0 (worker not yet reported, lag 24–48 h). | Gokul |
+| 2026-10-16 19:14 | `cost_check.sh` after Phase 2c apply | Same 5 resources; OK only allowed types; budget ₹2,000, spent ₹0.0; MTD Cosmos ₹0.0, SWA ₹0.0 (worker costs lag 24–48 h). | Gokul |
