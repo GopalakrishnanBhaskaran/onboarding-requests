@@ -12,6 +12,7 @@
 | 2026-10-16 | App-only redeploy #1 (`app`, dotnet-isolated 9.0) — **FAILED** | CLI accepted the config (no schema error) but the deploy client again reported "Function language info isn't provided". Same failure on 9.0 and 10.0, so the runtime version was not the cause. Fix: copy `staticwebapp.config.json` into `dist` (the uploaded app folder) before deploy. | Gokul / Claude |
 | 2026-10-16 | App-only redeploy #2 (config inside `dist`) — **FAILED** | Same error. Direct verbose run of the deploy client (bypassing the CLI) found the config and the API folder, then failed the same way with `FUNCTION_LANGUAGE=dotnet-isolated`. Cause identified: the language flag must be `dotnetisolated` (no dash) — F21. `deploy_free.sh` fixed. | Gokul / Claude |
 | 2026-10-16 | App-only redeploy #3 (`--api-language dotnetisolated`, commit bf529f4) — **upload completed** | Script ran to its final cost check under `set -euo pipefail`, so `swa deploy` and the SAMPLE seed both exited 0 (a failed `swa deploy` exits 1). Live sign-in and a synthetic request are not yet verified. | Gokul / Claude |
-| — | Live check: sign-in, `/.auth/me`, register user, one SAMPLE request | pending | — |
+| 2026-10-16 | Live check 1: sign-in + unregistered user — **PASS** | https://icy-smoke-04dcd4300.6.azurestaticapps.net — Entra sign-in works; SPA loads; `GET /api/me` served by the managed .NET 9 API from Cosmos; unregistered user sees only their own user id, no data (deny by default). User id not recorded here (personal identifier). | Gokul |
+| — | Live check 2: register user (SAMPLE-ALPHA, PMO+Reviewer), one SAMPLE request analysed | pending | — |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |
