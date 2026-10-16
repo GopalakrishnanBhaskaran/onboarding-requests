@@ -20,7 +20,8 @@ public sealed record AttentionItem(string ProjectId, string RunId, string Reques
 /// Run ids are deterministic per request revision and attempt ("{requestId}.r{rev}.a{n}"), so two
 /// concurrent Analyze calls for the same revision collide on id and only one run is ever created.
 /// </summary>
-public sealed partial class RunService(DataStores stores, IReviewDispatcher dispatcher, ReviewerInfo reviewer, IClock clock, TimeSpan stuckAfter)
+public sealed partial class RunService(DataStores stores, IReviewDispatcher dispatcher, ReviewerInfo reviewer, IClock clock, TimeSpan stuckAfter,
+    Handoff.HandoffService? handoff = null)
 {
     public async Task<AnalyzeResponse> AnalyzeAsync(CallerContext caller, string projectId, string requestId, AnalyzeInput input, string correlationId, CancellationToken ct)
     {
@@ -106,9 +107,10 @@ public sealed partial class RunService(DataStores stores, IReviewDispatcher disp
         if (run.ProcessingStatus is not (ProcessingStatus.Completed or ProcessingStatus.Superseded))
             throw new AppException(ErrorKind.Conflict, "run_not_complete", "Feedback can only be recorded on a completed review.");
 
+        Versioned<ReviewDecision> created;
         try
         {
-            return await stores.Decisions.CreateAsync(new ReviewDecision
+            created = await stores.Decisions.CreateAsync(new ReviewDecision
             {
                 Id = Guid.NewGuid().ToString("n"),
                 ProjectId = projectId,
@@ -123,6 +125,10 @@ public sealed partial class RunService(DataStores stores, IReviewDispatcher disp
         {
             throw new AppException(ErrorKind.Conflict, "decision_exists", "You have already recorded feedback for this review.");
         }
+
+        // Accepted + ready review -> Entra hand-off record (a link, not an approval). No-op when disabled.
+        if (handoff is not null) await handoff.OnDecisionAsync(run, created.Value, ct);
+        return created;
     }
 
     public async Task<IReadOnlyList<Versioned<ReviewDecision>>> ListDecisionsAsync(CallerContext caller, string projectId, string runId, CancellationToken ct)

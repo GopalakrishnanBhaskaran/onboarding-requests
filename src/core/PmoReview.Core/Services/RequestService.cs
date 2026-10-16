@@ -19,6 +19,7 @@ public sealed record RequestInput
     public string? Justification { get; init; }
     public DateOnly? StartDate { get; init; }
     public DateOnly? EndDate { get; init; }
+    public string? JoinerUpn { get; init; }
 }
 
 public static class RequestFields
@@ -30,11 +31,12 @@ public static class RequestFields
     public const string Justification = "justification";
     public const string StartDate = "startDate";
     public const string EndDate = "endDate";
+    public const string JoinerUpn = "joinerUpn";
 
-    public static readonly IReadOnlyList<string> All = [RequestType, Role, Environment, Manager, Justification, StartDate, EndDate];
+    public static readonly IReadOnlyList<string> All = [RequestType, Role, Environment, Manager, Justification, StartDate, EndDate, JoinerUpn];
 }
 
-public sealed class RequestService(DataStores stores, IClock clock)
+public sealed partial class RequestService(DataStores stores, IClock clock)
 {
     private const int ShortMax = 200;
     private const int JustificationMax = 2000;
@@ -68,6 +70,7 @@ public sealed class RequestService(DataStores stores, IClock clock)
             Justification = clean.Justification,
             StartDate = clean.StartDate,
             EndDate = clean.EndDate,
+            JoinerUpn = clean.JoinerUpn,
             CreatedBy = caller.UserId,
             CreatedAt = now,
             UpdatedBy = caller.UserId,
@@ -95,6 +98,7 @@ public sealed class RequestService(DataStores stores, IClock clock)
             Justification = clean.Justification,
             StartDate = clean.StartDate,
             EndDate = clean.EndDate,
+            JoinerUpn = clean.JoinerUpn,
             UpdatedBy = caller.UserId,
             UpdatedAt = clock.UtcNow,
             Revision = current.Value.Revision + 1,
@@ -128,8 +132,21 @@ public sealed class RequestService(DataStores stores, IClock clock)
             Justification = Text(input.Justification, RequestFields.Justification, JustificationMax),
             StartDate = input.StartDate,
             EndDate = input.EndDate,
+            JoinerUpn = Upn(input.JoinerUpn),
         };
     }
+
+    /// <summary>Format check only (name@domain.tld). The app never looks the user up.</summary>
+    private static string? Upn(string? value)
+    {
+        var v = Text(value, RequestFields.JoinerUpn, ShortMax);
+        if (v is null) return null;
+        if (!UpnFormat().IsMatch(v)) throw AppException.Invalid("joinerUpn must be a sign-in name such as sample.joiner@contoso.onmicrosoft.com.");
+        return v.ToLowerInvariant();
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
+    private static partial System.Text.RegularExpressions.Regex UpnFormat();
 
     internal static string? Text(string? value, string field, int max)
     {

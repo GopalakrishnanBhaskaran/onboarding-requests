@@ -11,8 +11,11 @@ stop=0
 
 echo "== Cosmos DB free tier (one per subscription) =="
 FREE=$(az cosmosdb list --query "[?enableFreeTier].{name:name, rg:resourceGroup, location:location}" -o tsv)
-if [[ -n "$FREE" ]]; then
-  echo "STOP: a free-tier Cosmos DB account already exists:"; echo "$FREE"; stop=1
+OTHER=$(az cosmosdb list --query "[?enableFreeTier && resourceGroup!='rg-pmo-review-pilot'].name" -o tsv)
+if [[ -n "$OTHER" ]]; then
+  echo "STOP: a free-tier Cosmos DB account already exists outside the pilot:"; echo "$FREE"; stop=1
+elif [[ -n "$FREE" ]]; then
+  echo "OK: the free-tier account is the pilot's own (redeploy keeps it): $FREE"
 else
   echo "OK: no free-tier Cosmos DB account in this subscription."
 fi

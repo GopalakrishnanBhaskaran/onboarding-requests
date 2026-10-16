@@ -30,6 +30,15 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
         }
     }
 
+    public Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<Versioned<T>> items = _docs.Values.Select(Read).ToList();
+            return Task.FromResult(items);
+        }
+    }
+
     public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default)
     {
         lock (_gate)
@@ -85,5 +94,6 @@ public static class InMemoryDataStores
         new InMemoryDocumentStore<AccessRequest>(),
         new InMemoryDocumentStore<ReviewRun>(r => r.IdempotencyKey),
         new InMemoryDocumentStore<ReviewDecision>(d => $"{d.ReviewRunId}|{d.Reviewer}"),
-        new InMemoryDocumentStore<UserAccess>());
+        new InMemoryDocumentStore<UserAccess>(),
+        new InMemoryDocumentStore<Core.Handoff.EntraHandoff>());
 }

@@ -19,6 +19,7 @@ public static class SnapshotBuilder
         Justification = request.Justification,
         StartDate = request.StartDate,
         EndDate = request.EndDate,
+        JoinerUpn = request.JoinerUpn,
         CapturedAt = capturedAt,
     };
 
@@ -34,6 +35,8 @@ public static class SnapshotBuilder
             w.WriteStartObject();
             w.WriteString("endDate", Date(s.EndDate));
             w.WriteString("environment", s.Environment);
+            // Written only when set, so hashes of snapshots taken before the field existed still verify.
+            if (s.JoinerUpn is not null) w.WriteString("joinerUpn", s.JoinerUpn);
             w.WriteString("justification", s.Justification);
             w.WriteString("manager", s.Manager);
             w.WriteString("projectId", s.ProjectId);

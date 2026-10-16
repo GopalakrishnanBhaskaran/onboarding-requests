@@ -26,6 +26,31 @@ export const fieldLabel: Record<string, string> = {
   justification: 'Justification',
   startDate: 'Start date',
   endDate: 'End date',
+  joinerUpn: 'New joiner sign-in name',
+};
+
+export const handoffLabel: Record<string, string> = {
+  NotEligible: 'Cannot hand off',
+  AwaitingJoinerRequest: 'Waiting for the new joiner to request',
+  PendingApproval: 'Waiting for Entra approval',
+  Delivering: 'Approved, access being added',
+  Delivered: 'Access delivered by Entra',
+  Denied: 'Denied in Entra',
+  Cancelled: 'Cancelled in Entra',
+  Failed: 'Entra could not deliver',
+  Expired: 'Access ended (expired)',
+};
+
+export const handoffColor: Record<string, 'informative' | 'warning' | 'success' | 'danger' | 'subtle'> = {
+  NotEligible: 'danger',
+  AwaitingJoinerRequest: 'informative',
+  PendingApproval: 'warning',
+  Delivering: 'informative',
+  Delivered: 'success',
+  Denied: 'danger',
+  Cancelled: 'subtle',
+  Failed: 'danger',
+  Expired: 'subtle',
 };
 
 export const inProgress = (s: ProcessingStatus) => s === 'Queued' || s === 'Running';

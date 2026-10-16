@@ -9,6 +9,9 @@
   <Folder Name="/src/core/">
     <Project Path="src/core/PmoReview.Core/PmoReview.Core.csproj" />
   </Folder>
+  <Folder Name="/src/worker/">
+    <Project Path="src/worker/PmoReview.Worker/PmoReview.Worker.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PmoReview.Tests/PmoReview.Tests.csproj" />
   </Folder>

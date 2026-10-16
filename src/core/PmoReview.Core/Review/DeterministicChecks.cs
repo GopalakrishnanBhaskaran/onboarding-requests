@@ -122,6 +122,7 @@ public static class DeterministicChecks
         RequestFields.Justification => string.IsNullOrWhiteSpace(s.Justification),
         RequestFields.StartDate => s.StartDate is null,
         RequestFields.EndDate => s.EndDate is null,
+        RequestFields.JoinerUpn => string.IsNullOrWhiteSpace(s.JoinerUpn),
         _ => true,
     };
 
@@ -134,6 +135,7 @@ public static class DeterministicChecks
         RequestFields.Justification => s.Justification,
         RequestFields.StartDate => s.StartDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         RequestFields.EndDate => s.EndDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+        RequestFields.JoinerUpn => s.JoinerUpn,
         _ => null,
     };
 
@@ -180,6 +182,7 @@ public static class DeterministicChecks
         RequestFields.Justification => "Justification",
         RequestFields.StartDate => "Start date",
         RequestFields.EndDate => "End date",
+        RequestFields.JoinerUpn => "New joiner sign-in name",
         _ => field,
     };
 }

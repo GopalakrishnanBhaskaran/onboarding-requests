@@ -24,6 +24,8 @@ public sealed record MappingInput
     public string? BusinessRole { get; init; }
     public string? Environment { get; init; }
     public string? GroupReference { get; init; }
+    /// <summary>Optional. The access package's "My Access portal link"; the access package id is read from it.</summary>
+    public string? MyAccessLink { get; init; }
     public DateOnly? EffectiveFrom { get; init; }
     public DateOnly? EffectiveTo { get; init; }
     public string? SourceReference { get; init; }
@@ -33,7 +35,7 @@ public sealed record MappingInput
 /// Maintainer-only reference data. Published versions are immutable: a change is a new Draft
 /// version, so every review can pin exactly what it used.
 /// </summary>
-public sealed class ReferenceDataService(DataStores stores, bool markSample = true)
+public sealed partial class ReferenceDataService(DataStores stores, bool markSample = true)
 {
     public async Task<IReadOnlyList<Versioned<RequirementRule>>> ListRulesAsync(CallerContext caller, string projectId, CancellationToken ct)
     {
@@ -92,6 +94,8 @@ public sealed class ReferenceDataService(DataStores stores, bool markSample = tr
         var from = input.EffectiveFrom ?? throw AppException.Invalid("effectiveFrom is required.");
         if (input.EffectiveTo is { } to && to < from) throw AppException.Invalid("effectiveTo must be on or after effectiveFrom.");
 
+        var (link, packageId) = AccessPackageLink(input.MyAccessLink);
+
         var existing = await stores.Mappings.ListAsync(projectId, ct);
         var version = existing.Where(m => m.Value.MappingId == mappingId).Select(m => m.Value.Version).DefaultIfEmpty(0).Max() + 1;
         var doc = new RoleMapping
@@ -103,6 +107,8 @@ public sealed class ReferenceDataService(DataStores stores, bool markSample = tr
             BusinessRole = Required(input.BusinessRole, "businessRole"),
             Environment = Required(input.Environment, "environment"),
             GroupReference = Required(input.GroupReference, "groupReference"),
+            AccessPackageId = packageId,
+            MyAccessLink = link,
             EffectiveFrom = from,
             EffectiveTo = input.EffectiveTo,
             Owner = caller.UserId,
@@ -171,6 +177,23 @@ public sealed class ReferenceDataService(DataStores stores, bool markSample = tr
                 break;
         }
     }
+
+    /// <summary>
+    /// Accepts only a My Access portal link that names one access package, e.g.
+    /// https://myaccess.microsoft.com/@contoso.onmicrosoft.com#/access-packages/{guid}.
+    /// </summary>
+    public static (string? Link, string? PackageId) AccessPackageLink(string? value)
+    {
+        var v = RequestService.Text(value, "myAccessLink", 500);
+        if (v is null) return (null, null);
+        var m = MyAccessLinkFormat().Match(v);
+        if (!m.Success)
+            throw AppException.Invalid("myAccessLink must be the access package's My Access portal link (https://myaccess.microsoft.com/...#/access-packages/<id>).");
+        return (v, m.Groups["id"].Value.ToLowerInvariant());
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^https://myaccess\\.microsoft\\.com/(@[A-Za-z0-9.-]+)?#/access-packages/(?<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$")]
+    private static partial System.Text.RegularExpressions.Regex MyAccessLinkFormat();
 
     private static string Required(string? value, string field, int max = 200) =>
         RequestService.Text(value, field, max) ?? throw AppException.Invalid($"{field} is required.");

@@ -4,6 +4,16 @@
 
 The pilot checks whether an onboarding/access request is ready for human review. It **does not approve, route, fulfil or grant anything.**
 
+## Phase 2 addition — Entra hand-off (approved by Gokul, 16 Oct 2026)
+Option A: after a Reviewer accepts a ready review, the app gives the new joiner the **My Access link** of the mapped **Entra access package**. Entra runs the approval, adds the group membership, enforces the end date and keeps the audit trail. A background worker reads Entra (read-only) and shows the status in the app. The app still never approves, assigns or removes access. Paid from Azure credits, budget ₹2,000/month. Workflow: `workflows/08-entra-handoff.md`.
+
+| Now included (Phase 2) | Still excluded |
+|---|---|
+| New joiner sign-in name (UPN) on the request, format-checked, never looked up | Creating users or groups from the app |
+| Mapping → access package link (Maintainer, versioned) | Graph writes; `adminAdd` direct assignment |
+| Hand-off record + My Access link on Accepted | Approval screens in the app |
+| Read-only status sync (requested, pending approval, delivered, denied, expired, end-date check) | Emails/Teams from the app (Entra sends its own) |
+
 ## Included
 | Area | What the pilot does |
 |---|---|
@@ -23,9 +33,9 @@ The pilot checks whether an onboarding/access request is ready for human review.
 | Item | Reason |
 |---|---|
 | **Fulfilment of any kind** | Pilot ends at human review |
-| Approval routing / approver workflow | Out of scope |
-| Identity lookup or creation, Microsoft Graph | Out of scope |
-| Group assignment, credential issue | Out of scope |
+| Approval routing / approver workflow | In Entra (Phase 2), never in this app |
+| Identity creation, Microsoft Graph writes | Out of scope (Graph **reads** by the worker are Phase 2) |
+| Group assignment, credential issue | Entra assigns via the access package (Phase 2); never this app |
 | Email / Teams notifications | Out of scope |
 | Ticket creation or sync | Out of scope |
 | Billing / chargeback | Out of scope |

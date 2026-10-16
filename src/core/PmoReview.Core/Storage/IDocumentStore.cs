@@ -22,6 +22,9 @@ public interface IDocumentStore<T> where T : class, IDocument
     /// <summary>Whole partition. Fine at pilot scale; filter in memory.</summary>
     Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default);
 
+    /// <summary>Cross-partition. Background workers only; API handlers must stay partition-scoped.</summary>
+    Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default);
+
     /// <exception cref="DocumentConflictException">Id or unique key exists.</exception>
     Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default);
 

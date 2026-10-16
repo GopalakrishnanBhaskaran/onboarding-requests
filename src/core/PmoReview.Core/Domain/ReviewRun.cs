@@ -15,6 +15,7 @@ public sealed record RequestSnapshot
     public string? Justification { get; init; }
     public DateOnly? StartDate { get; init; }
     public DateOnly? EndDate { get; init; }
+    public string? JoinerUpn { get; init; }
     public required DateTimeOffset CapturedAt { get; init; }
 }
 

@@ -5,6 +5,8 @@ param budgetEmail string
 param budgetAmount int
 param budgetStartDate string
 param tags object
+@description('Phase 2: also allow the hand-off worker types (Function App, Flex plan, its storage account).')
+param enableHandoff bool = false
 
 var suffix = uniqueString(resourceGroup().id)
 var cosmosName = 'cosmos-pmo-pilot-${suffix}'
@@ -26,16 +28,35 @@ var allowedResourceTypes = [
   'Microsoft.Consumption/budgets'
 ]
 
+// Phase 2 only (Gokul approved 16 Oct 2026, paid from Azure credits). Still no App Insights, Key Vault, OpenAI, VNets.
+var handoffResourceTypes = [
+  'Microsoft.Web/serverfarms'
+  'Microsoft.Web/sites'
+  'Microsoft.Web/sites/config'
+  'Microsoft.Web/sites/basicPublishingCredentialsPolicies'
+  'Microsoft.Web/sites/extensions'
+  'Microsoft.Web/sites/functions'
+  'Microsoft.Storage/storageAccounts'
+  'Microsoft.Storage/storageAccounts/blobServices'
+  'Microsoft.Storage/storageAccounts/blobServices/containers'
+  'Microsoft.Storage/storageAccounts/queueServices'
+  'Microsoft.Storage/storageAccounts/tableServices'
+  'Microsoft.Storage/storageAccounts/fileServices'
+  'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments'
+]
+
 resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
   name: 'pmo-pilot-allowed-types'
   properties: {
     displayName: 'PMO pilot: allowed resource types (zero-cost guardrail)'
-    description: 'Only Static Web Apps and Cosmos DB (plus their child types) may exist in this resource group.'
+    description: enableHandoff
+      ? 'Only Static Web Apps, Cosmos DB and the Phase 2 hand-off worker (Flex Function App + storage) may exist in this resource group.'
+      : 'Only Static Web Apps and Cosmos DB (plus their child types) may exist in this resource group.'
     policyDefinitionId: tenantResourceId('Microsoft.Authorization/policyDefinitions', 'a08ec900-254a-4555-9bf5-e42af04b5c5c')
     enforcementMode: 'Default'
     parameters: {
       listOfResourceTypesAllowed: {
-        value: allowedResourceTypes
+        value: enableHandoff ? concat(allowedResourceTypes, handoffResourceTypes) : allowedResourceTypes
       }
     }
   }
@@ -50,20 +71,39 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
     timePeriod: {
       startDate: budgetStartDate
     }
+    // Phase 2: ₹2,000 cap paid from credits. Alerts at 50/80/100% actual and 100% forecast.
     notifications: {
-      actualOver1Percent: {
+      actual50: {
         enabled: true
         operator: 'GreaterThan'
-        threshold: 1
+        threshold: 50
         thresholdType: 'Actual'
         contactEmails: [
           budgetEmail
         ]
       }
-      forecastOver1Percent: {
+      actual80: {
         enabled: true
         operator: 'GreaterThan'
-        threshold: 1
+        threshold: 80
+        thresholdType: 'Actual'
+        contactEmails: [
+          budgetEmail
+        ]
+      }
+      actual100: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 100
+        thresholdType: 'Actual'
+        contactEmails: [
+          budgetEmail
+        ]
+      }
+      forecast100: {
+        enabled: true
+        operator: 'GreaterThan'
+        threshold: 100
         thresholdType: 'Forecasted'
         contactEmails: [
           budgetEmail
@@ -135,6 +175,7 @@ var containers = [
   { name: 'reviewRuns', pk: '/projectId', uniqueKeys: [ { paths: [ '/idempotencyKey' ] } ] }
   { name: 'reviewDecisions', pk: '/projectId', uniqueKeys: [ { paths: [ '/reviewRunId', '/reviewer' ] } ] }
   { name: 'userAccess', pk: '/userId', uniqueKeys: [] }
+  { name: 'handoffs', pk: '/projectId', uniqueKeys: [] }
 ]
 
 resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = [for c in containers: {

@@ -5,7 +5,8 @@ import { navigate } from '../lib/router';
 import type { ProjectSummary, RequestFields } from '../lib/types';
 import { ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
-const empty: RequestFields = { requestType: '', role: '', environment: '', manager: '', justification: '', startDate: '', endDate: '' };
+const empty: RequestFields = { requestType: '', role: '', environment: '', manager: '', justification: '', startDate: '', endDate: '', joinerUpn: '' };
+const UPN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 /** Minimum fields only. Fields may be left blank; the review reports what is missing. */
 export function RequestFormPage({ project, requestId }: { project: ProjectSummary; requestId?: string }) {
@@ -37,6 +38,7 @@ export function RequestFormPage({ project, requestId }: { project: ProjectSummar
     role: lengthError('role', 200),
     manager: lengthError('manager', 200),
     justification: lengthError('justification', 2000),
+    joinerUpn: text('joinerUpn') && !UPN.test(text('joinerUpn')) ? 'Use a sign-in name such as sample.joiner@contoso.onmicrosoft.com.' : undefined,
   };
   const blocked = Object.values(errors).some(Boolean);
 
@@ -102,6 +104,13 @@ export function RequestFormPage({ project, requestId }: { project: ProjectSummar
             <Option key={t} value={t}>{t}</Option>
           ))}
         </Dropdown>
+      </Field>
+      <Field
+        label="New joiner sign-in name"
+        hint="The person who will get access, as their Entra sign-in (UPN). Used only to track their request in Microsoft Entra."
+        validationMessage={errors.joinerUpn}
+      >
+        <Input type="email" value={text('joinerUpn')} onChange={(_, d) => set('joinerUpn')(d.value)} maxLength={200} autoComplete="off" />
       </Field>
       <Field label="Line manager" hint="Name only. No email, phone or employee number." validationMessage={errors.manager}>
         <Input value={text('manager')} onChange={(_, d) => set('manager')(d.value)} maxLength={200} />

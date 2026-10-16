@@ -121,8 +121,43 @@ All routes are under `/api`, require SWA sign-in, and take identity **only** fro
 | GET/POST `projects/{projectId}/rules`, `.../mappings` | ViewReferenceData / ManageReferenceData (Maintainer) — creates a new Draft version |
 | POST `projects/{projectId}/rules/{id}/status`, `.../mappings/{id}/status` | Maintainer — Draft→Published→Retired only, `If-Match` |
 | POST `projects/{projectId}/operator/recover` | RecoverRuns (Operator) |
+| GET `projects/{projectId}/requests/{requestId}/handoffs` | ViewRuns — Phase 2, read-only; `{enabled, items}` |
 
-No route writes `result`, `snapshot`, versions or status; only `ReviewProcessor` does (AC12).
+No route writes `result`, `snapshot`, versions or status; only `ReviewProcessor` does (AC12). No route writes hand-off records; an Accepted decision creates one, the worker updates it.
+
+## Phase 2: Entra hand-off (Option A, approved 16 Oct 2026)
+
+```mermaid
+sequenceDiagram
+  participant P as PMO
+  participant R as Reviewer
+  participant A as App (SWA API)
+  participant C as Cosmos
+  participant J as New joiner
+  participant E as Microsoft Entra
+  participant W as Worker (Flex, managed identity)
+  P->>A: request + joiner UPN, Analyze
+  A->>C: run Completed, ReadyForHumanReview, mapping Matched (pinned version)
+  R->>A: decision Accepted
+  A->>C: handoff {status AwaitingJoinerRequest, My Access link from pinned mapping}
+  P-->>J: sends My Access link
+  J->>E: requests access package (userAdd, dates, justification)
+  E->>E: approval policy (approver), assignment, expiry, audit, emails
+  loop every 5 min
+    W->>E: GET assignmentRequests / assignments (Read.All only)
+    W->>C: handoff status (ETag), end-date check
+  end
+```
+
+| Concern | Design |
+|---|---|
+| Who approves | Entra approval policy on the access package. The app's Accepted is a readiness sign-off, not approval. |
+| Who assigns / removes | Entra (access package resource role + expiry). The app holds no write permission. |
+| Identity matching | Snapshot `joinerUpn` vs Entra `requestor`/`target` `principalName` or `email`, case-insensitive; only requests created after the hand-off (−10 min). |
+| Drift check | Entra end date later than the reviewed end date (or none) → visible warning. |
+| Failure | Graph errors stored as a category; last known status kept; retried next cycle. |
+| Privilege | Worker: Graph `EntitlementManagement.Read.All`; Cosmos data role on `handoffs` only; Storage Blob Data Owner on its own account. No keys. |
+| Switch off | `ENTRA_HANDOFF_ENABLED=false` (SWA) stops new hand-offs; stopping the worker stops cost. Review flow unaffected. |
 
 ## Design decisions that differ from the prompt (with reasons)
 

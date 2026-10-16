@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Badge, Button, Dropdown, Field, Input, Option, Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
+  Badge, Button, Dropdown, Field, Input, Link, Option, Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
 import { api } from '../lib/api';
 import type { Item, ProjectSummary, PublicationStatus, RequirementRule, RoleMapping } from '../lib/types';
@@ -94,6 +94,7 @@ export function ReferencePage({ project }: { project: ProjectSummary }) {
                 <TableHeaderCell>Business role</TableHeaderCell>
                 <TableHeaderCell>Environment</TableHeaderCell>
                 <TableHeaderCell>Group reference</TableHeaderCell>
+                <TableHeaderCell>Entra access package</TableHeaderCell>
                 <TableHeaderCell>Effective</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
                 <TableHeaderCell>Action</TableHeaderCell>
@@ -106,6 +107,11 @@ export function ReferencePage({ project }: { project: ProjectSummary }) {
                   <TableCell>{m.businessRole}</TableCell>
                   <TableCell>{m.environment}</TableCell>
                   <TableCell>{m.groupReference}</TableCell>
+                  <TableCell>
+                    {m.myAccessLink
+                      ? <Link href={m.myAccessLink} target="_blank" rel="noopener noreferrer">{m.accessPackageId?.slice(0, 8)}…</Link>
+                      : '—'}
+                  </TableCell>
                   <TableCell>{m.effectiveFrom} → {m.effectiveTo ?? 'open'}</TableCell>
                   <TableCell><Badge appearance="outline">{m.publicationStatus}</Badge></TableCell>
                   <TableCell>{actions('mapping', m.id, m.publicationStatus, etag)}</TableCell>
@@ -161,12 +167,12 @@ function RuleDraftForm({ project, onCreated, onError }: FormProps) {
 
 function MappingDraftForm({ project, onCreated, onError }: FormProps) {
   const s = useStyles();
-  const [f, setF] = useState({ mappingId: '', businessRole: 'SAMPLE ', environment: project.supportedEnvironments[0] ?? '', groupReference: 'SAMPLE-GRP-', effectiveFrom: '', sourceReference: 'SAMPLE-' });
+  const [f, setF] = useState({ mappingId: '', businessRole: 'SAMPLE ', environment: project.supportedEnvironments[0] ?? '', groupReference: 'SAMPLE-GRP-', myAccessLink: '', effectiveFrom: '', sourceReference: 'SAMPLE-' });
   const set = (k: keyof typeof f) => (v: string) => setF((x) => ({ ...x, [k]: v }));
 
   async function submit() {
     try {
-      await api.createMapping(project.projectId, { ...f, effectiveFrom: f.effectiveFrom || null });
+      await api.createMapping(project.projectId, { ...f, myAccessLink: f.myAccessLink || null, effectiveFrom: f.effectiveFrom || null });
       await onCreated();
     } catch (e) {
       onError(e);
@@ -179,6 +185,9 @@ function MappingDraftForm({ project, onCreated, onError }: FormProps) {
       <Field label="Business role"><Input value={f.businessRole} onChange={(_, d) => set('businessRole')(d.value)} /></Field>
       <Field label="Environment"><Input value={f.environment} onChange={(_, d) => set('environment')(d.value)} /></Field>
       <Field label="Group reference"><Input value={f.groupReference} onChange={(_, d) => set('groupReference')(d.value)} /></Field>
+      <Field label="My Access portal link (optional)" hint="From the Entra access package overview. Enables the Entra hand-off.">
+        <Input value={f.myAccessLink} onChange={(_, d) => set('myAccessLink')(d.value)} placeholder="https://myaccess.microsoft.com/@tenant#/access-packages/…" />
+      </Field>
       <Field label="Effective from"><Input type="date" value={f.effectiveFrom} onChange={(_, d) => set('effectiveFrom')(d.value)} /></Field>
       <Field label="Source reference"><Input value={f.sourceReference} onChange={(_, d) => set('sourceReference')(d.value)} /></Field>
       <Button type="submit">Create draft mapping</Button>

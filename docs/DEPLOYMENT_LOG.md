@@ -16,5 +16,6 @@
 | 2026-10-16 | Live check 2: user registered (SAMPLE-ALPHA, PMO+Reviewer); one synthetic request analysed — **PASS** | Request saved (revision 1), Analyze ran inline on the managed API, result stored and shown. Role entered as free text that matches no published mapping, so: readiness **NeedsInformation**; 1 Blocking finding `UNKNOWN_ROLE` on Business role; mapping assessment **NotFound**; one clarification question; limitations state rule-only and no approval. Evidence pinned: 9 rule versions (A-DURATION … A-REQ-START, all v1), mappings none, snapshot hash shown. Matches local acceptance behaviour (AC05/AC22 pattern). | Gokul |
 | — | Optional live check 3: same request edited to `SAMPLE Data Engineer` / Dev, re-analysed (expect mapping Matched, new run for revision 2) | optional | — |
 | — | Cost re-check +24–48 h (`tools/cost_check.sh`) | pending (on/after 2026-10-17 03:00 UTC) | — |
+| 2026-10-16 | Decision: **Phase 2 Entra hand-off** | Option A (access packages), Entra approves, background worker (Flex Consumption + storage, managed identity, Graph read-only), budget ₹2,000/month with 50/80/100% alerts, paid from Azure credits. Built and tested locally; **not deployed** (needs the Phase 2 what-if + "approved"). | Gokul |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |

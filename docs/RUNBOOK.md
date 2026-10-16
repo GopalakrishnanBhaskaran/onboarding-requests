@@ -33,6 +33,23 @@ Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Cor
 6. Run one synthetic SAMPLE request in the UI; save a screenshot of the result.
 7. `tools/cost_check.sh rg-pmo-review-pilot` now and again after 24–48 h → paste output into `docs/COSTS.md`.
 
+## Phase 2 — Entra hand-off (after "approved" on the Phase 2 what-if)
+
+Full steps and the E2E test script: `workflows/08-entra-handoff.md`. In short:
+1. Cloud admin account → start the Entra ID P2 / Governance trial (portal).
+2. `bash tools/setup_entra.sh identities <tenant>.onmicrosoft.com <approver-upn>` → group + test joiner + licences.
+3. Portal: catalog + access package (approval by the approver, requestor timeline allowed, expiry ≤ 180 days); copy the My Access link.
+4. `.local/params.json`: `budgetAmount 2000`, `enableHandoff true`, `workerLocation`, `workerRuntimeVersion` → `tools/deploy_free.sh whatif …` → approval → `apply … --approved-by "Gokul <date>"`.
+5. `tools/deploy_free.sh grant-graph <sub>` if apply could not grant it (needs Global Administrator).
+6. App: Maintainer publishes a new `A-MAP-ENG-DEV` version with the My Access link.
+7. Run the E2E script; record results in `docs/DEPLOYMENT_LOG.md`.
+
+| Situation | Action |
+|---|---|
+| Worker code change | `tools/deploy_free.sh worker <sub>` |
+| Hand-off stuck on an old status | Check the worker's `handoff-sync done` log line and *Last status check failed (…)* in the app |
+| Turn the hand-off off | `az staticwebapp appsettings set -n <swa> -g rg-pmo-review-pilot --setting-names ENTRA_HANDOFF_ENABLED=false`; `az functionapp stop …` |
+
 ## Operations
 
 | Situation | Action |

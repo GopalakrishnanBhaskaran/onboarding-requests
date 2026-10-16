@@ -24,12 +24,16 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
         }
     }
 
-    public async Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default)
+    public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default) =>
+        QueryAsync(new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey), MaxItemCount = 200 }, ct);
+
+    public Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default) =>
+        QueryAsync(new QueryRequestOptions { MaxItemCount = 200 }, ct);
+
+    private async Task<IReadOnlyList<Versioned<T>>> QueryAsync(QueryRequestOptions options, CancellationToken ct)
     {
         var results = new List<Versioned<T>>();
-        using var it = container.GetItemQueryStreamIterator(
-            new QueryDefinition("SELECT * FROM c"),
-            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey), MaxItemCount = 200 });
+        using var it = container.GetItemQueryStreamIterator(new QueryDefinition("SELECT * FROM c"), requestOptions: options);
         while (it.HasMoreResults)
         {
             using var page = await it.ReadNextAsync(ct);
@@ -90,6 +94,7 @@ public static class CosmosSchema
         (ContainerNames.ReviewRuns, "/projectId", [["/idempotencyKey"]]),
         (ContainerNames.ReviewDecisions, "/projectId", [["/reviewRunId", "/reviewer"]]),
         (ContainerNames.UserAccess, "/userId", []),
+        (ContainerNames.Handoffs, "/projectId", []),
     ];
 }
 
@@ -133,7 +138,8 @@ public static class CosmosDataStores
             new CosmosDocumentStore<AccessRequest>(db.GetContainer(ContainerNames.Requests)),
             new CosmosDocumentStore<ReviewRun>(db.GetContainer(ContainerNames.ReviewRuns)),
             new CosmosDocumentStore<ReviewDecision>(db.GetContainer(ContainerNames.ReviewDecisions)),
-            new CosmosDocumentStore<UserAccess>(db.GetContainer(ContainerNames.UserAccess)));
+            new CosmosDocumentStore<UserAccess>(db.GetContainer(ContainerNames.UserAccess)),
+            new CosmosDocumentStore<Core.Handoff.EntraHandoff>(db.GetContainer(ContainerNames.Handoffs)));
     }
 
     /// <summary>

@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "ALLOW_PAID_SERVICES": "true",
+    "COSMOS_ENDPOINT": "https://<cosmos-account>.documents.azure.com:443/",
+    "COSMOS_DATABASE": "pmoreview",
+    "HANDOFF_SYNC_SCHEDULE": "0 */5 * * * *"
+  }
+}

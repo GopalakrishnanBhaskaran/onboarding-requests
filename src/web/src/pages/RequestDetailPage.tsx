@@ -6,8 +6,8 @@ import {
 import { ArrowClockwise20Regular, Copy20Regular, Edit20Regular, Search20Regular } from '@fluentui/react-icons';
 import { api, newNonce } from '../lib/api';
 import { href } from '../lib/router';
-import type { AccessRequest, DecisionOutcome, Item, ProjectSummary, ReviewDecision, ReviewRun } from '../lib/types';
-import { dateTime, fieldLabel, inProgress, readinessColor, readinessLabel, severityColor } from '../lib/format';
+import type { AccessRequest, DecisionOutcome, EntraHandoff, Item, ProjectSummary, ReviewDecision, ReviewRun } from '../lib/types';
+import { dateTime, fieldLabel, handoffColor, handoffLabel, inProgress, readinessColor, readinessLabel, severityColor } from '../lib/format';
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
 const POLL_MS = 3000;
@@ -26,18 +26,21 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [handoffs, setHandoffs] = useState<{ enabled: boolean; items: Item<EntraHandoff>[] }>({ enabled: false, items: [] });
   const pollStarted = useRef<number>(0);
   const nonce = useRef<string>(newNonce());
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [req, list] = await Promise.all([
+      const [req, list, hand] = await Promise.all([
         api.getRequest(project.projectId, requestId),
         api.listRuns(project.projectId, requestId),
+        api.listHandoffs(project.projectId, requestId),
       ]);
       setRequest(req);
       setRuns(list.items);
+      setHandoffs(hand);
       setSelected((cur) => cur ?? list.items[0]?.value.id ?? null);
       setLastUpdated(new Date());
       return list.items;
@@ -99,7 +102,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
       <section className={s.section} aria-labelledby="req-heading">
         <Subtitle2 as="h2" id="req-heading">Request</Subtitle2>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
-          {(['requestType', 'role', 'environment', 'manager', 'startDate', 'endDate', 'justification'] as const).map((k) => (
+          {(['requestType', 'role', 'environment', 'joinerUpn', 'manager', 'startDate', 'endDate', 'justification'] as const).map((k) => (
             <div key={k} style={{ display: 'contents' }}>
               <dt><Caption1>{fieldLabel[k]}</Caption1></dt>
               <dd style={{ margin: 0 }} className={s.pre}><Body1>{r[k] || '—'}</Body1></dd>
@@ -121,6 +124,8 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
         <div aria-live="polite" role="status"><Caption1>{status}</Caption1></div>
       </section>
 
+      {handoffs.enabled && <HandoffPanel items={handoffs.items} currentRevision={r.revision} />}
+
       <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'results' | 'history')} aria-label="Review views">
         <Tab value="results">Review results</Tab>
         <Tab value="history">Review history ({runs.length})</Tab>
@@ -135,6 +140,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
             canRetry={isPmo}
             canReview={isReviewer}
             onRetry={(id) => void start('retry', id)}
+            onFeedback={() => void load()}
           />
         ) : (
           <Empty>No review yet.{isPmo ? ' Select “Analyze request”.' : ''}</Empty>
@@ -166,8 +172,9 @@ function RunView(props: {
   canRetry: boolean;
   canReview: boolean;
   onRetry: (runId: string) => void;
+  onFeedback: () => void;
 }) {
-  const { run, project, currentRevision, canRetry, canReview, onRetry } = props;
+  const { run, project, currentRevision, canRetry, canReview, onRetry, onFeedback } = props;
   const s = useStyles();
   const result = run.result;
   const [copied, setCopied] = useState(false);
@@ -278,7 +285,7 @@ function RunView(props: {
           </section>
 
           {canReview && (run.processingStatus === 'Completed' || run.processingStatus === 'Superseded') && (
-            <Feedback projectId={project.projectId} runId={run.id} />
+            <Feedback projectId={project.projectId} runId={run.id} onSaved={onFeedback} />
           )}
         </>
       )}
@@ -326,8 +333,75 @@ function History({ runs, onSelect }: { runs: Item<ReviewRun>[]; onSelect: (id: s
   );
 }
 
+/**
+ * Entra hand-off for the latest accepted review. The app never approves or assigns: the new joiner requests the
+ * access package in My Access, the Entra approver decides, Entra adds and later removes the access.
+ */
+function HandoffPanel({ items, currentRevision }: { items: Item<EntraHandoff>[]; currentRevision: number }) {
+  const s = useStyles();
+  const [copied, setCopied] = useState(false);
+  const h = items[0]?.value;
+
+  async function copyLink(link: string) {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <section className={s.section} aria-labelledby="handoff-h">
+      <Subtitle2 as="h2" id="handoff-h">Access in Microsoft Entra</Subtitle2>
+      {!h ? (
+        <Caption1 className={s.muted}>
+          Not handed off yet. A Reviewer accepts a review that is ready for human review; the new joiner then requests the access package in My Access.
+        </Caption1>
+      ) : (
+        <>
+          <div className={s.row}>
+            <Badge appearance="filled" color={handoffColor[h.status]}>{handoffLabel[h.status] ?? h.status}</Badge>
+            <Caption1 className={s.muted}>
+              Revision {h.requestRevision}{h.requestRevision !== currentRevision ? ' (the request has changed since)' : ''} · accepted by {h.acceptedBy} · last checked {dateTime(h.lastCheckedAt)}
+            </Caption1>
+          </div>
+          {h.status === 'NotEligible' && <Body1>{h.reason}</Body1>}
+          {h.myAccessLink && h.status !== 'NotEligible' && (
+            <div className={s.row}>
+              <Body1>Send this link to {h.joinerUpn}:</Body1>
+              <Link href={h.myAccessLink} target="_blank" rel="noopener noreferrer">Request access in My Access</Link>
+              <Button size="small" icon={<Copy20Regular />} onClick={() => void copyLink(h.myAccessLink!)}>{copied ? 'Copied' : 'Copy link'}</Button>
+            </div>
+          )}
+          {h.status !== 'NotEligible' && (
+            <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
+              <dt><Caption1>Access package</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.mappingId} v{h.mappingVersion} · {h.accessPackageId}</Body1></dd>
+              <dt><Caption1>Requested period</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.requestedStart ?? '—'} → {h.requestedEnd ?? '—'}</Body1></dd>
+              <dt><Caption1>Entra request</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.entraRequestState ? `${h.entraRequestState} (${h.entraRequestType})` : '—'}</Body1></dd>
+              <dt><Caption1>Access in Entra</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.entraAssignmentState ? `${h.entraAssignmentState}: ${dateTime(h.accessStart)} → ${h.accessEnd ? dateTime(h.accessEnd) : 'no end date'}` : '—'}</Body1></dd>
+            </dl>
+          )}
+          {h.endDateExceedsRequest && (
+            <Body1><Badge color="warning">Check</Badge> Entra's end date is later than the reviewed end date (or has none). Ask the approver to correct the assignment.</Body1>
+          )}
+          {h.preExistingAssignment && <Body1><Badge color="informative">Note</Badge> The new joiner already held this access package before the hand-off.</Body1>}
+          {h.lastSyncError && <Caption1>Last status check failed ({h.lastSyncError}); the previous status is shown.</Caption1>}
+          {h.history.length > 0 && (
+            <ol style={{ margin: 0 }} aria-label="Hand-off timeline">
+              {h.history.map((e, i) => <li key={i}><Caption1>{dateTime(e.at)} · {handoffLabel[e.status] ?? e.status} — {e.note}</Caption1></li>)}
+            </ol>
+          )}
+          <Caption1 className={s.muted}>Status is read from Microsoft Entra every 5 minutes. This app does not approve or grant access.</Caption1>
+        </>
+      )}
+    </section>
+  );
+}
+
 /** Reviewer feedback on review QUALITY. It is not an access decision. */
-function Feedback({ projectId, runId }: { projectId: string; runId: string }) {
+function Feedback({ projectId, runId, onSaved }: { projectId: string; runId: string; onSaved: () => void }) {
   const s = useStyles();
   const [decisions, setDecisions] = useState<Item<ReviewDecision>[] | null>(null);
   const [outcome, setOutcome] = useState<DecisionOutcome>('Accepted');
@@ -349,6 +423,7 @@ function Feedback({ projectId, runId }: { projectId: string; runId: string }) {
       await api.recordDecision(projectId, runId, outcome, comment.trim());
       setComment('');
       load();
+      onSaved();
     } catch (e) {
       setError(e);
     } finally {
@@ -359,7 +434,9 @@ function Feedback({ projectId, runId }: { projectId: string; runId: string }) {
   return (
     <section className={s.section} aria-labelledby="feedback-h">
       <Subtitle2 as="h2" id="feedback-h">Reviewer feedback on this review</Subtitle2>
-      <Caption1 className={s.muted}>Rates the quality of the automated review. It does not approve the request.</Caption1>
+      <Caption1 className={s.muted}>
+        Rates the quality of the automated review. It does not approve the request. When the hand-off is on, “Accepted” on a review that is ready for human review issues the new joiner's My Access link; Entra still approves.
+      </Caption1>
       <ErrorBar error={error} />
       {decisions?.map(({ value: d }) => (
         <Body1 key={d.id}>{d.outcome} by {d.reviewer} · {dateTime(d.timestamp)}{d.comment ? ` — ${d.comment}` : ''}</Body1>

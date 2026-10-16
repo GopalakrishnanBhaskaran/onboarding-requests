@@ -49,7 +49,11 @@ public sealed record RequirementRule : IDocument
         && (EffectiveTo is null || date <= EffectiveTo);
 }
 
-/// <summary>Reference data only. <see cref="GroupReference"/> is a label, never used to assign anything.</summary>
+/// <summary>
+/// Reference data. <see cref="GroupReference"/> is a label, never used to assign anything.
+/// <see cref="AccessPackageId"/> (optional) links the mapping to a Microsoft Entra access package; Entra, not this app,
+/// approves and assigns. A review can only be handed off when its pinned mapping version has one.
+/// </summary>
 public sealed record RoleMapping : IDocument
 {
     public required string Id { get; init; }
@@ -59,6 +63,10 @@ public sealed record RoleMapping : IDocument
     public required string BusinessRole { get; init; }
     public required string Environment { get; init; }
     public required string GroupReference { get; init; }
+    /// <summary>Entra access package object id (GUID). Null = no Entra hand-off for this mapping.</summary>
+    public string? AccessPackageId { get; init; }
+    /// <summary>The access package's "My Access portal link", given to the new joiner to request access.</summary>
+    public string? MyAccessLink { get; init; }
     public required DateOnly EffectiveFrom { get; init; }
     public DateOnly? EffectiveTo { get; init; }
     public required string Owner { get; init; }
@@ -86,6 +94,8 @@ public sealed record AccessRequest : IDocument
     public string? Justification { get; init; }
     public DateOnly? StartDate { get; init; }
     public DateOnly? EndDate { get; init; }
+    /// <summary>Sign-in name (UPN) of the person who will get access. Used only to match the Entra request; never looked up or created here.</summary>
+    public string? JoinerUpn { get; init; }
     public required string CreatedBy { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
     public required string UpdatedBy { get; init; }

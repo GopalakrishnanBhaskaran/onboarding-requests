@@ -17,6 +17,8 @@ public partial class InfraConsistencyTests
     private static string Bicep() =>
         File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep")) + File.ReadAllText(Path.Combine(Repo(), "infra", "modules", "pilot.bicep"));
 
+    private static string HandoffBicep() => File.ReadAllText(Path.Combine(Repo(), "infra", "modules", "handoff.bicep"));
+
     [Fact]
     public void Bicep_containers_match_code_schema()
     {
@@ -55,6 +57,63 @@ public partial class InfraConsistencyTests
         var types = ResourceType().Matches(bicep).Select(m => m.Groups[1].Value).Distinct().ToList();
         Assert.NotEmpty(types);
         Assert.All(types, t => Assert.Contains(t, allowed));
+    }
+
+    /// <summary>
+    /// Phase 2 worker (approved, paid from credits): only the agreed types, identity-only access, least privilege,
+    /// and still none of the never-create services (CLAUDE.md rule 2).
+    /// </summary>
+    [Fact]
+    public void Handoff_worker_is_least_privilege_and_off_by_default()
+    {
+        var main = File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep"));
+        var bicep = HandoffBicep();
+        Assert.Contains("param enableHandoff bool = false", main);
+        Assert.Contains("if (enableHandoff)", main);
+
+        string[] allowed =
+        [
+            "Microsoft.DocumentDB/databaseAccounts", "Microsoft.Storage/storageAccounts", "Microsoft.Storage/storageAccounts/blobServices",
+            "Microsoft.Storage/storageAccounts/blobServices/containers", "Microsoft.Web/serverfarms", "Microsoft.Web/sites",
+            "Microsoft.Web/sites/basicPublishingCredentialsPolicies", "Microsoft.Authorization/roleAssignments",
+            "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+        ];
+        var types = ResourceType().Matches(bicep).Select(m => m.Groups[1].Value).Distinct().ToList();
+        Assert.All(types, t => Assert.Contains(t, allowed));
+        foreach (var never in new[] { "Microsoft.Insights", "Microsoft.OperationalInsights", "Microsoft.KeyVault", "Microsoft.CognitiveServices", "Microsoft.Network", "Microsoft.ServiceBus", "APPLICATIONINSIGHTS" })
+            Assert.DoesNotContain(never, bicep, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("allowSharedKeyAccess: false", bicep);
+        Assert.Contains("type: 'SystemAssigned'", bicep);
+        Assert.Contains("tier: 'FlexConsumption'", bicep);
+        Assert.Contains("instanceMemoryMB: 512", bicep);
+        Assert.Contains("/colls/handoffs'", bicep); // Cosmos data role scoped to the one container it writes
+        Assert.DoesNotContain("listKeys", bicep);
+        Assert.Contains("allow: false", bicep); // no basic-auth publishing
+
+        // Policy lists every worker type, and only when the hand-off is on.
+        var pilot = File.ReadAllText(Path.Combine(Repo(), "infra", "modules", "pilot.bicep"));
+        Assert.Contains("enableHandoff ? concat(allowedResourceTypes, handoffResourceTypes) : allowedResourceTypes", pilot);
+        foreach (var t in new[] { "Microsoft.Web/serverfarms", "Microsoft.Web/sites", "Microsoft.Storage/storageAccounts", "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments" })
+            Assert.Contains($"'{t}'", pilot);
+    }
+
+    [Fact]
+    public void Budget_is_the_approved_phase2_cap_with_staged_alerts()
+    {
+        var bicep = Bicep();
+        Assert.Contains("param budgetAmount int = 2000", bicep);
+        foreach (var t in new[] { "threshold: 50", "threshold: 80", "threshold: 100" }) Assert.Contains(t, bicep);
+        Assert.Contains("thresholdType: 'Forecasted'", bicep);
+    }
+
+    [Fact]
+    public void Worker_target_framework_matches_flex_runtime()
+    {
+        var csproj = File.ReadAllText(Path.Combine(Repo(), "src", "worker", "PmoReview.Worker", "PmoReview.Worker.csproj"));
+        var tfm = Regex.Match(csproj, "<TargetFramework>net(?<v>[0-9.]+)</TargetFramework>").Groups["v"].Value;
+        Assert.Contains($"param workerRuntimeVersion string = '{tfm}'", HandoffBicep());
+        Assert.Contains($"param workerRuntimeVersion string = '{tfm}'", File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep")));
     }
 
     /// <summary>

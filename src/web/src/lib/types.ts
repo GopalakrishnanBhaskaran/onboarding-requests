@@ -36,6 +36,7 @@ export interface RequestFields {
   justification?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  joinerUpn?: string | null;
 }
 
 export interface AccessRequest extends RequestFields {
@@ -153,9 +154,45 @@ export interface RoleMapping {
   businessRole: string;
   environment: string;
   groupReference: string;
+  accessPackageId?: string | null;
+  myAccessLink?: string | null;
   effectiveFrom: string;
   effectiveTo: string | null;
   publicationStatus: PublicationStatus;
   sourceReference: string;
   isSample: boolean;
+}
+
+export type HandoffStatus =
+  | 'NotEligible' | 'AwaitingJoinerRequest' | 'PendingApproval' | 'Delivering' | 'Delivered'
+  | 'Denied' | 'Cancelled' | 'Failed' | 'Expired';
+
+/** Where an accepted review stands in Microsoft Entra. Entra approves and assigns; this app only reports. */
+export interface EntraHandoff {
+  id: string;
+  requestId: string;
+  requestRevision: number;
+  reviewRunId: string;
+  acceptedBy: string;
+  status: HandoffStatus;
+  reason: string | null;
+  joinerUpn: string | null;
+  mappingId: string | null;
+  mappingVersion: number | null;
+  accessPackageId: string | null;
+  myAccessLink: string | null;
+  requestedStart: string | null;
+  requestedEnd: string | null;
+  entraRequestId: string | null;
+  entraRequestState: string | null;
+  entraRequestType: string | null;
+  entraAssignmentState: string | null;
+  accessStart: string | null;
+  accessEnd: string | null;
+  endDateExceedsRequest: boolean;
+  preExistingAssignment: boolean;
+  createdAt: string;
+  lastCheckedAt: string | null;
+  lastSyncError: string | null;
+  history: { at: string; status: HandoffStatus; note: string }[];
 }

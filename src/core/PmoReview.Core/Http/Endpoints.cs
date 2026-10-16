@@ -81,6 +81,14 @@ public static class Endpoints
         return host;
     }
 
+    /// <summary>Read-only. Hand-off records are created by an accepted decision and updated by the background sync.</summary>
+    public static ApiHost MapHandoffs(this ApiHost host, Handoff.HandoffService handoffs)
+    {
+        host.Map("GET", "projects/{projectId}/requests/{requestId}/handoffs", async c =>
+            Ok(new { enabled = handoffs.Enabled, items = (await handoffs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)).Select(ToItem) }));
+        return host;
+    }
+
     public static Item<T> ToItem<T>(Versioned<T> v) => new(v.Value, v.ETag);
 
     public static ApiResponse Ok(object body) => new(200, body);

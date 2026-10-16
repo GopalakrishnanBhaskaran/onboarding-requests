@@ -10,17 +10,63 @@
 #   tools/deploy_free.sh apply <subscriptionId> <params.json> --approved-by "<name> <date>"
 #       ONLY after Gokul replied "approved" to that exact what-if. Creates resources, sets the Cosmos
 #       connection string as a SWA app setting (never printed or written to disk), deploys the app,
-#       seeds SAMPLE data.
+#       seeds SAMPLE data. With enableHandoff=true (Phase 2) also deploys the hand-off sync worker.
+#
+#   tools/deploy_free.sh worker <subscriptionId>
+#       Phase 2: redeploy the hand-off sync worker code only.
+#
+#   tools/deploy_free.sh grant-graph <subscriptionId>
+#       Phase 2: give the worker's managed identity Microsoft Graph EntitlementManagement.Read.All (read-only).
+#       Needs an Entra role that can grant app permissions (Global Administrator or Privileged Role Administrator).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CMD="${1:?whatif|apply|app}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
-if [[ "$CMD" != "app" ]]; then
+if [[ "$CMD" != "app" && "$CMD" != "worker" && "$CMD" != "grant-graph" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
   LOCATION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters']['location']['value'])" "$PARAMS")"
 fi
 mkdir -p "$ROOT/.local"
 az account set --subscription "$SUB"
+RG_DEFAULT=rg-pmo-review-pilot
+
+handoff_enabled() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];sys.exit(0 if p.get('enableHandoff',{}).get('value') else 1)" "$PARAMS"; }
+
+worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
+
+# Phase 2 worker: build, zip, deploy (Flex Consumption one-deploy via Entra ID; basic auth is off).
+deploy_worker() {
+  local name; name=$(worker_name)
+  [[ -n "$name" ]] || { echo "No hand-off worker in $RG_DEFAULT (enableHandoff=false?)."; return 1; }
+  rm -rf "$ROOT/.local/worker" "$ROOT/.local/worker.zip"
+  dotnet publish "$ROOT/src/worker/PmoReview.Worker" -c Release -o "$ROOT/.local/worker"
+  (cd "$ROOT/.local/worker" && zip -qr "$ROOT/.local/worker.zip" .)
+  az functionapp deployment source config-zip -g "$RG_DEFAULT" -n "$name" --src "$ROOT/.local/worker.zip" -o none
+  echo "Worker deployed: $name (commit $(git -C "$ROOT" rev-parse --short HEAD)). It runs every 5 minutes."
+}
+
+# Graph application permission for the worker identity. Read-only; idempotent.
+grant_graph() {
+  local name mi graph role have
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No hand-off worker found."; return 1; }
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  role=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?value=='EntitlementManagement.Read.All'].id | [0]" -o tsv)
+  [[ -n "$role" ]] || { echo "Could not find EntitlementManagement.Read.All on Microsoft Graph."; return 1; }
+  have=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+    --query "length(value[?appRoleId=='$role'])" -o tsv)
+  if [[ "$have" == "0" ]]; then
+    az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+      --headers "Content-Type=application/json" \
+      --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+    echo "Granted EntitlementManagement.Read.All (application) to $name. Allow a few minutes to take effect."
+  else
+    echo "Already granted: EntitlementManagement.Read.All -> $name"
+  fi
+  echo "Graph permissions now held by $name:"
+  az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[].appRoleId" -o tsv \
+    | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done
+}
 
 case "$CMD" in
   whatif)
@@ -29,8 +75,19 @@ case "$CMD" in
       --template-file "$ROOT/infra/main.bicep" --parameters "@$PARAMS" \
       --result-format FullResourcePayloads | tee "$ROOT/.local/whatif.txt"
     echo
-    echo "Expected resources: resource group, policy assignment, budget, Cosmos DB account (free tier) + 1 database + 7 containers, Static Web App (Free)."
+    echo "Expected resources: resource group, policy assignment, budget, Cosmos DB account (free tier) + 1 database + 8 containers, Static Web App (Free)."
     echo "Expected cost: ₹0 while within free limits (SWA Free plan; Cosmos free tier 1000 RU/s + 25 GB; policy and budgets are free)."
+    if handoff_enabled; then
+      echo "Phase 2 (enableHandoff=true, paid from credits): + Flex Consumption plan + Function App (system identity) + storage account"
+      echo "  (Standard_LRS, no shared keys) + Storage Blob Data Owner role + Cosmos data role on the 'handoffs' container."
+      echo "  Expected cost: roughly ₹50-300/month (storage + Flex executions; Flex has a monthly free grant). Budget: ₹2,000 with 50/80/100% alerts."
+      WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
+      LOCATION_CHECK="$WLOC"
+      echo "== Flex Consumption availability for $WLOC =="
+      az functionapp list-flexconsumption-locations --query "[].name" -o tsv | tr -d ' ' | grep -ix "$LOCATION_CHECK" \
+        || echo "WARNING: $LOCATION_CHECK is not listed for Flex Consumption. Pick another region for the worker before approving."
+      az functionapp list-flexconsumption-runtimes -l "$LOCATION_CHECK" --runtime dotnet-isolated -o table || true
+    fi
     echo "Send .local/whatif.txt to Gokul and wait for 'approved'."
     ;;
   apply)
@@ -52,6 +109,10 @@ case "$CMD" in
       "COSMOS_CONNECTION_STRING=$CS" "COSMOS_DATABASE=pmoreview" "STORAGE_MODE=Cosmos" \
       "REVIEW_MODEL_PROVIDER=RuleOnly" "REVIEW_DISPATCHER=Inline" "ALLOW_PAID_SERVICES=false" \
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
+    if handoff_enabled; then
+      # Phase 2: accepted reviews create Entra hand-off records. One tester in the pilot, so separate-reviewer is off.
+      az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "REQUIRE_SEPARATE_REVIEWER=false" -o none
+    fi
 
     # Build + deploy (SWA CLI). The API runtime comes from staticwebapp.config.json (single source of truth;
     # InfraConsistencyTests checks it matches the API project's TargetFramework).
@@ -76,7 +137,17 @@ case "$CMD" in
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "Next: each test user signs in once, reads userId from /.auth/me, then:"
     echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles PMO"
+    if handoff_enabled; then
+      deploy_worker
+      grant_graph || echo "Graph permission NOT granted (needs Global Administrator). Run: tools/deploy_free.sh grant-graph $SUB"
+    fi
     "$ROOT/tools/cost_check.sh" "$RG"
+    ;;
+  worker)
+    deploy_worker
+    ;;
+  grant-graph)
+    grant_graph
     ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
@@ -106,5 +177,5 @@ case "$CMD" in
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|worker|grant-graph ..."; exit 1 ;;
 esac
