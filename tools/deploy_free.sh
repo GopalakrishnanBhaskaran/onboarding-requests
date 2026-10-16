@@ -61,10 +61,13 @@ case "$CMD" in
     dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
     npm --prefix "$ROOT/src/web" ci
     npm --prefix "$ROOT/src/web" run build
+    # The deploy client reads platform.apiRuntime from the config INSIDE the uploaded app folder,
+    # not from --swa-config-location (first deploy failed with "Function language info isn't provided").
+    cp "$ROOT/staticwebapp.config.json" "$ROOT/src/web/dist/staticwebapp.config.json"
     TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
     (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
       --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
-      --swa-config-location "$ROOT" --env production)
+      --swa-config-location "$ROOT/src/web/dist" --env production)
 
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
     unset CS TOKEN
@@ -85,10 +88,13 @@ case "$CMD" in
     dotnet publish "$ROOT/src/api/PmoReview.Api" -c Release -o "$ROOT/.local/api"
     npm --prefix "$ROOT/src/web" ci
     npm --prefix "$ROOT/src/web" run build
+    # The deploy client reads platform.apiRuntime from the config INSIDE the uploaded app folder,
+    # not from --swa-config-location (first deploy failed with "Function language info isn't provided").
+    cp "$ROOT/staticwebapp.config.json" "$ROOT/src/web/dist/staticwebapp.config.json"
     TOKEN=$(az staticwebapp secrets list -n "$SWA" -g "$RG" --query properties.apiKey -o tsv)
     (cd "$ROOT/src/web" && SWA_CLI_DEPLOYMENT_TOKEN="$TOKEN" npx swa deploy dist \
       --api-location "$ROOT/.local/api" --api-language "$API_LANG" --api-version "$API_VER" \
-      --swa-config-location "$ROOT" --env production)
+      --swa-config-location "$ROOT/src/web/dist" --env production)
     unset TOKEN
     CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"

@@ -9,6 +9,7 @@
 | 2026-10-16 | Apply: app deploy — **FAILED** | `swa deploy` (CLI 2.0.10, StaticSitesClient build 134664351b) rejected `dotnet-isolated:10.0`: CLI schema enum error, then the deploy client returned "Function language info isn't provided" although `--api-language dotnet-isolated --api-version 10.0` were passed. App not deployed; SAMPLE data not seeded. Resources idle at expected ₹0. **Stopped for decision (CLAUDE.md rule 3).** | Gokul / Claude |
 | 2026-10-16 | Infra confirmed (`cost_check.sh`) | RG contains only `cosmos-pmo-pilot-pkt2ofpqmlf3e` (centralindia, enableFreeTier true, DB throughput 1000, autoscale null) and `swa-pmo-pilot-pkt2ofpqmlf3e` (eastasia, Free). Policy `pmo-pilot-allowed-types` enforcement Default. Budget `pmo-pilot-zero-cost` amount 1.0 INR, spent 0.0 INR. Cost Management query: NotFound (cost data not yet available for the subscription). | Gokul (Cloud Shell) |
 | 2026-10-16 | Decision | **A**: API runs on `dotnet-isolated:9.0` for the pilot (.NET 9 end of support 10 Nov 2026); switch back to 10.0 when the SWA CLI accepts it. App-only redeploy via `tools/deploy_free.sh app` — no infrastructure change. | Gokul |
-| — | App-only redeploy | pending | — |
+| 2026-10-16 | App-only redeploy #1 (`app`, dotnet-isolated 9.0) — **FAILED** | CLI accepted the config (no schema error) but the deploy client again reported "Function language info isn't provided". Same failure on 9.0 and 10.0, so the runtime version was not the cause. Fix: copy `staticwebapp.config.json` into `dist` (the uploaded app folder) before deploy. | Gokul / Claude |
+| — | App-only redeploy #2 | pending | — |
 | — | Live synthetic request | pending | — |
 | — | Cost check (deploy day, +24–48 h) | pending | — |
