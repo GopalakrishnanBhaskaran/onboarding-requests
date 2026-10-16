@@ -6,6 +6,8 @@ Phase 1 pilot of the PMO Request Review, plus the **Phase 2 Entra hand-off** (ap
 
 Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs/VERIFIED_FACTS.md`.
 
+**Open work and session handoff: read `docs/NEXT_SESSION.md` first** (tasks Gokul queued for 17 Oct 2026: show-TAP button, group access right after the second Accept, sign-out fix).
+
 ## Hard rules
 1. **Cost.** Free resources: Static Web Apps (Free) with managed Functions, Cosmos DB for NoSQL with free tier, Azure Policy assignment, Cost Management budget. **Phase 2 (approved 16 Oct 2026, Azure credits, budget ₹2,000/month, alerts 50/80/100%):** one Flex Consumption Function App (the hand-off sync worker) and its one storage account, with their role assignments — nothing else. Anything more needs Gokul's written approval.
 2. **Never create:** Azure OpenAI, App Insights, Log Analytics, Key Vault, Service Bus, API Management, App Service (other than the Flex plan above), Azure SQL, VNets, private endpoints; no further Storage accounts or Function Apps. Entra licences are not Azure resources: the P2 / Governance **trial** is started by Gokul, never bought by tooling.
