@@ -37,7 +37,7 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
             var key = (document.PartitionKey, document.Id);
             if (_docs.ContainsKey(key)) throw new DocumentConflictException("id exists");
             EnsureUnique(document, except: null);
-            var entry = (Json.Serialize(document), NewEtag());
+            var entry = (AppJson.Serialize(document), NewEtag());
             _docs[key] = entry;
             return Task.FromResult(Read(entry));
         }
@@ -51,7 +51,7 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
             if (!_docs.TryGetValue(key, out var current) || current.ETag != ifMatchETag)
                 throw new ConcurrencyException("etag mismatch");
             EnsureUnique(document, except: document.Id);
-            var entry = (Json.Serialize(document), NewEtag());
+            var entry = (AppJson.Serialize(document), NewEtag());
             _docs[key] = entry;
             return Task.FromResult(Read(entry));
         }
@@ -64,13 +64,13 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
             var value = keyOf(document);
             var clash = _docs
                 .Where(d => d.Key.Pk == document.PartitionKey && d.Key.Id != except)
-                .Select(d => Json.Deserialize<T>(d.Value.Json)!)
+                .Select(d => AppJson.Deserialize<T>(d.Value.Json)!)
                 .Any(other => keyOf(other) == value);
             if (clash) throw new DocumentConflictException("unique key exists");
         }
     }
 
-    private static Versioned<T> Read((string Json, string ETag) e) => new(Json.Deserialize<T>(e.Json)!, e.ETag);
+    private static Versioned<T> Read((string Json, string ETag) e) => new(AppJson.Deserialize<T>(e.Json)!, e.ETag);
 
     private static string NewEtag() => $"\"{Guid.NewGuid():n}\"";
 }

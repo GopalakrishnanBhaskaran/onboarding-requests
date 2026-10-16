@@ -56,7 +56,7 @@ public sealed class TestApp
         var headers = new Dictionary<string, string>();
         if (user is not null) headers[ClientPrincipalParser.HeaderName] = Principal(user);
         if (ifMatch is not null) headers["If-Match"] = ifMatch;
-        return Send(method, path, headers, rawBody ?? (body is null ? null : Json.Serialize(body)));
+        return Send(method, path, headers, rawBody ?? (body is null ? null : AppJson.Serialize(body)));
     }
 
     public async Task<Resp> Send(string method, string path, Dictionary<string, string> headers, string? body)

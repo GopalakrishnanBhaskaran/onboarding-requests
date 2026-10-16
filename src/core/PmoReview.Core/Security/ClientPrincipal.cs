@@ -26,7 +26,7 @@ public static class ClientPrincipalParser
         try
         {
             var json = Encoding.UTF8.GetString(Convert.FromBase64String(headerValue));
-            raw = JsonSerializer.Deserialize<Raw>(json, Json.Options);
+            raw = JsonSerializer.Deserialize<Raw>(json, AppJson.Options);
         }
         catch (Exception e) when (e is FormatException or JsonException or ArgumentException)
         {
@@ -49,7 +49,7 @@ public static class ClientPrincipalParser
     /// <summary>Builds a header value. For tests and local tooling only.</summary>
     public static string Encode(ClientPrincipal principal) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(
-            new Raw(principal.IdentityProvider, principal.UserId, principal.UserDetails, principal.UserRoles.ToList()), Json.Options)));
+            new Raw(principal.IdentityProvider, principal.UserId, principal.UserDetails, principal.UserRoles.ToList()), AppJson.Options)));
 
     private sealed record Raw(string? IdentityProvider, string? UserId, string? UserDetails, List<string>? UserRoles);
 }

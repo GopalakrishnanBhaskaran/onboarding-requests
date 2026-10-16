@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace PmoReview.Core.Common;
 
 /// <summary>Single JSON configuration shared by API, storage and tests.</summary>
-public static class Json
+public static class AppJson
 {
     public static readonly JsonSerializerOptions Options = Create();
 

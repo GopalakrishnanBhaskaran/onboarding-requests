@@ -20,7 +20,7 @@ public sealed record ApiRequest(
 
 public sealed record ApiResponse(int Status, object? Body, IReadOnlyDictionary<string, string>? Headers = null)
 {
-    public string? SerializedBody => Body is null ? null : Json.Serialize(Body);
+    public string? SerializedBody => Body is null ? null : AppJson.Serialize(Body);
 }
 
 public sealed record ApiError(string Code, string Message, string CorrelationId);
@@ -39,7 +39,7 @@ public sealed record RouteContext(
         if (string.IsNullOrWhiteSpace(Request.Body)) throw AppException.Invalid("Request body is required.");
         try
         {
-            return Json.Deserialize<T>(Request.Body) ?? throw AppException.Invalid("Request body is required.");
+            return AppJson.Deserialize<T>(Request.Body) ?? throw AppException.Invalid("Request body is required.");
         }
         catch (JsonException)
         {

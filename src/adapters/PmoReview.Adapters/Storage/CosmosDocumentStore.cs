@@ -4,7 +4,7 @@ using Microsoft.Azure.Cosmos;
 using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Storage;
-using CoreJson = PmoReview.Core.Common.Json;
+using CoreJson = PmoReview.Core.Common.AppJson;
 
 namespace PmoReview.Adapters.Storage;
 

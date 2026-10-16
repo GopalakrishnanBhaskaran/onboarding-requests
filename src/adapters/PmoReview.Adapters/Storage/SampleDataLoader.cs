@@ -16,7 +16,7 @@ public static class SampleDataLoader
 
     public static SampleData Read(string path)
     {
-        var data = JsonSerializer.Deserialize<SampleData>(File.ReadAllText(path), Json.Options)
+        var data = JsonSerializer.Deserialize<SampleData>(File.ReadAllText(path), AppJson.Options)
                    ?? throw new InvalidOperationException("Sample data file is empty.");
         var notSample = data.Projects.Any(p => !p.IsSample) || data.RequirementRules.Any(r => !r.IsSample)
                         || data.RoleMappings.Any(m => !m.IsSample) || data.UserAccess.Any(u => !u.IsSample);

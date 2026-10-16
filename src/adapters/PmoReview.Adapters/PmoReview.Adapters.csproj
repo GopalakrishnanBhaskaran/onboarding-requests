@@ -9,5 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.63.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- Used only by the disabled AzureOpenAIReviewModel (managed identity). No cost by itself. -->
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
   </ItemGroup>
 </Project>

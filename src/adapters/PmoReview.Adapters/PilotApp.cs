@@ -12,12 +12,30 @@ public sealed record PilotSettings
 {
     public bool AllowPaidServices { get; init; }
     public IReadOnlyCollection<string> AllowedIdentityProviders { get; init; } = ["aad"];
+    /// <summary>RuleOnly (pilot) | AzureOpenAI (paid).</summary>
+    public string ReviewModelProvider { get; init; } = "RuleOnly";
+    /// <summary>Inline (pilot) | Queue (paid).</summary>
+    public string Dispatcher { get; init; } = "Inline";
+    /// <summary>Kept below the 45 s SWA gateway limit (VERIFIED_FACTS F3). Q3 = 30 s.</summary>
+    public int ProcessingBudgetSeconds { get; init; } = 30;
+    /// <summary>Operator recovery: Running longer than this is marked Failed(Timeout).</summary>
+    public int StuckRunMinutes { get; init; } = 5;
+    public Uri? AzureOpenAIEndpoint { get; init; }
+    public string? AzureOpenAIDeployment { get; init; }
+    public string? AzureOpenAIApiVersion { get; init; }
 
     public static PilotSettings FromEnvironment(Func<string, string?> get) => new()
     {
         AllowPaidServices = string.Equals(get("ALLOW_PAID_SERVICES"), "true", StringComparison.OrdinalIgnoreCase),
         AllowedIdentityProviders = (get("ALLOWED_IDENTITY_PROVIDERS") ?? "aad")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        ReviewModelProvider = get("REVIEW_MODEL_PROVIDER") ?? "RuleOnly",
+        Dispatcher = get("REVIEW_DISPATCHER") ?? "Inline",
+        ProcessingBudgetSeconds = Math.Clamp(int.TryParse(get("PROCESSING_BUDGET_SECONDS"), out var b) ? b : 30, 5, 40),
+        StuckRunMinutes = Math.Clamp(int.TryParse(get("STUCK_RUN_MINUTES"), out var m) ? m : 5, 1, 120),
+        AzureOpenAIEndpoint = Uri.TryCreate(get("AZURE_OPENAI_ENDPOINT"), UriKind.Absolute, out var u) ? u : null,
+        AzureOpenAIDeployment = get("AZURE_OPENAI_DEPLOYMENT"),
+        AzureOpenAIApiVersion = get("AZURE_OPENAI_API_VERSION"),
     };
 }
 
