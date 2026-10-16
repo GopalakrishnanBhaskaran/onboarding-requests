@@ -25,7 +25,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CMD="${1:?whatif|apply|app}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
-if [[ "$CMD" != "app" && "$CMD" != "worker" && "$CMD" != "grant-graph" && "$CMD" != "status" ]]; then
+if [[ "$CMD" != "app" && "$CMD" != "worker" && "$CMD" != "grant-graph" && "$CMD" != "status" && "$CMD" != "params" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
   LOCATION="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['parameters']['location']['value'])" "$PARAMS")"
 fi
@@ -234,6 +234,26 @@ case "$CMD" in
     echo "== App =="
     HOST=$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)
     echo "  https://$HOST  (new code if 'New request' shows a 'New joiner sign-in name' field)"
+    ;;
+  params)
+    # Rebuild .local/params.json after a Cloud Shell reset: live budget email/start date, Phase 2 stages A+B on,
+    # auto-assign on only if tools/setup_entra.sh package has written .local/entra-package.json.
+    B=$(az consumption budget show --budget-name pmo-pilot-zero-cost --resource-group "$RG_DEFAULT" -o json 2>/dev/null)
+    python3 - "$B" "$ROOT/.local/params.json" "$ROOT/.local/entra-package.json" <<'PY'
+import json, os, sys
+b, out, pkg = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+v = lambda x: {"value": x}
+p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"), "swaLocation": v("eastasia"),
+     "budgetEmail": v(next(iter(b["notifications"].values()))["contactEmails"][0]), "budgetAmount": v(2000),
+     "budgetStartDate": v(b["timePeriod"]["startDate"][:10]), "enableHandoff": v(True), "deployWorker": v(True),
+     "workerLocation": v("centralindia"), "workerRuntimeVersion": v("10.0")}
+if os.path.exists(pkg):
+    p["enableAutoAssign"] = v(True)
+    p["entraCatalogId"] = v(json.load(open(pkg))["catalogId"])
+json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+           "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
+print("wrote", out, "| auto-assign:", "on" if "enableAutoAssign" in p else "off (run setup_entra.sh package first)")
+PY
     ;;
   worker)
     deploy_worker

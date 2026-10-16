@@ -50,6 +50,7 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 | Acceptance + report | `tools/run_acceptance.sh` (`E2E=1` adds browser tests) → `docs/PILOT_REPORT.md` |
 | Bicep compile | `bicep build infra/main.bicep` |
 | Free-tier check | `tools/check_free_tier.sh <subscriptionId>` |
+| Rebuild params after a Cloud Shell reset | `tools/deploy_free.sh params <subscriptionId>` |
 | What-if (read-only) | `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` |
 | Deploy (after "approved") | `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "<name> <date>"` |
 | App-only redeploy | `tools/deploy_free.sh app <subscriptionId>` |

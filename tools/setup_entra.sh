@@ -112,7 +112,7 @@ json.dump(d, open(p, "w"), indent=2)
 print(f"params: enableAutoAssign=true, entraCatalogId={cat}")
 PY
     else
-      echo "No .local/params.json: add enableAutoAssign=true and entraCatalogId=$CAT before the what-if."
+      echo "No .local/params.json yet: run tools/deploy_free.sh params <subscriptionId> (it picks up the catalog id)."
     fi
     echo "Next: tools/deploy_free.sh whatif <subscriptionId> .local/params.json  (then 'approved', apply)."
     ;;
