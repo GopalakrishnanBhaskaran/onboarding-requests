@@ -1,6 +1,6 @@
 # Costs — zero-cost pilot
 
-Status: **infrastructure deployed 16 Oct 2026; app redeploy pending.** Evidence below comes from `tools/cost_check.sh`; re-check 24–48 h after the app goes live.
+Status: **infrastructure deployed and app uploaded 16 Oct 2026; live check and 24–48 h cost re-check pending.** Evidence below comes from `tools/cost_check.sh`; re-check 24–48 h after the app goes live.
 
 ## Why the design should cost ₹0 (to be proven, not assumed)
 
@@ -25,4 +25,5 @@ Status: **infrastructure deployed 16 Oct 2026; app redeploy pending.** Evidence 
 | Date (UTC) | Check | Result | By |
 |---|---|---|---|
 | 2026-10-16 | after infra deploy (app not yet deployed) | Only SWA (Free) + Cosmos (free tier, 1000 RU/s, no autoscale) in RG; policy enforcing; budget spent **0.0 INR**; Cost Management query not yet available (NotFound) | Gokul |
-| — | +24–48 h | not deployed yet | — |
+| 2026-10-16 02:58 | after app redeploy #3 | budget `pmo-pilot-zero-cost` 1.0 INR, spent **0.0 INR**; Cost Management RG query still NotFound (new subscription) | Gokul |
+| — | +24–48 h (on or after 2026-10-17 03:00 UTC) | pending | — |
