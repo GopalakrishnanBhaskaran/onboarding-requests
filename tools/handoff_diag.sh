@@ -45,6 +45,8 @@ for d in docs:
     print(f"- {d['id']}  status={d.get('status')}  created={d.get('createdAt')}  lastChecked={d.get('lastCheckedAt')}  lastError={d.get('lastSyncError')}")
     print(f"    joiner={d.get('joinerUpn')}  package={d.get('accessPackageId')}  mapping={d.get('mappingId')} v{d.get('mappingVersion')}  period={d.get('requestedStart')} -> {d.get('requestedEnd')}")
     print(f"    entraRequest={d.get('entraRequestId')} ({d.get('entraRequestType')}, {d.get('entraRequestState')})  assignment={d.get('entraAssignmentState')}")
+    if d.get("entraAssignmentState"):
+        print(f"    access in Entra: {d.get('accessStart')} -> {d.get('accessEnd')}  endDateLaterThanReviewed={d.get('endDateExceedsRequest')}  preExisting={d.get('preExistingAssignment')}")
     if d.get("reason"):
         print(f"    reason: {d['reason']}")
     for e in d.get("history", []):
