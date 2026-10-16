@@ -1,5 +1,6 @@
 using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
+using PmoReview.Core.Processing;
 using PmoReview.Core.Services;
 using PmoReview.Core.Storage;
 
@@ -53,6 +54,27 @@ public static class Endpoints
         host.Map("POST", "projects/{projectId}/mappings/{id}/status", async c =>
             Ok(await reference.SetMappingStatusAsync(c.Caller, c["projectId"], c["id"], c.Body<StatusChange>().Status, c.IfMatch, c.Ct)));
 
+        return host;
+    }
+
+    public static ApiHost MapRuns(this ApiHost host, RunService runs)
+    {
+        host.Map("POST", "projects/{projectId}/requests/{requestId}/analyze", async c =>
+            Accepted(await runs.AnalyzeAsync(c.Caller, c["projectId"], c["requestId"], c.Body<AnalyzeInput>(), c.Request.CorrelationId, c.Ct)));
+        host.Map("GET", "projects/{projectId}/requests/{requestId}/runs", async c =>
+            Ok(new { items = (await runs.ListForRequestAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)).Select(ToItem) }));
+        host.Map("GET", "projects/{projectId}/runs/{runId}", async c =>
+            Ok(await runs.GetAsync(c.Caller, c["projectId"], c["runId"], c.Ct)));
+        host.Map("POST", "projects/{projectId}/runs/{runId}/retry", async c =>
+            Accepted(await runs.RetryAsync(c.Caller, c["projectId"], c["runId"], c.Body<AnalyzeInput>(), c.Request.CorrelationId, c.Ct)));
+        host.Map("GET", "projects/{projectId}/runs/{runId}/decisions", async c =>
+            Ok(new { items = (await runs.ListDecisionsAsync(c.Caller, c["projectId"], c["runId"], c.Ct)).Select(ToItem) }));
+        host.Map("POST", "projects/{projectId}/runs/{runId}/decisions", async c =>
+            Created(await runs.RecordDecisionAsync(c.Caller, c["projectId"], c["runId"], c.Body<DecisionInput>(), c.Ct)));
+        host.Map("GET", "attention", async c =>
+            Ok(new { items = await runs.AttentionAsync(c.Caller, c.Ct) }));
+        host.Map("POST", "projects/{projectId}/operator/recover", async c =>
+            Ok(new { recovered = await runs.RecoverStuckAsync(c.Caller, c["projectId"], c.Ct) }));
         return host;
     }
 

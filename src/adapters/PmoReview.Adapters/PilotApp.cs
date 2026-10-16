@@ -1,5 +1,9 @@
 using Microsoft.Extensions.Logging;
+using PmoReview.Adapters.Dispatch;
+using PmoReview.Adapters.Review;
 using PmoReview.Core.Common;
+using PmoReview.Core.Processing;
+using PmoReview.Core.Review;
 using PmoReview.Core.Http;
 using PmoReview.Core.Security;
 using PmoReview.Core.Services;
@@ -42,10 +46,30 @@ public sealed record PilotSettings
 /// <summary>Composition root shared by the Functions host and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
 {
-    public static ApiHost Build(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers)
+    /// <param name="model">Test seam; production chooses from settings (paid providers are refused unless allowed).</param>
+    /// <param name="queue">Paid environment only.</param>
+    public static ApiHost Build(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
+        IReviewModel? model = null, IQueueClient? queue = null)
     {
+        var reviewer = model ?? ReviewModelFactory.Create(settings);
+        var (processor, _) = BuildProcessing(stores, settings, clock, loggers, reviewer);
+        var dispatcher = DispatcherFactory.Create(settings, processor, queue);
+        var runs = new RunService(stores, dispatcher, reviewer.Info, clock, TimeSpan.FromMinutes(settings.StuckRunMinutes));
+
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
         host.MapCore(stores, new RequestService(stores, clock), new ReferenceDataService(stores));
+        host.MapRuns(runs);
         return host;
+    }
+
+    /// <summary>Engine + processor. Shared with the queue-triggered path in the paid environment.</summary>
+    public static (ReviewProcessor Processor, ReviewEngine Engine) BuildProcessing(
+        DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers, IReviewModel reviewer)
+    {
+        var budget = TimeSpan.FromSeconds(settings.ProcessingBudgetSeconds);
+        // The model gets most of the budget; the rest covers claim, reads and commit.
+        var modelBudget = budget > TimeSpan.FromSeconds(10) ? budget - TimeSpan.FromSeconds(5) : budget;
+        var engine = new ReviewEngine(stores, reviewer, new ReviewLimits { TimeBudget = modelBudget });
+        return (new ReviewProcessor(stores, engine, clock, budget, loggers.CreateLogger<ReviewProcessor>()), engine);
     }
 }

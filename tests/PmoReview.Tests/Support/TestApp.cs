@@ -3,7 +3,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PmoReview.Adapters;
 using PmoReview.Adapters.Storage;
 using PmoReview.Core.Common;
+using PmoReview.Adapters.Dispatch;
 using PmoReview.Core.Http;
+using PmoReview.Core.Review;
 using PmoReview.Core.Security;
 using PmoReview.Core.Storage;
 
@@ -47,21 +49,46 @@ public sealed class TestApp
             ?? PilotApp.Build(stores, new PilotSettings(), app.Clock, NullLoggerFactory.Instance));
     }
 
+    /// <summary>Real wiring with an optional scripted reviewer, settings or queue.</summary>
+    public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null) =>
+        Create((stores, clock) => PilotApp.Build(stores, settings ?? new PilotSettings(), clock, NullLoggerFactory.Instance, model, queue));
+
+    public async Task<string> CreateRequest(string user = Alice, string project = Alpha, object? body = null)
+    {
+        var r = await Call(user, "POST", $"projects/{project}/requests", body ?? new
+        {
+            requestType = "NewJoiner", role = "SAMPLE Data Engineer", environment = "Dev", manager = "SAMPLE Manager One",
+            justification = "SAMPLE: joins the data platform team to build ingestion pipelines.",
+            startDate = "2026-11-02", endDate = "2027-03-31",
+        });
+        if (r.Status != 201) throw new InvalidOperationException($"create failed {r.Status} {r.Body}");
+        return r.Value.GetProperty("id").GetString()!;
+    }
+
+    public Task<Resp> Analyze(string requestId, string nonce = "nonce-0001", string user = Alice, string project = Alpha, CancellationToken ct = default) =>
+        CallWith(ct, user, "POST", $"projects/{project}/requests/{requestId}/analyze", new { nonce });
+
+    public Task<Resp> Run(string runId, string user = Alice, string project = Alpha) =>
+        Call(user, "GET", $"projects/{project}/runs/{runId}");
+
     public static string Principal(string userId, string provider = "aad", params string[] roles) =>
         ClientPrincipalParser.Encode(new ClientPrincipal(provider, userId, $"{userId}@sample.invalid",
             roles.Length == 0 ? ["anonymous", "authenticated"] : roles));
 
-    public Task<Resp> Call(string? user, string method, string path, object? body = null, string? ifMatch = null, string? rawBody = null)
+    public Task<Resp> Call(string? user, string method, string path, object? body = null, string? ifMatch = null, string? rawBody = null) =>
+        CallWith(CancellationToken.None, user, method, path, body, ifMatch, rawBody);
+
+    public Task<Resp> CallWith(CancellationToken ct, string? user, string method, string path, object? body = null, string? ifMatch = null, string? rawBody = null)
     {
         var headers = new Dictionary<string, string>();
         if (user is not null) headers[ClientPrincipalParser.HeaderName] = Principal(user);
         if (ifMatch is not null) headers["If-Match"] = ifMatch;
-        return Send(method, path, headers, rawBody ?? (body is null ? null : AppJson.Serialize(body)));
+        return Send(method, path, headers, rawBody ?? (body is null ? null : AppJson.Serialize(body)), ct);
     }
 
-    public async Task<Resp> Send(string method, string path, Dictionary<string, string> headers, string? body)
+    public async Task<Resp> Send(string method, string path, Dictionary<string, string> headers, string? body, CancellationToken ct = default)
     {
-        var r = await Host.HandleAsync(new ApiRequest(method, path, headers, body, Guid.NewGuid().ToString("n")), CancellationToken.None);
+        var r = await Host.HandleAsync(new ApiRequest(method, path, headers, body, Guid.NewGuid().ToString("n")), ct);
         return new Resp(r.Status, r.SerializedBody, r.Headers);
     }
 }
