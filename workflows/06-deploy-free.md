@@ -6,9 +6,9 @@
 
 **Steps**
 1. `tools/check_free_tier.sh <sub>` — no existing Cosmos free-tier account. If one exists: **stop and ask.**
-2. `az deployment group what-if` for `infra/main.bicep`.
+2. `tools/deploy_free.sh whatif` → `az deployment sub what-if` for `infra/main.bicep` (subscription scope, so the resource group itself is in the what-if).
 3. Present what-if, resource list, expected cost (₹0 with reasons). **Wait for "approved".**
-4. Deploy in order: RG → policy assignment → budget → Cosmos (free tier) → SWA Free.
+4. `tools/deploy_free.sh apply ... --approved-by` deploys in order: RG → policy assignment → budget → Cosmos (free tier) → SWA Free.
 5. Set Cosmos connection string as SWA app setting via `az staticwebapp appsettings set` (never committed, never echoed).
 6. Deploy app with SWA CLI. Record commit SHA.
 7. Seed SAMPLE data; test users sign in once, then register their SWA `userId` in `userAccess`.

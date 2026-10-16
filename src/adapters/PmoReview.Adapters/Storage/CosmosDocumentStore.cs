@@ -95,13 +95,22 @@ public static class CosmosSchema
 
 public static class CosmosDataStores
 {
+    private static CosmosClientOptions Options() => new()
+    {
+        UseSystemTextJsonSerializerWithOptions = CoreJson.Options,
+        ApplicationName = "pmo-review-pilot",
+    };
+
+    /// <summary>
+    /// Paid path (BYO Function App): Entra ID + data-plane RBAC ("Cosmos DB Built-in Data Contributor"),
+    /// no keys. Not available to SWA managed Functions (no managed identity, VERIFIED_FACTS F2).
+    /// </summary>
+    public static CosmosClient CreateClientWithIdentity(Uri endpoint, Azure.Core.TokenCredential credential) =>
+        new(endpoint.AbsoluteUri, credential, Options());
+
     public static CosmosClient CreateClient(string connectionString, bool allowEmulatorCertificate = false)
     {
-        var options = new CosmosClientOptions
-        {
-            UseSystemTextJsonSerializerWithOptions = CoreJson.Options,
-            ApplicationName = "pmo-review-pilot",
-        };
+        var options = Options();
         if (allowEmulatorCertificate)
         {
             // Local emulator only (self-signed cert). Never enabled for a cloud endpoint.

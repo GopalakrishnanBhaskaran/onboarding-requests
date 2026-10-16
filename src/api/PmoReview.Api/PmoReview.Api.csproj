@@ -10,6 +10,9 @@
     <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.1.0" />
     <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" Version="3.3.0" />
+    <!-- Paid path only: active when ALLOW_PAID_SERVICES=true and APPLICATIONINSIGHTS_CONNECTION_STRING is set. -->
+    <PackageReference Include="Microsoft.ApplicationInsights.WorkerService" Version="3.2.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.ApplicationInsights" Version="2.51.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../adapters/PmoReview.Adapters/PmoReview.Adapters.csproj" />

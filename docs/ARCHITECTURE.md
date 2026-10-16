@@ -102,3 +102,48 @@ sequenceDiagram
 2. Function → Cosmos: connection string from SWA app settings (no managed identity on managed Functions, F2).
 3. Request text → reviewer: untrusted content. Never interpreted as instructions.
 4. Reviewer output → host: untrusted. Host recomputes readiness and validates every citation against pinned versions.
+
+## API (as built)
+
+All routes are under `/api`, require SWA sign-in, and take identity **only** from `x-ms-client-principal`. Project-scoped routes check the caller's `userAccess` grant for `{projectId}` before any read; a project the caller has no role in returns **404** (existence is not revealed), a role without the permission returns **403**.
+
+| Method + route | Permission (roles) |
+|---|---|
+| GET `me` | any signed-in user (empty project list if unregistered) |
+| GET/POST `projects/{projectId}/requests` | View (PMO, Reviewer) / Edit (PMO) |
+| GET/PUT `projects/{projectId}/requests/{requestId}` | View / Edit — PUT needs `If-Match`; server bumps `revision` |
+| POST `projects/{projectId}/requests/{requestId}/analyze` `{nonce}` | Analyze (PMO) → 202 `{runId, processingStatus, duplicate}` |
+| GET `projects/{projectId}/requests/{requestId}/runs` | ViewRuns (PMO, Reviewer, Operator) |
+| GET `projects/{projectId}/runs/{runId}` | ViewRuns |
+| POST `projects/{projectId}/runs/{runId}/retry` `{nonce}` | Analyze — only a Failed run of the current revision |
+| GET/POST `projects/{projectId}/runs/{runId}/decisions` | ViewRuns / RecordDecision (Reviewer) — quality feedback, not approval |
+| GET `attention` | Reviewer projects only: latest Failed or ManualReviewRequired run per request |
+| GET/POST `projects/{projectId}/rules`, `.../mappings` | ViewReferenceData / ManageReferenceData (Maintainer) — creates a new Draft version |
+| POST `projects/{projectId}/rules/{id}/status`, `.../mappings/{id}/status` | Maintainer — Draft→Published→Retired only, `If-Match` |
+| POST `projects/{projectId}/operator/recover` | RecoverRuns (Operator) |
+
+No route writes `result`, `snapshot`, versions or status; only `ReviewProcessor` does (AC12).
+
+## Design decisions that differ from the prompt (with reasons)
+
+| Prompt | Built | Why |
+|---|---|---|
+| `IReviewDispatcher.DispatchAsync(reviewRunId, correlationId)` | `DispatchAsync(projectId, reviewRunId, correlationId)` | Runs are partitioned by `/projectId`; a single-partition read is cheap and stays within one authorised project. A lookup by id alone is a cross-partition query. |
+| Idempotency key `requestId + revision + nonce` | Kept (unique key), **plus** deterministic run id `{requestId}.r{revision}.a{attempt}` | The nonce key alone allows two runs if two tabs send different nonces. The deterministic id makes concurrent Analyze calls collide, so one revision has one run unless a Failed run is explicitly retried (AC13, AC14). |
+| `az deployment group what-if` | `az deployment sub what-if` | The resource group is created by the deployment, so it must also pass the approval gate. |
+| Functions Core Tools for local runs | `tools/local-api` (dev-only, loopback) behind the SWA CLI emulator | Core Tools binaries could not be downloaded in the build environment. Both hosts call the same `ApiHost`. |
+| Request form "validation" | Client-side length/date hints only; empty fields allowed | The review must be able to report missing fields; the server enforces lengths and types. |
+
+## Processing statuses
+
+```mermaid
+stateDiagram-v2
+  [*] --> Queued: Analyze / Retry (run created, snapshot + SHA-256)
+  Queued --> Running: claim with ETag
+  Running --> Completed: result valid, revision unchanged
+  Running --> Superseded: request revision changed before commit
+  Running --> Failed: Timeout / MalformedResult / DependencyUnavailable / Internal
+  Queued --> Failed: Operator recover (stuck)
+  Running --> Failed: Operator recover (stuck)
+  Failed --> [*]: Retry creates a new run (retryOfRunId)
+```

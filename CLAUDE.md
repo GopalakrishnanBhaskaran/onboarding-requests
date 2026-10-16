@@ -37,17 +37,20 @@ Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs
 - `src/api` HTTP Functions. `src/web` SPA.
 - `infra/` Bicep. `tests/` unit, contract, security, acceptance. `docs/` architecture, facts, costs, promotion, runbook, report.
 
-## Commands (filled in as each phase lands)
+## Commands
 | Task | Command |
 |---|---|
 | Build API + core | `dotnet build` |
 | Unit/contract/security tests | `dotnet test` (Microsoft.Testing.Platform runner, set in `global.json`) |
 | Validate sample data | `python3 tools/seed_sample_data.py --dry-run` |
-| Web dev | `npm --prefix src/web run dev` (Phase 4) |
-| Local end-to-end | `swa start` (Phase 4) |
-| Acceptance | `tools/run_acceptance.sh` (Phase 5) |
-| Free-tier check | `tools/check_free_tier.sh <subscriptionId>` (Phase 6) |
-| Cost check | `tools/cost_check.sh rg-pmo-review-pilot` (Phase 6) |
+| SPA checks / build | `npm --prefix src/web test` · `npm --prefix src/web run build` |
+| Local end-to-end | `tools/run_local.sh` (SWA CLI emulator + dev-only `tools/local-api`), then `npm --prefix src/web run e2e` |
+| Acceptance + report | `tools/run_acceptance.sh` (`E2E=1` adds browser tests) → `docs/PILOT_REPORT.md` |
+| Bicep compile | `bicep build infra/main.bicep` |
+| Free-tier check | `tools/check_free_tier.sh <subscriptionId>` |
+| What-if (read-only) | `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` |
+| Deploy (after "approved") | `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "<name> <date>"` |
+| Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 
 ## Security rules for API code
 - Identity comes **only** from the `x-ms-client-principal` header. Ignore any user/project field in the body.

@@ -1,0 +1,17 @@
+{
+  "_comment": "Paid environment TEMPLATE. Placeholders only. Each paid switch needs written approval (docs/PROMOTION.md). No keys: managed identity everywhere.",
+  "STORAGE_MODE": "Cosmos",
+  "COSMOS_DATABASE": "pmoreview",
+  "COSMOS_ENDPOINT": "https://<cosmos-account>.documents.azure.com:443/",
+  "REVIEW_MODEL_PROVIDER": "AzureOpenAI",
+  "AZURE_OPENAI_ENDPOINT": "https://<aoai-resource>.openai.azure.com/",
+  "AZURE_OPENAI_DEPLOYMENT": "<structured-output-capable-deployment>",
+  "AZURE_OPENAI_API_VERSION": "<verified-api-version-supporting-json_schema-and-tools>",
+  "REVIEW_DISPATCHER": "Queue",
+  "REVIEW_QUEUE_NAME": "<queue-name>",
+  "ALLOW_PAID_SERVICES": "true",
+  "ALLOWED_IDENTITY_PROVIDERS": "aad",
+  "PROCESSING_BUDGET_SECONDS": "40",
+  "STUCK_RUN_MINUTES": "10",
+  "APPLICATIONINSIGHTS_CONNECTION_STRING": "<from-key-vault-reference>"
+}

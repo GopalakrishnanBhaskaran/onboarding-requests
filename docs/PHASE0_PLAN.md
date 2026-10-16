@@ -1,6 +1,8 @@
 # Phase 0 — Findings, Questions, Schema, Plan
 
-Pilot v1.0 · 16 Oct 2026 · Owner: Gokul · Status: **awaiting plan approval**
+Pilot v1.0 · 16 Oct 2026 · Owner: Gokul · Status: **approved 16 Oct 2026** — Q1 A (.NET 10 isolated), Q2 yes, Q3 30 s, Q4 INR, Q5 yes. Q6–Q10 open (defaults used: region parameters, in-memory tests, 5 min stuck-run limit).
+
+> The API table in §3 was refined during build: routes are project-scoped (`/api/projects/{projectId}/...`). Current routes: `docs/ARCHITECTURE.md`.
 
 ## 1. Findings
 

@@ -1,0 +1,47 @@
+# Runbook — PMO Request Review Pilot
+
+## Local development
+
+Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Core Tools v4 (to run the real Functions host), Docker (Cosmos emulator).
+
+| Task | Command |
+|---|---|
+| Build everything | `dotnet build` |
+| All .NET tests (unit, contract, security, acceptance) | `dotnet test` |
+| Acceptance suite + `docs/PILOT_REPORT.md` | `tools/run_acceptance.sh` (`E2E=1` to include browser tests) |
+| SPA unit checks | `npm --prefix src/web test` |
+| Local end-to-end (SWA CLI emulator + in-memory SAMPLE API) | `tools/run_local.sh` → open http://localhost:4280 |
+| Browser E2E (with `run_local.sh` running) | `npm --prefix src/web run e2e` |
+| Validate sample data | `python3 tools/seed_sample_data.py --dry-run` |
+| Validate a result file | `python3 tools/validate_result_schema.py <file.json>` |
+
+**Mock sign-in locally.** The SWA CLI emulator shows a login form: enter a SAMPLE user id from `tools/sample_data/sample-data.json`, for example `sample-user-alice` (PMO, Alpha), `sample-user-bob` (PMO, Beta), `sample-user-rita` (Reviewer, Alpha), `sample-user-mark` (Maintainer, Alpha), `sample-user-oscar` (Operator, Alpha). Choose provider `aad`.
+
+**Why `tools/local-api` exists.** Azure Functions Core Tools could not be downloaded in the build environment. `tools/local-api` is a loopback-only, dev-only host that serves the *same* `ApiHost` (routing, auth, processing) as the Functions entry point. It refuses to start without `PILOT_LOCAL_DEV=true`. With Core Tools installed you can instead run `func start` in `src/api/PmoReview.Api` (copy `local.settings.example.json` to `local.settings.json`).
+
+**Why `.local/staticwebapp.config.json`.** SWA CLI 2.0.10 rejects `apiRuntime: dotnet-isolated:10.0` and then ignores the whole config (F21). `run_local.sh` writes a copy without `platform` for the emulator only.
+
+## Deploy (Phase 6 — only after approval)
+
+1. `az login`; pick the subscription.
+2. Copy `infra/main.parameters.example.json` → `.local/params.json`; fill email, region, `budgetStartDate` (first of the current month).
+3. `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` → send `.local/whatif.txt` to Gokul.
+4. After the written "approved": `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "Gokul <date>"`.
+5. Each test user signs in once at the app URL, opens `/.auth/me`, copies `userId`; register:
+   `COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles PMO`
+   (get the connection string with `az cosmosdb keys list --type connection-strings`; do not paste it anywhere else).
+6. Run one synthetic SAMPLE request in the UI; save a screenshot of the result.
+7. `tools/cost_check.sh rg-pmo-review-pilot` now and again after 24–48 h → paste output into `docs/COSTS.md`.
+
+## Operations
+
+| Situation | Action |
+|---|---|
+| Review stuck in Queued/Running | Operator page → "Recover stuck reviews" (marks > `STUCK_RUN_MINUTES` as Failed/Timeout); PMO retries. |
+| Review Failed | PMO opens the request → "Retry review". Failure category only; details are in logs by correlation id. |
+| User reports an error | Ask for the "Reference" (correlation id) shown in the error bar; search logs for it. |
+| New test user | Step 5 above. Unregistered users see their own user id and no data. |
+| Change a rule or mapping | Maintainer creates a new **Draft** version and publishes it. Published versions are immutable; old runs keep their pinned versions. |
+| Rotate Cosmos key | `az cosmosdb keys regenerate --key-kind primary`; then re-run the app-setting step from `deploy_free.sh` (secondary first if you need zero downtime). |
+| Cost alert | `workflows/incident-recovery.md`. |
+| Tear down | `az group delete -n rg-pmo-review-pilot` (deletes data; the Cosmos free-tier slot is freed for the subscription). |

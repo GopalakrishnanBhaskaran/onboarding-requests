@@ -5,6 +5,13 @@
       "default": "Information",
       "Host.Results": "Warning",
       "Function": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "maxTelemetryItemsPerSecond": 5,
+        "excludedTypes": "Exception"
+      }
     }
   },
   "functionTimeout": "00:00:40"

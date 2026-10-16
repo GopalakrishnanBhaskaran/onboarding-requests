@@ -1,0 +1,12 @@
+{
+  "_comment": "Zero-cost pilot app settings (SWA app settings). COSMOS_CONNECTION_STRING is set by tools/deploy_free.sh and never stored here.",
+  "STORAGE_MODE": "Cosmos",
+  "COSMOS_DATABASE": "pmoreview",
+  "COSMOS_CONNECTION_STRING": "<set-by-deploy-script-never-committed>",
+  "REVIEW_MODEL_PROVIDER": "RuleOnly",
+  "REVIEW_DISPATCHER": "Inline",
+  "ALLOW_PAID_SERVICES": "false",
+  "ALLOWED_IDENTITY_PROVIDERS": "aad",
+  "PROCESSING_BUDGET_SECONDS": "30",
+  "STUCK_RUN_MINUTES": "5"
+}

@@ -1,0 +1,94 @@
+# PMO Request Review — PAID environment pipeline. PROVIDED, NOT EXECUTED in the zero-cost pilot.
+# Service connection must use workload identity federation (no client secrets): see docs/PROMOTION.md #7.
+trigger:
+  branches:
+    include: [main]
+
+variables:
+  dotnetVersion: '10.0.x'
+  nodeVersion: '22.x'
+  serviceConnection: '<wif-service-connection-name>'
+  subscriptionId: '<subscription-id>'
+  location: '<region>'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build_test
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - task: UseDotNet@2
+            inputs: { packageType: sdk, version: $(dotnetVersion) }
+          - script: dotnet test --configuration Release
+            displayName: Unit, contract, security and acceptance tests
+          - script: tools/run_acceptance.sh
+            displayName: Acceptance report
+          - task: NodeTool@0
+            inputs: { versionSpec: $(nodeVersion) }
+          - script: |
+              npm --prefix src/web ci
+              npm --prefix src/web test
+              npm --prefix src/web run build
+            displayName: SPA test + build
+          - script: |
+              dotnet publish src/api/PmoReview.Api -c Release -o $(Build.ArtifactStagingDirectory)/api
+              cp -r src/web/dist $(Build.ArtifactStagingDirectory)/web
+              cp staticwebapp.config.json $(Build.ArtifactStagingDirectory)/web/
+              cp -r infra $(Build.ArtifactStagingDirectory)/infra
+            displayName: Stage artifacts
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: drop
+
+  - stage: WhatIf
+    dependsOn: Build
+    jobs:
+      - job: whatif
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - download: current
+            artifact: drop
+          - task: AzureCLI@2
+            displayName: Bicep what-if (paid template)
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment sub what-if --location $(location) \
+                  --template-file $(Pipeline.Workspace)/drop/infra/<paid-main>.bicep \
+                  --parameters @$(Pipeline.Workspace)/drop/infra/<paid-params>.json
+
+  - stage: Deploy
+    dependsOn: WhatIf
+    jobs:
+      - deployment: deploy
+        pool: { vmImage: ubuntu-latest }
+        environment: pmo-review-paid   # add a manual approval check on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Deploy infra
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az deployment sub create --location $(location) \
+                        --template-file $(Pipeline.Workspace)/drop/infra/<paid-main>.bicep \
+                        --parameters @$(Pipeline.Workspace)/drop/infra/<paid-params>.json
+                - task: AzureFunctionApp@2
+                  displayName: Deploy API to bring-your-own Function App
+                  inputs:
+                    connectedServiceNameARM: $(serviceConnection)
+                    appType: functionAppLinux
+                    appName: '<function-app-name>'
+                    package: $(Pipeline.Workspace)/drop/api
+                - task: AzureStaticWebApp@0
+                  displayName: Deploy SPA to SWA Standard (API linked, not managed)
+                  inputs:
+                    app_location: drop/web
+                    skip_app_build: true
+                    skip_api_build: true
+                    azure_static_web_apps_api_token: $(SWA_DEPLOYMENT_TOKEN)  # secret variable from Key Vault-linked group
