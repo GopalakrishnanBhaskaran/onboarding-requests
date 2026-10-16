@@ -34,6 +34,20 @@ handoff_enabled() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.loa
 
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
 
+# global.json needs the .NET 10 SDK (the worker targets net10.0; the API's net9.0 builds with it too).
+# Azure Cloud Shell ships .NET 9 only, so install 10 into ~/.dotnet with Microsoft's script (user folder, no admin).
+# Ephemeral Cloud Shell sessions lose it; this re-installs on the next run (about 1-2 minutes).
+ensure_dotnet10() {
+  if dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then return 0; fi
+  if ! { [[ -x "$HOME/.dotnet/dotnet" ]] && "$HOME/.dotnet/dotnet" --list-sdks | grep -q '^10\.'; }; then
+    echo "Installing .NET 10 SDK into ~/.dotnet ..."
+    curl -sSL -o "$ROOT/.local/dotnet-install.sh" https://dot.net/v1/dotnet-install.sh
+    bash "$ROOT/.local/dotnet-install.sh" --channel 10.0 --install-dir "$HOME/.dotnet"
+  fi
+  export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"
+  echo ".NET SDKs: $(dotnet --list-sdks | tr '\n' ' ')"
+}
+
 # Phase 2 worker: build, zip, deploy (Flex Consumption one-deploy via Entra ID; basic auth is off).
 deploy_worker() {
   local name; name=$(worker_name)
@@ -67,6 +81,8 @@ grant_graph() {
   az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[].appRoleId" -o tsv \
     | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done
 }
+
+[[ "$CMD" == "apply" || "$CMD" == "app" || "$CMD" == "worker" ]] && ensure_dotnet10
 
 case "$CMD" in
   whatif)
