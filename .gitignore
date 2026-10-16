@@ -11,3 +11,4 @@ local.settings.json
 TestResults/
 tests/acceptance/out/
 __pycache__/
+.local/

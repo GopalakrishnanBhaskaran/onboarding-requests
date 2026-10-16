@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Local end-to-end: in-memory SAMPLE API (dev host) behind the SWA CLI emulator with mock sign-in.
+#   tools/run_local.sh            start (Ctrl+C stops both)
+# Opens http://localhost:4280 ; the emulator's login page lets you pick a mock user id
+# (use the SAMPLE ids from tools/sample_data/sample-data.json, e.g. sample-user-alice).
+#
+# Why a derived config: SWA CLI 2.0.10 rejects apiRuntime "dotnet-isolated:10.0" in its schema
+# (cloud docs list it; see docs/VERIFIED_FACTS.md F4) and then ignores the WHOLE file, including
+# auth routes. The emulator does not use apiRuntime, so we drop only that key for local runs.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL="$ROOT/.local"
+mkdir -p "$LOCAL"
+python3 - "$ROOT/staticwebapp.config.json" "$LOCAL/staticwebapp.config.json" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+cfg.pop("platform", None)
+json.dump(cfg, open(sys.argv[2], "w"), indent=2)
+PY
+
+if [[ "${SKIP_BUILD:-}" != "1" ]]; then
+  dotnet build "$ROOT/tools/local-api" -v q
+  npm --prefix "$ROOT/src/web" run build
+fi
+
+PILOT_LOCAL_DEV=true dotnet run --project "$ROOT/tools/local-api" --no-build &
+API_PID=$!
+trap 'kill $API_PID 2>/dev/null || true' EXIT
+for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:7071/api/me && break; sleep 1; done
+
+cd "$ROOT/src/web"
+npx swa start dist --api-devserver-url http://127.0.0.1:7071 --swa-config-location "$LOCAL" --port 4280

@@ -9,7 +9,9 @@ namespace PmoReview.Core.Http;
 /// <summary>Item plus its concurrency token, as returned to the SPA.</summary>
 public sealed record Item<T>(T Value, string Etag);
 
-public sealed record ProjectSummary(string ProjectId, string Name, IReadOnlyList<AppRole> Roles, bool IsSample);
+public sealed record ProjectSummary(
+    string ProjectId, string Name, IReadOnlyList<AppRole> Roles, bool IsSample,
+    IReadOnlyList<string> SupportedRequestTypes, IReadOnlyList<string> SupportedEnvironments);
 
 public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList<ProjectSummary> Projects);
 
@@ -25,7 +27,8 @@ public static class Endpoints
             foreach (var (projectId, roles) in c.Caller.Grants.OrderBy(g => g.Key, StringComparer.Ordinal))
             {
                 var p = await stores.Projects.GetAsync(projectId, projectId, c.Ct);
-                projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false));
+                projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false,
+                    p?.Value.SupportedRequestTypes ?? [], p?.Value.SupportedEnvironments ?? []));
             }
             return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects));
         });

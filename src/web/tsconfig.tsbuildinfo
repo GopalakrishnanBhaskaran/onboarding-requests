@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/components/common.tsx","./src/lib/api.ts","./src/lib/format.ts","./src/lib/router.ts","./src/lib/types.ts","./src/pages/OperatorPage.tsx","./src/pages/QueuePage.tsx","./src/pages/ReferencePage.tsx","./src/pages/RequestDetailPage.tsx","./src/pages/RequestFormPage.tsx","./src/pages/RequestsPage.tsx"],"version":"5.9.3"}
