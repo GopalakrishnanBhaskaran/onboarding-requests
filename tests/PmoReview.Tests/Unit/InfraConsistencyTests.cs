@@ -69,7 +69,8 @@ public partial class InfraConsistencyTests
         var main = File.ReadAllText(Path.Combine(Repo(), "infra", "main.bicep"));
         var bicep = HandoffBicep();
         Assert.Contains("param enableHandoff bool = false", main);
-        Assert.Contains("if (enableHandoff)", main);
+        Assert.Contains("param deployWorker bool = false", main);
+        Assert.Contains("if (enableHandoff && deployWorker)", main); // two stages: policy first, then the worker
 
         string[] allowed =
         [

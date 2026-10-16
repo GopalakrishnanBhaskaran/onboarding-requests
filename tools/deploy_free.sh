@@ -30,7 +30,15 @@ mkdir -p "$ROOT/.local"
 az account set --subscription "$SUB"
 RG_DEFAULT=rg-pmo-review-pilot
 
-handoff_enabled() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];sys.exit(0 if p.get('enableHandoff',{}).get('value') else 1)" "$PARAMS"; }
+param_true() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];sys.exit(0 if p.get(sys.argv[2],{}).get('value') else 1)" "$PARAMS" "$1"; }
+handoff_enabled() { param_true enableHandoff; }
+worker_enabled() { handoff_enabled && param_true deployWorker; }
+
+# Stage B needs stage A's policy to be live: Azure checks new resources against the CURRENT assignment.
+policy_allows_worker() {
+  az policy assignment show -g "$RG_DEFAULT" -n pmo-pilot-allowed-types \
+    --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Web/sites"
+}
 
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
 
@@ -87,16 +95,27 @@ grant_graph() {
 case "$CMD" in
   whatif)
     "$ROOT/tools/check_free_tier.sh" "$SUB"
+    if worker_enabled && ! policy_allows_worker; then
+      echo "STOP: deployWorker=true but the live policy does not allow the worker types yet."
+      echo "Run stage A first (deployWorker=false), apply it, wait ~30 minutes, then run stage B."
+      exit 2
+    fi
     az deployment sub what-if --name "$DEPLOYMENT" --location "$LOCATION" \
       --template-file "$ROOT/infra/main.bicep" --parameters "@$PARAMS" \
       --result-format FullResourcePayloads | tee "$ROOT/.local/whatif.txt"
     echo
     echo "Expected resources: resource group, policy assignment, budget, Cosmos DB account (free tier) + 1 database + 8 containers, Static Web App (Free)."
     echo "Expected cost: ₹0 while within free limits (SWA Free plan; Cosmos free tier 1000 RU/s + 25 GB; policy and budgets are free)."
-    if handoff_enabled; then
-      echo "Phase 2 (enableHandoff=true, paid from credits): + Flex Consumption plan + Function App (system identity) + storage account"
+    if handoff_enabled && ! worker_enabled; then
+      echo "Phase 2 STAGE A (enableHandoff=true, deployWorker=false): policy allows the worker types, budget ₹2,000 with 50/80/100% alerts,"
+      echo "  + 'handoffs' container (shared free-tier throughput), tag update. Creates nothing paid. Expected cost: ₹0."
+    fi
+    if worker_enabled; then
+      echo "Phase 2 STAGE B (deployWorker=true, paid from credits): + Flex Consumption plan + Function App (system identity) + storage account"
       echo "  (Standard_LRS, no shared keys) + Storage Blob Data Owner role + Cosmos data role on the 'handoffs' container."
       echo "  Expected cost: roughly ₹50-300/month (storage + Flex executions; Flex has a monthly free grant). Budget: ₹2,000 with 50/80/100% alerts."
+    fi
+    if handoff_enabled; then
       WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
       LOCATION_CHECK="$WLOC"
       echo "== Flex Consumption availability for $WLOC =="
@@ -125,7 +144,7 @@ case "$CMD" in
       "COSMOS_CONNECTION_STRING=$CS" "COSMOS_DATABASE=pmoreview" "STORAGE_MODE=Cosmos" \
       "REVIEW_MODEL_PROVIDER=RuleOnly" "REVIEW_DISPATCHER=Inline" "ALLOW_PAID_SERVICES=false" \
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
-    if handoff_enabled; then
+    if worker_enabled; then
       # Phase 2: accepted reviews create Entra hand-off records. One tester in the pilot, so separate-reviewer is off.
       az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names "ENTRA_HANDOFF_ENABLED=true" "REQUIRE_SEPARATE_REVIEWER=false" -o none
     fi
@@ -153,9 +172,11 @@ case "$CMD" in
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "Next: each test user signs in once, reads userId from /.auth/me, then:"
     echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles PMO"
-    if handoff_enabled; then
+    if worker_enabled; then
       deploy_worker
       grant_graph || echo "Graph permission NOT granted (needs Global Administrator). Run: tools/deploy_free.sh grant-graph $SUB"
+    elif handoff_enabled; then
+      echo "Phase 2 stage A applied. Wait ~30 minutes for the policy change, set deployWorker=true, then run whatif again (stage B)."
     fi
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;

@@ -26,8 +26,11 @@ param budgetEmail string
 @minValue(1)
 param budgetAmount int = 2000
 
-@description('Phase 2: deploy the Entra hand-off sync worker (Flex Consumption Function App + storage), paid from Azure credits.')
+@description('Phase 2 stage A: allow the worker resource types in the policy, add the handoffs container, Rs 2,000 budget. Creates nothing paid.')
 param enableHandoff bool = false
+
+@description('Phase 2 stage B: deploy the hand-off sync worker (Flex Consumption Function App + storage), paid from Azure credits. Only after stage A is live: Azure checks new resources against the CURRENT policy.')
+param deployWorker bool = false
 
 @description('Region for the worker. Must be listed by: az functionapp list-flexconsumption-locations')
 param workerLocation string = location
@@ -64,7 +67,7 @@ module pilot 'modules/pilot.bicep' = {
   }
 }
 
-module handoff 'modules/handoff.bicep' = if (enableHandoff) {
+module handoff 'modules/handoff.bicep' = if (enableHandoff && deployWorker) {
   name: 'pmo-review-handoff'
   scope: rg
   params: {
@@ -81,5 +84,5 @@ output staticWebAppHostname string = pilot.outputs.staticWebAppHostname
 output cosmosAccountName string = pilot.outputs.cosmosAccountName
 output policyAssignmentId string = pilot.outputs.policyAssignmentId
 output budgetId string = pilot.outputs.budgetId
-output workerName string = enableHandoff ? handoff!.outputs.workerName : ''
-output workerPrincipalId string = enableHandoff ? handoff!.outputs.workerPrincipalId : ''
+output workerName string = enableHandoff && deployWorker ? handoff!.outputs.workerName : ''
+output workerPrincipalId string = enableHandoff && deployWorker ? handoff!.outputs.workerPrincipalId : ''
