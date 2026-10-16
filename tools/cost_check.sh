@@ -6,11 +6,17 @@ set -euo pipefail
 RG="${1:-rg-pmo-review-pilot}"
 SUB=$(az account show --query id -o tsv)
 ALLOWED='^Microsoft\.(Web/staticSites|DocumentDB/databaseAccounts)$'
+# Phase 2 (approved 16 Oct 2026): exactly one Flex plan, one Function App and one storage account (the hand-off worker).
+PHASE2='^Microsoft\.(Web/serverFarms|Web/sites|Storage/storageAccounts)$'
 
 echo "== Resources in $RG =="
 az resource list -g "$RG" --query "[].{type:type, name:name, sku:sku.name, location:location}" -o table
-BAD=$(az resource list -g "$RG" --query "[].type" -o tsv | grep -Ev "$ALLOWED" || true)
+TYPES=$(az resource list -g "$RG" --query "[].type" -o tsv)
+BAD=$(echo "$TYPES" | grep -Ev "$ALLOWED" | grep -Eiv "$PHASE2" || true)
 if [[ -n "$BAD" ]]; then echo "FLAG: non-allowed resource types:"; echo "$BAD"; else echo "OK: only allowed resource types."; fi
+MORE=$(echo "$TYPES" | grep -Ei "$PHASE2" | sort -f | uniq -ci | awk '$1>1' || true)
+if [[ -n "$MORE" ]]; then echo "FLAG: more than one Phase 2 resource of a type (approved: one each):"; echo "$MORE"; fi
+for p in $(az functionapp plan list -g "$RG" --query "[?sku.name!='FC1'].name" -o tsv 2>/dev/null); do echo "FLAG: plan $p is not Flex Consumption (FC1)"; done
 
 echo "== SKU / free-tier checks =="
 for s in $(az staticwebapp list -g "$RG" --query "[].name" -o tsv); do
