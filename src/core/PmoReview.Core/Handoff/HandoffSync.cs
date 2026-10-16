@@ -1,0 +1,265 @@
+using Microsoft.Extensions.Logging;
+using PmoReview.Core.Common;
+using PmoReview.Core.Storage;
+
+namespace PmoReview.Core.Handoff;
+
+public sealed record EntraSubject(string? ObjectId, string? PrincipalName, string? Email, string? DisplayName)
+{
+    public bool Is(string upn) =>
+        string.Equals(PrincipalName, upn, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(Email, upn, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>accessPackageAssignmentRequest (Graph v1.0), the fields this app reads.</summary>
+public sealed record EntraRequest(
+    string Id, string RequestType, string State, string? Status, DateTimeOffset CreatedAt,
+    EntraSubject? Requestor, DateTimeOffset? ScheduleStart, DateTimeOffset? ScheduleEnd);
+
+/// <summary>accessPackageAssignment (Graph v1.0), the fields this app reads.</summary>
+public sealed record EntraAssignment(
+    string Id, string State, string? Status, EntraSubject? Target,
+    DateTimeOffset? ScheduleStart, DateTimeOffset? ScheduleEnd, string? ExpirationType, DateTimeOffset? ExpiredAt);
+
+/// <summary>Read-only view of Entra entitlement management. The implementation holds EntitlementManagement.Read.All only.</summary>
+public interface IEntraGovernanceReader
+{
+    Task<IReadOnlyList<EntraRequest>> ListRequestsAsync(string accessPackageId, CancellationToken ct);
+    Task<IReadOnlyList<EntraAssignment>> ListAssignmentsAsync(string accessPackageId, CancellationToken ct);
+}
+
+/// <summary>
+/// The one Entra write this app can make (auto-assign mode only): an "adminAdd" assignment request for the
+/// joiner, on the pinned access package, through the app's own assignment policy. Entra then adds the access
+/// and removes it on the end date. The implementation refuses packages outside the allowed catalog.
+/// </summary>
+public interface IEntraAssignmentWriter
+{
+    Task<EntraRequest> RequestAssignmentAsync(AssignmentOrder order, CancellationToken ct);
+}
+
+/// <summary>What the worker asks Entra for. Built only from the hand-off record (pinned mapping, reviewed snapshot).</summary>
+public sealed record AssignmentOrder(
+    string AccessPackageId, string JoinerUpn, DateTimeOffset Start, DateTimeOffset End, string Justification)
+{
+    /// <summary>
+    /// Start: the reviewed start date (00:00 UTC), or now if that is today or past. End: the reviewed end date, 23:59:59 UTC.
+    /// </summary>
+    public static AssignmentOrder For(EntraHandoff h, DateTimeOffset now)
+    {
+        if (h.AccessPackageId is null || h.JoinerUpn is null || h.RequestedEnd is null)
+            throw new EntraWriteException("IncompleteHandoff");
+        var start = h.RequestedStart is { } s ? new DateTimeOffset(s.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero) : now;
+        if (start < now) start = now;
+        var end = new DateTimeOffset(h.RequestedEnd.Value.ToDateTime(new TimeOnly(23, 59, 59)), TimeSpan.Zero);
+        if (end <= start) throw new EntraWriteException("EndDatePassed");
+        return new AssignmentOrder(h.AccessPackageId, h.JoinerUpn, start, end,
+            $"PMO Review request {h.RequestId} revision {h.RequestRevision}, review {h.ReviewRunId}, accepted by a second Reviewer.");
+    }
+}
+
+/// <summary>Writer failure, recorded as a category (no details). The record stays Queued and is retried next run.</summary>
+public sealed class EntraWriteException(string category, Exception? inner = null) : Exception(category, inner)
+{
+    public string Category { get; } = category;
+}
+
+/// <summary>Reader failure the sync records as a category, never as details.</summary>
+public sealed class EntraReadException(string category, Exception? inner = null) : Exception(category, inner)
+{
+    public string Category { get; } = category;
+}
+
+public sealed record SyncSummary(int Checked, int Changed, int Errors);
+
+/// <summary>
+/// Background sync: reads Entra and records where each open hand-off stands. It is the only writer
+/// of hand-off records after creation. Its only Entra write is <see cref="IEntraAssignmentWriter"/>, for
+/// Queued records, and only when a writer is configured (auto-assign mode); otherwise it is read-only.
+/// </summary>
+public sealed class HandoffSync(
+    DataStores stores, IEntraGovernanceReader entra, IClock clock, ILogger<HandoffSync> logger,
+    IEntraAssignmentWriter? writer = null, JoinerProvisioning? joiners = null)
+{
+    /// <summary>A request created a little before the hand-off record still counts (clock skew, quick joiners).</summary>
+    public static readonly TimeSpan MatchWindow = TimeSpan.FromMinutes(10);
+    /// <summary>Open hand-offs older than this are no longer polled.</summary>
+    public static readonly TimeSpan MaxTracking = TimeSpan.FromDays(400);
+
+    public async Task<SyncSummary> RunOnceAsync(CancellationToken ct)
+    {
+        var open = (await stores.Handoffs.ListAllAsync(ct))
+            .Where(h => !h.Value.IsClosed && h.Value.AccessPackageId is not null && h.Value.JoinerUpn is not null
+                        && clock.UtcNow - h.Value.CreatedAt < MaxTracking)
+            .ToList();
+
+        int changed = 0, errors = 0;
+        foreach (var group in open.GroupBy(h => h.Value.AccessPackageId!, StringComparer.OrdinalIgnoreCase))
+        {
+            IReadOnlyList<EntraRequest> requests;
+            IReadOnlyList<EntraAssignment> assignments;
+            string? error = null;
+            try
+            {
+                requests = await entra.ListRequestsAsync(group.Key, ct);
+                assignments = await entra.ListAssignmentsAsync(group.Key, ct);
+            }
+            catch (EntraReadException e)
+            {
+                (requests, assignments, error) = ([], [], e.Category);
+                logger.LogWarning("handoff sync: Entra read failed {Category} package={PackageId}", e.Category, group.Key);
+            }
+
+            foreach (var current in group)
+            {
+                var next = error is null
+                    ? Apply(current.Value, requests, assignments, clock.UtcNow)
+                    : current.Value with { LastCheckedAt = clock.UtcNow, LastSyncError = error };
+                if (error is null && next.Status == HandoffStatus.Queued && next.EntraRequestId is null)
+                {
+                    next = await SubmitAsync(next, ct);
+                }
+                if (next.LastSyncError is not null) errors++;
+                if (next.Status != current.Value.Status) changed++;
+                try
+                {
+                    await stores.Handoffs.ReplaceAsync(next, current.ETag, ct);
+                }
+                catch (ConcurrencyException)
+                {
+                    // Changed since we read it (e.g. a re-acceptance); the next cycle re-reads.
+                }
+            }
+        }
+        logger.LogInformation("handoff sync: checked={Checked} changed={Changed} errors={Errors}", open.Count, changed, errors);
+        return new SyncSummary(open.Count, changed, errors);
+    }
+
+    /// <summary>Auto-assign: file the Entra assignment request for a Queued record. Failures keep it Queued for the next run.</summary>
+    private async Task<EntraHandoff> SubmitAsync(EntraHandoff h, CancellationToken ct)
+    {
+        if (writer is null) return h with { LastSyncError = "AutoAssignOff" };
+        if (joiners is not null)
+        {
+            // Phase 2c: make sure the joiner's account exists (create, licence, pass) before asking Entra for the access.
+            var (ready, failed) = await joiners.EnsureAsync(h, ct);
+            if (failed is not null)
+            {
+                logger.LogWarning("handoff sync: joiner provisioning failed {Category} handoff={HandoffId}", failed, h.Id);
+                return ready with { LastSyncError = failed };
+            }
+            h = ready;
+        }
+        try
+        {
+            var created = await writer.RequestAssignmentAsync(AssignmentOrder.For(h, clock.UtcNow), ct);
+            var (status, _) = FromRequestState(created.State, h.Status, appRequest: true);
+            if (status == HandoffStatus.Queued) status = HandoffStatus.PendingApproval;
+            logger.LogInformation("handoff sync: assignment requested handoff={HandoffId} entraRequest={RequestId} state={State}", h.Id, created.Id, created.State);
+            return h with
+            {
+                Status = status,
+                EntraRequestId = created.Id,
+                EntraRequestType = created.RequestType,
+                EntraRequestState = created.State,
+                LastSyncError = null,
+                History = [.. h.History, new HandoffEvent(clock.UtcNow, status, "The app filed the Entra assignment request (adminAdd) for the reviewed period.")],
+            };
+        }
+        catch (EntraWriteException e)
+        {
+            logger.LogWarning("handoff sync: assignment request failed {Category} handoff={HandoffId}", e.Category, h.Id);
+            return h with { LastSyncError = e.Category };
+        }
+    }
+
+    private static (HandoffStatus, string) FromRequestState(string state, HandoffStatus current, bool appRequest) => state switch
+    {
+        "submitted" or "pendingApproval" => (HandoffStatus.PendingApproval, appRequest
+            ? "Entra received the assignment request and is processing it."
+            : "The new joiner requested access; waiting for the Entra approver."),
+        "accepted" or "delivering" or "scheduled" or "partiallyDelivered" => (HandoffStatus.Delivering, appRequest
+            ? "Entra accepted the assignment request; access is being added or is scheduled for the start date."
+            : "Approved in Entra; access is being added or is scheduled for the start date."),
+        "delivered" => (HandoffStatus.Delivering, "Entra reports the request delivered; waiting for the assignment to show."),
+        "denied" => (HandoffStatus.Denied, appRequest ? "Entra rejected the assignment request." : "The Entra approver denied the request."),
+        "canceled" => (HandoffStatus.Cancelled, "The request was cancelled in Entra."),
+        "deliveryFailed" => (HandoffStatus.Failed, "Entra could not deliver the access."),
+        _ => (current, $"Entra request state '{state}' is not recognised; status unchanged."),
+    };
+
+    /// <summary>Pure: the hand-off as Entra currently reports it.</summary>
+    public static EntraHandoff Apply(EntraHandoff h, IReadOnlyList<EntraRequest> requests, IReadOnlyList<EntraAssignment> assignments, DateTimeOffset now)
+    {
+        var upn = h.JoinerUpn!;
+        var since = h.CreatedAt - MatchWindow;
+        // The joiner's own requests, plus the request this app filed (its requestor is the app, not the joiner).
+        var appRequest = h.EntraRequestType == "adminAdd" && h.EntraRequestId is not null;
+        var request = requests
+            .Where(r => (r.Requestor?.Is(upn) == true && r.CreatedAt >= since && r.RequestType is "userAdd" or "adminAdd" or "systemAdd")
+                        || (appRequest && r.Id == h.EntraRequestId))
+            .MaxBy(r => r.CreatedAt);
+        var mine = assignments.Where(a => a.Target?.Is(upn) == true).ToList();
+        var active = mine.Where(a => a.State is "delivered" or "delivering" or "partiallyDelivered").MaxBy(a => a.ScheduleStart ?? DateTimeOffset.MinValue);
+        var expired = mine.Where(a => a.State == "expired").MaxBy(a => a.ExpiredAt ?? a.ScheduleEnd ?? DateTimeOffset.MinValue);
+
+        HandoffStatus status;
+        EntraAssignment? assignment = null;
+        string note;
+        if (active is not null)
+        {
+            assignment = active;
+            status = active.State == "delivered" ? HandoffStatus.Delivered : HandoffStatus.Delivering;
+            note = status == HandoffStatus.Delivered ? "Entra reports the access as delivered." : "Approved; Entra is delivering the access.";
+        }
+        else if (expired is not null && (h.Status is HandoffStatus.Delivered or HandoffStatus.Delivering or HandoffStatus.Expired))
+        {
+            assignment = expired;
+            status = HandoffStatus.Expired;
+            note = "The access reached its end date and Entra removed it.";
+        }
+        else if (request is not null)
+        {
+            (status, note) = FromRequestState(request.State, h.Status, appRequest: appRequest && request.Id == h.EntraRequestId);
+        }
+        else if (h.Status is HandoffStatus.NotEligible or HandoffStatus.Queued || appRequest)
+        {
+            // Queued: the worker files the request next. App request not listed yet: keep the last known status.
+            status = h.Status;
+            note = "No change in Entra.";
+        }
+        else
+        {
+            status = HandoffStatus.AwaitingJoinerRequest;
+            note = "No Entra request from the new joiner yet.";
+        }
+
+        var preExisting = active is not null && request is null && active.ScheduleStart is { } start && start < since;
+        if (preExisting) note = "The new joiner already held this access package before the hand-off.";
+
+        var end = assignment?.ScheduleEnd ?? request?.ScheduleEnd;
+        var noExpiry = assignment is not null && string.Equals(assignment.ExpirationType, "noExpiration", StringComparison.OrdinalIgnoreCase);
+        var allowedEnd = h.RequestedEnd is { } d ? new DateTimeOffset(d.ToDateTime(TimeOnly.MaxValue), TimeSpan.Zero).AddDays(1) : (DateTimeOffset?)null;
+        var exceeds = allowedEnd is not null && (noExpiry || (end is not null && end > allowedEnd));
+
+        var history = h.History;
+        if (status != h.Status) history = [.. h.History, new HandoffEvent(now, status, note)];
+
+        return h with
+        {
+            Status = status,
+            EntraRequestId = request?.Id ?? h.EntraRequestId,
+            EntraRequestState = request?.State ?? h.EntraRequestState,
+            EntraRequestType = request?.RequestType ?? h.EntraRequestType,
+            EntraAssignmentId = assignment?.Id ?? h.EntraAssignmentId,
+            EntraAssignmentState = assignment?.State ?? h.EntraAssignmentState,
+            AccessStart = assignment?.ScheduleStart ?? request?.ScheduleStart ?? h.AccessStart,
+            AccessEnd = end ?? h.AccessEnd,
+            EndDateExceedsRequest = exceeds,
+            PreExistingAssignment = preExisting,
+            LastCheckedAt = now,
+            LastSyncError = null,
+            History = history,
+        };
+    }
+}

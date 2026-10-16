@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "reviewRunId": "sample-run-0001",
+  "requestRevision": 2,
+  "readiness": "NeedsInformation",
+  "summary": "Needs information. 1 blocking, 0 warning finding(s). Rule-only review of revision 2: 1 item(s) need attention.",
+  "mappingAssessment": {
+    "status": "Matched",
+    "mappingId": "A-MAP-ENG-DEV",
+    "mappingVersion": 1,
+    "explanation": "Matches published mapping A-MAP-ENG-DEV v1."
+  },
+  "clarificationQuestions": [
+    "Please provide the line manager. (Required by A-REQ-MGR v1.)"
+  ],
+  "humanReviewRequired": true,
+  "limitations": [
+    "This is an automated readiness check. It does not approve or grant access."
+  ]
+}

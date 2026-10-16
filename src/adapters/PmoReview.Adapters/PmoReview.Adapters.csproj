@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Infrastructure adapters: Cosmos repository, dispatchers, review model providers. -->
+  <PropertyGroup>
+    <RootNamespace>PmoReview.Adapters</RootNamespace>
+    <!-- net9.0 for the SWA managed API today (VERIFIED_FACTS F21, decision A); net10.0 for everything else. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../core/PmoReview.Core/PmoReview.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.63.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- Used only by the disabled AzureOpenAIReviewModel (managed identity). No cost by itself. -->
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+  </ItemGroup>
+</Project>
