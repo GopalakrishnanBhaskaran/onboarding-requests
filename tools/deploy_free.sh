@@ -190,7 +190,7 @@ case "$CMD" in
     az deployment sub show --name "$DEPLOYMENT" --query "{state:properties.provisioningState, finished:properties.timestamp}" -o tsv 2>/dev/null || echo "  none"
     echo "== Phase 2 stage A =="
     ok "policy allows the worker types" policy_allows_worker
-    BUDGET=$(az consumption budget list --query "[?name=='pmo-pilot-zero-cost'].amount | [0]" -o tsv 2>/dev/null)
+    BUDGET=$(az consumption budget list --resource-group "$RG" --query "[?name=='pmo-pilot-zero-cost'].amount | [0]" -o tsv 2>/dev/null)
     echo "  budget amount: ${BUDGET:-not found} (stage A sets 2000)"
     COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
     ok "Cosmos container 'handoffs' exists" "az cosmosdb sql container show -g $RG -a $COSMOS -d pmoreview -n handoffs"
