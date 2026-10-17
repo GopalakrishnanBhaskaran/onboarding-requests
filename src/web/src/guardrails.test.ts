@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { href, parse } from './lib/router';
-import { APPROVE_LABEL, FLOW_OVERVIEW, WHO_DOES_WHAT } from './lib/flow';
+import { AGENT_BANNER, APPROVE_LABEL, FLOW_OVERVIEW, WHO_DOES_WHAT, whoDoesWhat } from './lib/flow';
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -55,9 +55,13 @@ describe('scope guardrails', () => {
     expect(FLOW_OVERVIEW[3]).toMatch(/Security approval/);
     expect(WHO_DOES_WHAT.map(([who]) => who)).toEqual(['AI agent', 'Owner', 'Security', 'ID team', 'Role assignment team', 'PMO']);
     expect(WHO_DOES_WHAT[0][1]).toMatch(/Never approves, creates or assigns/);
+    // v2.1 agent provisioning on: still never approves, only after both approvals, the TAP stays with the ID team.
+    expect(whoDoesWhat(true)[0][1]).toMatch(/Never approves\. Only after both approvals/);
+    expect(whoDoesWhat(true).find(([who]) => who === 'ID team')?.[1]).toMatch(/Temporary Access Pass/);
+    expect(AGENT_BANNER).toMatch(/never approves.*Only after both approvals.*ID team issues the Temporary Access Pass/);
     const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
     expect(form).toContain('FLOW_OVERVIEW.map');
-    expect(form).toContain('WHO_DOES_WHAT.map');
+    expect(form).toContain('whoDoesWhat(agent).map');
   });
 });
 

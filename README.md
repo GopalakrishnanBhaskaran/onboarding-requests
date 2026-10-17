@@ -10,9 +10,9 @@ Onboarding / access requests from submission to verified access:
 6. Role assignment team assigns roles
 7. AI verification, notifications, audit
 
-The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves, creates or assigns.** The named Owner and Security approve; the ID team and the role assignment team make the changes in their own tools and record them here. The Temporary Access Pass never enters the app (metadata only).
+The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves.** The named Owner and Security approve; the ID team and the role assignment team make the changes in their own tools and record them here. Optional v2.1 (approval-gated): after both approvals the agent creates the user, group and membership and assigns allow-listed Azure roles. The Temporary Access Pass never enters the app (metadata only) and always comes from the ID team.
 
-Runs on Static Web Apps Free + managed Functions, Cosmos DB free tier and one Flex Consumption worker (managed identity, Microsoft Graph **read-only**). Azure OpenAI, mail and Azure DevOps adapters are coded and off.
+Runs on Static Web Apps Free + managed Functions, Cosmos DB free tier and one Flex Consumption worker (managed identity; Microsoft Graph read, plus the v2.1 create permissions only when approved). Azure OpenAI, mail and Azure DevOps adapters are coded and off.
 
 | Start here | |
 |---|---|

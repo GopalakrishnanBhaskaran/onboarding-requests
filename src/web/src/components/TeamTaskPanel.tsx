@@ -15,6 +15,18 @@ export function TaskSummary({ task, title }: { task: TeamTask; title: string }) 
         <Badge appearance="outline">{taskLabel[task.state]}</Badge>
         {task.pickedUpBy && <Caption1 className={s.muted}>picked up by {task.pickedUpBy} · {dateTime(task.pickedUpAt)}</Caption1>}
       </div>
+      {task.agent?.manual && (
+        <MessageBar intent="warning" layout="multiline">
+          <MessageBarBody>The AI agent left this task to your team: {task.agent.manual}.</MessageBarBody>
+        </MessageBar>
+      )}
+      {task.agent?.completed && !task.agent.manual && (
+        <Caption1>
+          {task.agent.roleAssigned
+            ? `Done by the AI agent after both approvals (${dateTime(task.agent.at)}): role assigned and response document updated.`
+            : `Done by the AI agent after both approvals (${dateTime(task.agent.at)}): user ${task.agent.userCreated ? 'created' : 'existed'}, group ${task.agent.groupCreated ? 'created' : 'existed'}, membership ${task.agent.memberAdded ? 'added' : 'in place'}.`}
+        </Caption1>
+      )}
       <Body1 className={s.pre}>{task.instructions}</Body1>
       {task.state === 'Returned' && task.lastDifference && (
         <MessageBar intent="warning" layout="multiline">
@@ -40,6 +52,9 @@ export function IdTeamForm({ request, onDone }: { request: AccessRequest; onDone
   const s = useStyles();
   const scope = request.flow?.scope;
   const now = new Date();
+  // v2.1: the AI agent already created the user, group and membership; only the TAP (for a new account) is left.
+  const agent = request.flow?.idTeamTask?.agent;
+  const byAgent = !!agent?.completed && !agent.manual && agent.membership;
   const [upn, setUpn] = useState(request.domainId ?? '');
   const [group, setGroup] = useState(scope?.entraGroup ?? '');
   const [userCreated, setUserCreated] = useState(true);
@@ -89,14 +104,20 @@ export function IdTeamForm({ request, onDone }: { request: AccessRequest; onDone
     <form className={s.stack} onSubmit={(e) => { e.preventDefault(); void record(); }} aria-label="ID team completion">
       <ErrorBar error={error} />
       {!request.flow?.idTeamTask?.pickedUpAt && <div><Button onClick={() => void pickUp()}>Pick up task</Button></div>}
-      <div className={s.row}>
-        <Field label="User ID created or used"><Input value={upn} onChange={(_, d) => setUpn(d.value)} /></Field>
-        <Field label="Entra group"><Input value={group} onChange={(_, d) => setGroup(d.value)} /></Field>
-      </div>
-      <Checkbox checked={userCreated} onChange={(_, d) => setUserCreated(d.checked === true)} label="I created a new account (it needs a one-time pass)" />
-      <Checkbox checked={groupCreated} onChange={(_, d) => setGroupCreated(d.checked === true)} label="I created the group" />
-      <Checkbox checked={sheetUpdated} onChange={(_, d) => setSheetUpdated(d.checked === true)} label="I updated the mapping sheet (group now exists)" />
-      <Checkbox checked={added} onChange={(_, d) => setAdded(d.checked === true)} label="The user is a member of the group" />
+      {byAgent ? (
+        <Body1>User {request.domainId} and group {scope?.entraGroup} are done by the AI agent. Issue the one-time pass in Entra, then record its metadata here.</Body1>
+      ) : (
+        <>
+          <div className={s.row}>
+            <Field label="User ID created or used"><Input value={upn} onChange={(_, d) => setUpn(d.value)} /></Field>
+            <Field label="Entra group"><Input value={group} onChange={(_, d) => setGroup(d.value)} /></Field>
+          </div>
+          <Checkbox checked={userCreated} onChange={(_, d) => setUserCreated(d.checked === true)} label="I created a new account (it needs a one-time pass)" />
+          <Checkbox checked={groupCreated} onChange={(_, d) => setGroupCreated(d.checked === true)} label="I created the group" />
+          <Checkbox checked={sheetUpdated} onChange={(_, d) => setSheetUpdated(d.checked === true)} label="I updated the mapping sheet (group now exists)" />
+          <Checkbox checked={added} onChange={(_, d) => setAdded(d.checked === true)} label="The user is a member of the group" />
+        </>
+      )}
       <Checkbox checked={tapIssued} onChange={(_, d) => setTapIssued(d.checked === true)} label="I issued a Temporary Access Pass (after the membership)" />
       {tapIssued && (
         <div className={s.row}>

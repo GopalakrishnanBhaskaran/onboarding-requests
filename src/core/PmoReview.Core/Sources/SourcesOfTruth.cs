@@ -91,6 +91,8 @@ public static class MappingSheet
                 w.WriteBoolean("sensitive", r.SensitiveResource);
                 w.WriteBoolean("deprecated", r.Deprecated);
                 w.WriteString("groupState", r.GroupState.ToString());
+                if (r.AzureRoleDefinitionId is not null) w.WriteString("azureRole", r.AzureRoleDefinitionId.ToLowerInvariant());
+                if (r.AzureScope is not null) w.WriteString("azureScope", r.AzureScope.ToLowerInvariant());
                 w.WriteEndObject();
             }
             w.WriteEndArray();

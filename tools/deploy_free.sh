@@ -27,11 +27,18 @@
 #       Privileged Role Administrator.
 #
 #   tools/deploy_free.sh revoke-graph-writes <subscriptionId> [--approved-by "<name> <date>"]
-#       v2: the AI agent never creates or assigns. Removes the retired Phase 2b/2c Graph permissions from the worker
+#       Removes the retired Phase 2b/2c Graph permissions (access packages, ReadWrite.All roles) from the worker
 #       identity. Security change: without --approved-by it only lists what it would remove.
+#
+#   tools/deploy_free.sh provisioning <subscriptionId> on <scope> [<roleIds>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh provisioning <subscriptionId> off [--approved-by "<name> <date>"]
+#       v2.1 agent provisioning after both approvals. "on": Graph User.Create, Group.Create, GroupMember.ReadWrite.All;
+#       Role Based Access Control Administrator on <scope> constrained to <roleIds> (default Reader) and user/group
+#       principals; worker + SWA settings. "off": settings off, then (approved) removes those rights.
+#       Security change: without --approved-by it only shows what it would do.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -148,6 +155,86 @@ revoke_graph_writes() {
   list_graph_roles "$mi"
 }
 
+# v2.1 agent provisioning (chosen 17 Oct 2026): least-privileged Graph CREATE roles (VERIFIED_FACTS F56-F58) and a
+# constrained Azure role-assignment right (F59-F60). Security change: dry run unless --approved-by.
+GRAPH_PROVISION_ROLES=(User.Create Group.Create GroupMember.ReadWrite.All)
+READER_ROLE_ID=acdd72a7-3385-48ef-bd42-f606fba81ae7
+RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168
+
+# Condition from Learn (F60): only these roles, only user or group principals, for both assign and remove.
+rbac_condition() {
+  local ids="$1" types="{'User', 'Group'}"
+  echo "((!(ActionMatches{'Microsoft.Authorization/roleAssignments/write'})) OR (@Request[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${ids//,/, }} AND @Request[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase $types)) AND ((!(ActionMatches{'Microsoft.Authorization/roleAssignments/delete'})) OR (@Resource[Microsoft.Authorization/roleAssignments:RoleDefinitionId] ForAnyOfAnyValues:GuidEquals {${ids//,/, }} AND @Resource[Microsoft.Authorization/roleAssignments:PrincipalType] ForAnyOfAnyValues:StringEqualsIgnoreCase $types))"
+}
+
+provisioning() {
+  local mode="$1" scope="${2:-}" roles="${3:-$READER_ROLE_ID}" name mi graph perm role assignment swa rg_name
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    # Switching off is always safe: the agent goes back to read-only behaviour (the teams do the work).
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_PROVISIONING=false AGENT_ROLE_ASSIGNMENT=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PROVISIONING=false AGENT_ROLE_ASSIGNMENT=false -o none
+    echo "Provisioning switched off on $name and $swa."
+    for perm in "${GRAPH_PROVISION_ROLES[@]}"; do
+      role=$(graph_role_id "$perm")
+      assignment=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+        --query "value[?appRoleId=='$role'].id | [0]" -o tsv)
+      [[ -n "$assignment" ]] || { echo "Not held: $perm"; continue; }
+      if [[ -z "${APPROVED_BY:-}" ]]; then echo "Would remove: $perm (dry run; pass --approved-by after explicit approval)"
+      else az rest --method DELETE --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments/$assignment" -o none; echo "Removed: $perm"; fi
+    done
+    az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --all --query "[].{scope:scope, id:id}" -o tsv | while read -r at id; do
+      if [[ -z "${APPROVED_BY:-}" ]]; then echo "Would remove: Role Based Access Control Administrator at $at (dry run)"
+      else az role assignment delete --ids "$id" -o none; echo "Removed: Role Based Access Control Administrator at $at"; fi
+    done
+    return 0
+  fi
+
+  [[ "$scope" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]+$ ]] \
+    || { echo "Scope must be a resource group: /subscriptions/<id>/resourceGroups/<name>"; return 1; }
+  rg_name="${scope##*/}"
+  if [[ "$(az group exists -n "$rg_name" --subscription "$(cut -d/ -f3 <<<"$scope")")" != "true" ]]; then
+    echo "Resource group $rg_name does not exist. Creating it is a separate, approval-gated change (free, empty):"
+    echo "  az group create -n $rg_name -l centralindia --tags pilot=pmo-review purpose=sample-access"
+    return 1
+  fi
+  echo "Plan for $name (managed identity $mi):"
+  for perm in "${GRAPH_PROVISION_ROLES[@]}"; do echo "  Graph application permission: $perm"; done
+  echo "  Azure: Role Based Access Control Administrator at $scope, condition: only roles {$roles}, only User/Group principals"
+  echo "  Worker settings: AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true ROLE_ASSIGN_ALLOWED_ROLES=$roles ROLE_ASSIGN_SCOPES=$scope"
+  echo "  SWA settings: AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true"
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  for perm in "${GRAPH_PROVISION_ROLES[@]}"; do
+    role=$(graph_role_id "$perm")
+    [[ -n "$role" ]] || { echo "Could not find $perm on Microsoft Graph."; return 1; }
+    if [[ "$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "length(value[?appRoleId=='$role'])" -o tsv)" == "0" ]]; then
+      az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+        --headers "Content-Type=application/json" --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+      echo "Granted $perm (approved by $APPROVED_BY)"
+    else
+      echo "Already granted: $perm"
+    fi
+  done
+  if [[ "$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "length(@)" -o tsv)" == "0" ]]; then
+    az role assignment create --assignee-object-id "$mi" --assignee-principal-type ServicePrincipal --role "$RBAC_ADMIN_ROLE_ID" \
+      --scope "$scope" --condition "$(rbac_condition "$roles")" --condition-version 2.0 -o none
+    echo "Assigned Role Based Access Control Administrator (constrained) at $scope"
+  else
+    echo "Already assigned: Role Based Access Control Administrator at $scope (condition unchanged; remove it with 'off' to change the roles)"
+  fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true \
+    "ROLE_ASSIGN_ALLOWED_ROLES=$roles" "ROLE_ASSIGN_SCOPES=$scope"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true -o none
+  echo "Provisioning on. Graph permissions now held by $name:"
+  list_graph_roles "$mi"
+}
+
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;
 # InfraConsistencyTests checks it matches the API project's TargetFramework).
 deploy_app() {
@@ -173,8 +260,13 @@ deploy_app() {
 # v2 flow app settings on the SWA (Phase 2b/2c hand-off settings are retired and removed).
 app_settings_v2() {
   local rg="$1" swa="$2"
+  local w p r
+  w=$(worker_name)
+  p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
+  r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
-    "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" -o none
+    "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
 }
@@ -280,15 +372,22 @@ case "$CMD" in
     # v2 defaults (notifications kept in the app, no ADO, no role reader). Edit the file to turn those on.
     B=$(az consumption budget show --budget-name pmo-pilot-zero-cost --resource-group "$RG_DEFAULT" -o json 2>/dev/null)
     HOST=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].defaultHostname" -o tsv 2>/dev/null)
-    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" <<'PY'
+    W=$(worker_name 2>/dev/null || true)
+    LIVE=$([[ -n "$W" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$W" -o json 2>/dev/null || echo "[]")
+    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" "$LIVE" <<'PY'
 import json, sys
 b, out, host = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+live = {s["name"]: s.get("value") or "" for s in json.loads(sys.argv[4] or "[]")}
 v = lambda x: {"value": x}
 p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"), "swaLocation": v("eastasia"),
      "budgetEmail": v(next(iter(b["notifications"].values()))["contactEmails"][0]), "budgetAmount": v(2000),
      "budgetStartDate": v(b["timePeriod"]["startDate"][:10]), "enableHandoff": v(True), "deployWorker": v(True),
      "workerLocation": v("centralindia"), "workerRuntimeVersion": v("10.0"),
-     "notifySender": v("Outbox"), "roleReader": v("None"), "appUrl": v(f"https://{host}" if host else "")}
+     "notifySender": v("Outbox"), "roleReader": v("None"), "appUrl": v(f"https://{host}" if host else ""),
+     # v2.1 provisioning as it is live (approved separately); off when never switched on.
+     "agentProvisioning": v(live.get("AGENT_PROVISIONING", "").lower() == "true"),
+     "agentRoleAssignment": v(live.get("AGENT_ROLE_ASSIGNMENT", "").lower() == "true"),
+     "roleAssignAllowedRoles": v(live.get("ROLE_ASSIGN_ALLOWED_ROLES", "")), "roleAssignScopes": v(live.get("ROLE_ASSIGN_SCOPES", ""))}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications Outbox, ADO off, role reader None")
@@ -307,6 +406,18 @@ PY
     fi
     revoke_graph_writes
     ;;
+  provisioning)
+    MODE="${3:?on|off}"; shift 3
+    ARGS=()
+    while [[ $# -gt 0 ]]; do
+      if [[ "$1" == "--approved-by" && -n "${2:-}" ]]; then
+        APPROVED_BY="$2"; echo "Approval recorded (provisioning $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2
+      else
+        ARGS+=("$1"); shift
+      fi
+    done
+    provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
+    ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
     RG="rg-pmo-review-pilot"
@@ -321,5 +432,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning ..."; exit 1 ;;
 esac

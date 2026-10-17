@@ -103,7 +103,7 @@ public partial class InfraConsistencyTests
             Assert.Contains($"{{ name: '{s}', value: 'false' }}", bicep);
         Assert.Contains("{ name: 'WORKFLOW_SCHEDULE', value: '0 */5 * * * *' }", bicep);
         var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
-        Assert.Contains("is retired: the AI agent never creates or assigns", worker);
+        Assert.Contains("is retired (Phase 2 access packages)", worker);
         Assert.DoesNotContain("GraphEntraAssignmentWriter", worker);
         Assert.DoesNotContain("JoinerProvisioning", worker);
         Assert.DoesNotContain(Directory.GetFiles(Path.Combine(Repo(), "src"), "*.cs", SearchOption.AllDirectories),
@@ -126,16 +126,50 @@ public partial class InfraConsistencyTests
     }
 
     [Fact]
-    public void Entra_and_rbac_adapters_have_no_write_methods()
+    public void Only_the_two_v2_1_writers_write_with_create_calls_and_only_the_worker_holds_them()
     {
-        foreach (var dir in new[] { "Entra", "Rbac" })
-            foreach (var f in Directory.GetFiles(Path.Combine(Repo(), "src", "adapters", "PmoReview.Adapters", dir), "*.cs"))
-            {
-                var source = File.ReadAllText(f);
-                Assert.DoesNotContain("HttpMethod.Patch", source);
-                Assert.DoesNotContain("HttpMethod.Delete", source);
-                Assert.DoesNotContain("HttpMethod.Put", source);
-            }
+        var adapters = Path.Combine(Repo(), "src", "adapters", "PmoReview.Adapters");
+        Assert.Equal(["GraphDirectoryReader.cs", "GraphDirectoryWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Entra"), "*.cs").Select(Path.GetFileName).Order());
+        Assert.Equal(["ArmRoleAssignmentReader.cs", "ArmRoleAssignmentWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Rbac"), "*.cs").Select(Path.GetFileName).Order());
+        foreach (var reader in new[] { Path.Combine(adapters, "Entra", "GraphDirectoryReader.cs"), Path.Combine(adapters, "Rbac", "ArmRoleAssignmentReader.cs") })
+            foreach (var m in new[] { "HttpMethod.Patch", "HttpMethod.Delete", "HttpMethod.Put" })
+                Assert.DoesNotContain(m, File.ReadAllText(reader));
+
+        // Graph: POST to the three create URLs only; nothing touches authentication methods (the TAP), licences or packages.
+        var graph = File.ReadAllText(Path.Combine(adapters, "Entra", "GraphDirectoryWriter.cs"));
+        Assert.Single(Regex.Matches(graph, @"HttpMethod\.\w+"));
+        Assert.Contains("HttpMethod.Post", graph);
+        Assert.Contains("WriteRefused", graph);
+        foreach (var banned in new[] { "/authentication", "assignLicense", "accessPackage", "temporaryAccessPass" })
+            Assert.DoesNotContain(banned, graph, StringComparison.OrdinalIgnoreCase);
+
+        // Azure RBAC: one PUT of a role assignment; no delete.
+        var arm = File.ReadAllText(Path.Combine(adapters, "Rbac", "ArmRoleAssignmentWriter.cs"));
+        Assert.Single(Regex.Matches(arm, @"HttpMethod\.\w+"));
+        Assert.Contains("HttpMethod.Put", arm);
+        Assert.Contains("WriteRefused", arm);
+
+        // The website's API never gets a writer: only the worker composes them, and only when switched on.
+        Assert.DoesNotContain("Writer", Read("src", "api", "PmoReview.Api", "Program.cs"));
+        var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
+        Assert.Contains("settings.Workflow.AgentProvisioning ? new GraphDirectoryWriter", worker);
+        Assert.Contains("settings.Workflow.AgentRoleAssignment", worker);
+    }
+
+    [Fact]
+    public void Provisioning_is_off_by_default_and_switched_on_only_with_approval()
+    {
+        var bicep = MainBicep() + Worker();
+        Assert.Contains("param agentProvisioning bool = false", bicep);
+        Assert.Contains("param agentRoleAssignment bool = false", bicep);
+        Assert.Contains("{ name: 'AGENT_PROVISIONING', value: agentProvisioning ? 'true' : 'false' }", bicep);
+        var deploy = Read("tools", "deploy_free.sh");
+        var grant = Regex.Match(deploy, @"GRAPH_PROVISION_ROLES=\((?<r>[^)]*)\)").Groups["r"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["User.Create", "Group.Create", "GroupMember.ReadWrite.All"], grant); // least privileged (F56-F58)
+        Assert.Contains("Dry run: nothing changed.", deploy);
+        Assert.Contains("--condition-version 2.0", deploy);
+        Assert.Contains("StringEqualsIgnoreCase $types", deploy);
+        Assert.Contains("RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168", deploy);
     }
 
     [Fact]

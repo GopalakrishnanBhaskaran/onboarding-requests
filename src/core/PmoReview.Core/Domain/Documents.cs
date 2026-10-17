@@ -67,6 +67,10 @@ public sealed record MappingRow : IDocument
     public required string Role { get; init; }
     /// <summary>Where the role applies (e.g. an Azure scope or a Databricks workspace). Optional.</summary>
     public string? RoleScope { get; init; }
+    /// <summary>Optional: the Azure role definition (GUID) the AI agent assigns to the group after both approvals.</summary>
+    public string? AzureRoleDefinitionId { get; init; }
+    /// <summary>Optional: the Azure scope (<c>/subscriptions/…</c>) for <see cref="AzureRoleDefinitionId"/>.</summary>
+    public string? AzureScope { get; init; }
     public bool Privileged { get; init; }
     public bool SensitiveResource { get; init; }
     public bool Deprecated { get; init; }

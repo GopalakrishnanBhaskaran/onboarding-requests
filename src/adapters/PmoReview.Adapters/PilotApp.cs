@@ -38,6 +38,8 @@ public sealed record PilotSettings
     {
         bool On(string name) => string.Equals(get(name), "true", StringComparison.OrdinalIgnoreCase);
         TimeSpan Hours(string name, double fallback) => TimeSpan.FromHours(Math.Clamp(double.TryParse(get(name), System.Globalization.CultureInfo.InvariantCulture, out var h) ? h : fallback, 0.1, 24 * 30));
+        IReadOnlyList<string> List(string name) =>
+            (get(name) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var unverified = On("ALLOW_UNVERIFIED_ENTRA");
         if (unverified && !On("PILOT_LOCAL_DEV"))
             throw new InvalidOperationException("ALLOW_UNVERIFIED_ENTRA=true is only allowed with PILOT_LOCAL_DEV=true (local development).");
@@ -64,6 +66,11 @@ public sealed record PilotSettings
                 TapMaxLifetimeMinutes = Math.Clamp(int.TryParse(get("TAP_MAX_LIFETIME_MINUTES"), out var t) ? t : 60, 10, 480),
                 AllowUnverifiedEntra = unverified,
                 AppUrl = Uri.TryCreate(get("APP_URL"), UriKind.Absolute, out var app) && app.Scheme == Uri.UriSchemeHttps ? app.AbsoluteUri : null,
+                // v2.1 agent provisioning: needs the approved write permissions (deploy_free.sh provisioning).
+                AgentProvisioning = On("AGENT_PROVISIONING"),
+                AgentRoleAssignment = On("AGENT_ROLE_ASSIGNMENT"),
+                RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
+                RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
             },
         };
     }
@@ -87,6 +94,7 @@ public static class PilotApp
     /// <param name="model">Test seam; production chooses from settings (paid providers are refused unless allowed).</param>
     /// <param name="queue">Paid environment only.</param>
     /// <param name="directory">Read-only Entra reader. None in the SWA-managed API (no managed identity): the worker has it.</param>
+    /// <remarks>The API never gets a directory or role writer: only the worker provisions (v2.1).</remarks>
     public static ApiHost Build(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
         IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null)
     {
@@ -99,7 +107,7 @@ public static class PilotApp
 
     public static WorkflowParts BuildWorkflow(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
         IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null,
-        IAiAssistant? assistant = null)
+        IAiAssistant? assistant = null, IDirectoryWriter? writer = null, IRoleAssignmentWriter? roleWriter = null)
     {
         var reviewer = model ?? ReviewModelFactory.Create(settings, logger: loggers.CreateLogger("AzureOpenAI"));
         var sources = new StoreSourcesOfTruth(stores);
@@ -116,7 +124,7 @@ public static class PilotApp
         var issues = new IssueLog(stores, clock, loggers.CreateLogger<IssueLog>());
         var verifier = new Verifier(directory, roles, settings.Workflow);
         var agent = new WorkflowAgent(stores, sources, runs, notifier, issues, verifier, settings.Workflow, policy, clock,
-            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant);
+            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues);

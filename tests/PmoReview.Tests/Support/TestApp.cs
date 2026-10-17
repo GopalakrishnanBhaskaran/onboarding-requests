@@ -57,6 +57,9 @@ public sealed class TestApp
     public WorkflowParts Worker { get; }
     public FakeDirectory Directory { get; }
     public FakeRoles Roles { get; }
+    /// <summary>v2.1 agent provisioning (used only when the settings switch it on; the worker holds it, never the API).</summary>
+    public FakeDirectoryWriter Writer { get; }
+    public FakeRoleWriter RoleWriter { get; }
     public FakeTracker Tracker { get; } = new();
     public PilotSettings Settings { get; }
 
@@ -69,7 +72,10 @@ public sealed class TestApp
         Roles = new FakeRoles();
         Api = PilotApp.BuildWorkflow(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
         Host = PilotApp.Build(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
-        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles);
+        Writer = new FakeDirectoryWriter(Directory);
+        RoleWriter = new FakeRoleWriter(Roles);
+        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles,
+            writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null);
     }
 
     public static TestApp Create() => new(new PilotSettings(), null, null, null);

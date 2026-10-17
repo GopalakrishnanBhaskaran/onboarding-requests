@@ -14,8 +14,9 @@ using PmoReview.Core.Storage;
 using PmoReview.Core.Workflow;
 
 // The AI agent's background worker (paid component). Refuses to start unless paid services are explicitly allowed
-// (CLAUDE.md rule 10). Managed identity only. Entra and Azure RBAC are READ ONLY: the agent never approves, creates
-// or assigns anything.
+// (CLAUDE.md rule 10). Managed identity only. The agent never approves. Entra and Azure RBAC are read only unless the
+// approved v2.1 provisioning is switched on (AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT): then, only after the Owner and
+// Security approvals, it creates the user, group and membership and assigns allow-listed Azure roles. Never a TAP.
 string? Env(string name) => Environment.GetEnvironmentVariable(name);
 bool On(string name) => string.Equals(Env(name), "true", StringComparison.OrdinalIgnoreCase);
 if (!On("ALLOW_PAID_SERVICES"))
@@ -24,7 +25,7 @@ if (!Uri.TryCreate(Env("COSMOS_ENDPOINT"), UriKind.Absolute, out var cosmosEndpo
     throw new InvalidOperationException("COSMOS_ENDPOINT is required (managed identity; no keys).");
 foreach (var retired in new[] { "ENTRA_AUTO_ASSIGN", "ENTRA_PROVISION_JOINERS", "ENTRA_AUTO_CREATE_PACKAGES" })
     if (On(retired))
-        throw new InvalidOperationException($"{retired}=true is retired: the AI agent never creates or assigns. The ID team and the role assignment team do that.");
+        throw new InvalidOperationException($"{retired}=true is retired (Phase 2 access packages). v2.1 provisioning is AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT, after both approvals.");
 
 var credential = new Azure.Identity.DefaultAzureCredential();
 var settings = PilotSettings.FromEnvironment(Env);
@@ -45,8 +46,12 @@ var host = new HostBuilder()
             IAiAssistant? assistant = settings.AiReports && settings.ReviewModelProvider == AzureOpenAIReviewModel.ProviderName
                 ? new AzureOpenAIAssistant(ReviewModelFactory.Chat(settings, logger: loggers.CreateLogger("AzureOpenAI")))
                 : null;
+            IDirectoryWriter? writer = settings.Workflow.AgentProvisioning ? new GraphDirectoryWriter(Http(), credential) : null;
+            IRoleAssignmentWriter? roleWriter = settings.Workflow.AgentRoleAssignment
+                ? new ArmRoleAssignmentWriter(Http(), credential, settings.Workflow.RoleAssignAllowedRoleIds)
+                : null;
             return PilotApp.BuildWorkflow(sp.GetRequiredService<DataStores>(), settings, sp.GetRequiredService<IClock>(), loggers,
-                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant);
+                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter);
         });
         services.AddSingleton(sp =>
         {

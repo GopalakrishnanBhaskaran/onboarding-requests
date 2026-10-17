@@ -36,6 +36,15 @@ public static class Messages
         "The ID team creates the user ID and group and issues the Temporary Access Pass. The role assignment team assigns roles. " +
         "PMO owns the mapping sheet and is informed only.";
 
+    /// <summary>The same statement, true to the deployment: v2.1 agent provisioning on or off.</summary>
+    public static string WhoDoesWhatFor(WorkflowSettings s) => !s.AgentProvisioning ? WhoDoesWhat :
+        "Who does what: the AI agent reviews, routes, verifies and reports; it never approves. " +
+        "The named Owner approves the business need. Security approves risk and access level. " +
+        "Only after both approvals the AI agent creates the user ID, group and membership" +
+        (s.AgentRoleAssignment ? " and assigns the approved Azure role where the mapping sheet allows it" : "") + ". " +
+        "The ID team issues the Temporary Access Pass and handles what the agent leaves to it (guests, privileged access, exceptions). " +
+        $"The role assignment team assigns the {(s.AgentRoleAssignment ? "other " : "")}roles. PMO owns the mapping sheet and is informed only.";
+
     public static string Short(AccessRequest r) => r.Id.Length > 8 ? r.Id[..8] : r.Id;
 
     public static string Who(AccessRequest r) => $"{r.FirstName} {r.LastName} ({r.DomainId}{(r.Guest ? ", guest" : "")})";
@@ -47,7 +56,7 @@ public static class Messages
 
     public static (string Subject, string Body) FlowOverview(AccessRequest r, WorkflowSettings s) => (
         $"Request {Short(r)} received — how it works",
-        $"Your onboarding request for {What(r)} was received.\n\nFlow:\n{string.Join("\n", StatusText.FlowOverview)}\n\n{WhoDoesWhat}\n\nTrack it: {Link(s, r)}");
+        $"Your onboarding request for {What(r)} was received.\n\nFlow:\n{string.Join("\n", StatusText.FlowOverview)}\n\n{WhoDoesWhatFor(s)}\n\nTrack it: {Link(s, r)}");
 
     public static (string, string) Returned(AccessRequest r, IReadOnlyList<string> reasons, WorkflowSettings s) => (
         $"Request {Short(r)} returned — the AI review found gaps",
@@ -85,6 +94,19 @@ public static class Messages
                "Steps: create the user ID if missing; add the user to the group; then issue a ONE-TIME Temporary Access Pass with the " +
                $"shortest lifetime (at most {tapMaxMinutes} minutes) and give it to the user directly, separately from the Enterprise ID. " +
                "Never put the pass in mail, tickets, chat or this app: record only issued time, expiry, one-time flag and issued-by.\n" +
+               $"Approved summary:\n{scope.Summary}\n" +
+               $"Approvals: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)}).";
+    }
+
+    /// <summary>After the agent created the user, group and membership: only the TAP is left for the ID team.</summary>
+    public static string IdTeamTapInstructions(AccessRequest r, ReviewedScope scope, WorkflowState flow, string done, int tapMaxMinutes)
+    {
+        var owner = flow.CurrentApproval(ApprovalStage.Owner);
+        var security = flow.CurrentApproval(ApprovalStage.Security);
+        return $"{done}\n" +
+               $"Your step: issue a ONE-TIME Temporary Access Pass for {r.DomainId} with the shortest lifetime (at most {tapMaxMinutes} minutes) " +
+               "and give it to the user directly, separately from the Enterprise ID. Never put the pass in mail, tickets, chat or this app: " +
+               "record only issued time, expiry, one-time flag and issued-by.\n" +
                $"Approved summary:\n{scope.Summary}\n" +
                $"Approvals: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)}).";
     }

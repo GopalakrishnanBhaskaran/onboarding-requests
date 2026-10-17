@@ -27,10 +27,19 @@ public sealed record AuthMethods(IReadOnlyList<string> MethodTypes, TapMethod? T
 public sealed record SignInSummary(DateTimeOffset At, bool Success);
 
 /// <summary>Directory read failure, recorded as a category (never details). Retried by the agent, at most 3 times per step.</summary>
-public sealed class DirectoryReadException(string category, Exception? inner = null) : Exception(category, inner)
+public class DirectoryReadException(string category, Exception? inner = null) : Exception(category, inner)
 {
     public string Category { get; } = category;
 }
+
+/// <summary>Directory or role-assignment write failure (category only). <c>…Forbidden</c> = the permission is not granted.</summary>
+public sealed class DirectoryWriteException(string category, Exception? inner = null) : DirectoryReadException(category, inner)
+{
+    public bool Forbidden => Category.EndsWith("Forbidden", StringComparison.Ordinal);
+}
+
+/// <summary>A new member account. The initial password is random, sent once to Entra and never kept; the user signs in with a TAP.</summary>
+public sealed record NewUser(string UserPrincipalName, string DisplayName, string MailNickname, string? GivenName, string? Surname);
 
 /// <summary>
 /// Read-only view of Microsoft Entra for the AI agent: Stage 2 cross-check, Stage 4 and 6 verification, escalation.
@@ -47,6 +56,30 @@ public interface IDirectoryReader
     Task<SignInSummary?> LastSuccessfulSignInAsync(string userObjectId, DateTimeOffset since, CancellationToken ct);
     /// <summary>Sign-in name or mail of the user's manager, or null.</summary>
     Task<string?> GetManagerAsync(string userPrincipalName, CancellationToken ct);
+}
+
+/// <summary>
+/// Agent provisioning (v2.1, worker only, only after the Owner and Security approvals): creates the user, the security
+/// group and the membership. Create calls only — no update, delete, licence or Temporary Access Pass. Every call is
+/// preceded by a read, so a repeat finds the object instead of creating it again.
+/// </summary>
+public interface IDirectoryWriter
+{
+    Task<DirectoryUser> CreateUserAsync(NewUser user, CancellationToken ct);
+    /// <summary>Security group (not mail-enabled) owned by the agent's own identity (Group.Create: no owner = unmodifiable group).</summary>
+    Task<DirectoryGroup> CreateSecurityGroupAsync(string displayName, string description, CancellationToken ct);
+    /// <summary>Adds the user to the group; an existing membership counts as done.</summary>
+    Task AddMemberAsync(string groupObjectId, string userObjectId, CancellationToken ct);
+}
+
+/// <summary>
+/// Agent role assignment (v2.1, worker only, after both approvals): assigns one Azure role definition at one scope to a
+/// group. Idempotent (deterministic assignment name; an existing assignment counts as done). The worker identity holds
+/// Role Based Access Control Administrator constrained to the allowed roles and user/group principals (VERIFIED_FACTS F60).
+/// </summary>
+public interface IRoleAssignmentWriter
+{
+    Task AssignAsync(string principalObjectId, string principalType, string roleDefinitionId, string scope, CancellationToken ct);
 }
 
 /// <summary>

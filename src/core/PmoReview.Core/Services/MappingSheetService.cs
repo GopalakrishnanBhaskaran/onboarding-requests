@@ -19,6 +19,9 @@ public sealed record MappingRowInput
     public bool? Deprecated { get; init; }
     public GroupState? GroupState { get; init; }
     public string? SourceReference { get; init; }
+    /// <summary>Optional Azure role definition GUID the AI agent assigns after both approvals (with <see cref="AzureScope"/>).</summary>
+    public string? AzureRoleDefinitionId { get; init; }
+    public string? AzureScope { get; init; }
 }
 
 /// <summary>ID team: records the group it created (or the corrected name) on the mapping sheet.</summary>
@@ -112,7 +115,20 @@ public sealed partial class MappingSheetService(DataStores stores, IClock clock,
         }
     }
 
-    private static MappingRow Apply(MappingRow row, MappingRowInput input) => row with
+    private static MappingRow Apply(MappingRow row, MappingRowInput input)
+    {
+        var roleId = RequestService.Text(input.AzureRoleDefinitionId, "azureRoleDefinitionId", 36);
+        var azureScope = RequestService.Text(input.AzureScope, "azureScope", 500);
+        if ((roleId is null) != (azureScope is null))
+            throw AppException.Invalid("Give both azureRoleDefinitionId and azureScope, or neither.");
+        if (roleId is not null && !Guid.TryParseExact(roleId, "D", out _))
+            throw AppException.Invalid("azureRoleDefinitionId must be a role definition GUID (e.g. acdd72a7-3385-48ef-bd42-f606fba81ae7 for Reader).");
+        if (azureScope is not null && !AzureScopeFormat().IsMatch(azureScope))
+            throw AppException.Invalid("azureScope must be an Azure scope: /subscriptions/{id}[/resourceGroups/{name}[/providers/…]].");
+        return Fields(row, input) with { AzureRoleDefinitionId = roleId?.ToLowerInvariant(), AzureScope = azureScope };
+    }
+
+    private static MappingRow Fields(MappingRow row, MappingRowInput input) => row with
     {
         Resource = Required(input.Resource, "resource"),
         AccessLevel = Required(input.AccessLevel, "accessLevel"),
@@ -131,4 +147,7 @@ public sealed partial class MappingSheetService(DataStores stores, IClock clock,
 
     [GeneratedRegex("^[A-Za-z0-9_.:-]{1,64}$")]
     private static partial Regex RowIdFormat();
+
+    [GeneratedRegex(@"^/subscriptions/[0-9a-fA-F-]{36}(/resourceGroups/[A-Za-z0-9._()-]{1,90}(/providers/[A-Za-z0-9./_-]+)?)?$")]
+    private static partial Regex AzureScopeFormat();
 }

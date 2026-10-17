@@ -45,6 +45,18 @@ param appUrl string = ''
 @description('Maximum Temporary Access Pass lifetime the ID team may record (shortest lifetime).')
 param tapMaxLifetimeMinutes int = 60
 
+@description('v2.1: after both approvals the agent creates the user, group and membership. Needs the approved Graph write roles (deploy_free.sh provisioning).')
+param agentProvisioning bool = false
+
+@description('v2.1: after both approvals the agent assigns the mapping row Azure role to the group. Needs the approved constrained RBAC Administrator role.')
+param agentRoleAssignment bool = false
+
+@description('Comma-separated Azure role definition GUIDs the agent may assign (allow-list).')
+param roleAssignAllowedRoles string = ''
+
+@description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
+param roleAssignScopes string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var storageName = 'stpmowork${suffix}'
 var planName = 'asp-pmo-worker-${suffix}'
@@ -141,6 +153,10 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ADO_PROJECT', value: adoProject }
         { name: 'APP_URL', value: appUrl }
         { name: 'TAP_MAX_LIFETIME_MINUTES', value: string(tapMaxLifetimeMinutes) }
+        { name: 'AGENT_PROVISIONING', value: agentProvisioning ? 'true' : 'false' }
+        { name: 'AGENT_ROLE_ASSIGNMENT', value: agentRoleAssignment ? 'true' : 'false' }
+        { name: 'ROLE_ASSIGN_ALLOWED_ROLES', value: roleAssignAllowedRoles }
+        { name: 'ROLE_ASSIGN_SCOPES', value: roleAssignScopes }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }

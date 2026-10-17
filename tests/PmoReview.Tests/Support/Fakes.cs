@@ -74,6 +74,12 @@ public sealed class FakeDirectory : IDirectoryReader
 
     public void SetManager(string upn, string manager) => _managers[upn] = manager;
 
+    public string? GroupNameOf(string objectId) => _groups.FirstOrDefault(g => g.Value.Any(x => x.ObjectId == objectId)).Key;
+
+    public string? UpnOf(string objectId) => _users.Values.FirstOrDefault(u => u.ObjectId == objectId)?.UserPrincipalName;
+
+    public bool IsMember(string group, string upn) => _members.TryGetValue(group, out var set) && set.Contains(upn);
+
     private void Read()
     {
         Reads++;
@@ -165,4 +171,62 @@ public sealed class FaultyStore<T>(IDocumentStore<T> inner) : IDocumentStore<T> 
     public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default) =>
         FailWrites ? throw new InvalidOperationException("SAMPLE fault: write") : inner.CreateAsync(document, ct);
     public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default) => inner.ReplaceAsync(document, ifMatchETag, ct);
+}
+
+/// <summary>Agent provisioning stand-in: writes into the fake directory and records every call.</summary>
+public sealed class FakeDirectoryWriter(FakeDirectory directory) : IDirectoryWriter
+{
+    public List<string> Calls { get; } = [];
+    /// <summary>Every write fails with this category (e.g. GraphForbidden).</summary>
+    public string? FailWith { get; set; }
+    /// <summary>The next membership add fails once with NotReplicated (a just-created group).</summary>
+    public bool NotReplicatedOnce { get; set; }
+
+    public Task<DirectoryUser> CreateUserAsync(NewUser user, CancellationToken ct)
+    {
+        Write($"create-user {user.UserPrincipalName}");
+        return Task.FromResult(directory.AddUser(user.UserPrincipalName));
+    }
+
+    public Task<DirectoryGroup> CreateSecurityGroupAsync(string displayName, string description, CancellationToken ct)
+    {
+        Write($"create-group {displayName}");
+        return Task.FromResult(directory.AddGroup(displayName));
+    }
+
+    public Task AddMemberAsync(string groupObjectId, string userObjectId, CancellationToken ct)
+    {
+        if (NotReplicatedOnce)
+        {
+            NotReplicatedOnce = false;
+            throw new DirectoryWriteException("NotReplicated");
+        }
+        var group = directory.GroupNameOf(groupObjectId)!;
+        var upn = directory.UpnOf(userObjectId)!;
+        Write($"add-member {upn} {group}");
+        directory.AddMember(group, upn);
+        return Task.CompletedTask;
+    }
+
+    private void Write(string call)
+    {
+        if (FailWith is { } f) throw new DirectoryWriteException(f);
+        Calls.Add(call);
+    }
+}
+
+/// <summary>Agent role assignment stand-in: records the call and makes it readable through <see cref="FakeRoles"/>.</summary>
+public sealed class FakeRoleWriter(FakeRoles roles) : IRoleAssignmentWriter
+{
+    public const string Reader = "acdd72a7-3385-48ef-bd42-f606fba81ae7";
+    public List<string> Calls { get; } = [];
+    public string? FailWith { get; set; }
+
+    public Task AssignAsync(string principalObjectId, string principalType, string roleDefinitionId, string scope, CancellationToken ct)
+    {
+        if (FailWith is { } f) throw new DirectoryWriteException(f);
+        Calls.Add($"{principalType} {principalObjectId} {roleDefinitionId} {scope}");
+        roles.Assign(principalObjectId, roleDefinitionId == Reader ? "Reader" : roleDefinitionId, scope);
+        return Task.CompletedTask;
+    }
 }

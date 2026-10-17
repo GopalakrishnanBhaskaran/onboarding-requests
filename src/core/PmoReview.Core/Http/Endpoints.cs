@@ -14,7 +14,8 @@ public sealed record Item<T>(T Value, string Etag);
 
 public sealed record ProjectSummary(string ProjectId, string Name, IReadOnlyList<AppRole> Roles, bool IsSample);
 
-public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList<ProjectSummary> Projects);
+/// <param name="AgentProvisioning">v2.1: the AI agent creates user/group/membership after both approvals (wording in the app follows it).</param>
+public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList<ProjectSummary> Projects, bool AgentProvisioning = false, bool AgentRoleAssignment = false);
 
 public static class Endpoints
 {
@@ -28,13 +29,13 @@ public static class Endpoints
                 var p = await stores.Projects.GetAsync(projectId, projectId, c.Ct);
                 projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false));
             }
-            return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects));
+            return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects, workflow.Settings.AgentProvisioning, workflow.Settings.AgentRoleAssignment));
         });
         host.Map("GET", "queue", async c => Ok(new { items = await workflow.MyActionsAsync(c.Caller, c.Ct) }));
 
         // Requests (Stage 1) and status tracking.
         host.Map("GET", "projects/{projectId}/requests", async c =>
-            Ok(new { items = await workflow.ListAsync(c.Caller, c["projectId"], c.Ct), flowOverview = StatusText.FlowOverview, whoDoesWhat = Messages.WhoDoesWhat }));
+            Ok(new { items = await workflow.ListAsync(c.Caller, c["projectId"], c.Ct), flowOverview = StatusText.FlowOverview, whoDoesWhat = Messages.WhoDoesWhatFor(workflow.Settings) }));
         host.Map("POST", "projects/{projectId}/requests", async c =>
             new ApiResponse(201, await workflow.SubmitAsync(c.Caller, c["projectId"], c.Body<RequestInput>(), c.Request.CorrelationId, c.Ct)));
         host.Map("GET", "projects/{projectId}/requests/{requestId}", async c =>

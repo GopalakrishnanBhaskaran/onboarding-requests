@@ -21,6 +21,14 @@ public sealed record WorkflowSettings
     public bool AllowUnverifiedEntra { get; init; }
     /// <summary>Base URL of the app, for links in notifications. Optional.</summary>
     public string? AppUrl { get; init; }
+    /// <summary>v2.1: after both approvals the agent creates the user, group and membership (worker with the Entra writer).</summary>
+    public bool AgentProvisioning { get; init; }
+    /// <summary>v2.1: after both approvals the agent assigns the mapping row's Azure role to the group (worker with the role writer).</summary>
+    public bool AgentRoleAssignment { get; init; }
+    /// <summary>Azure role definition GUIDs the agent may assign (defence in depth; Azure enforces the same with a condition).</summary>
+    public IReadOnlyList<string> RoleAssignAllowedRoleIds { get; init; } = [];
+    /// <summary>Scopes (prefixes, e.g. /subscriptions/…/resourceGroups/rg-x) where the agent may assign roles.</summary>
+    public IReadOnlyList<string> RoleAssignScopes { get; init; } = [];
 
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {

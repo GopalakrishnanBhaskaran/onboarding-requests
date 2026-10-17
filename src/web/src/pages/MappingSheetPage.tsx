@@ -20,6 +20,7 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
   const [rows, setRows] = useState<Item<MappingRow>[] | null>(null);
   const [records, setRecords] = useState<Item<ResponseRecord>[] | null>(null);
   const [form, setForm] = useState(blank);
+  const [azure, setAzure] = useState({ rowId: '', roleId: '', scope: '' });
   const [error, setError] = useState<unknown>(null);
 
   const load = useCallback(async () => {
@@ -47,7 +48,7 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
   const body = (r: MappingRow, change: Partial<MappingRow>) => ({
     resource: r.resource, accessLevel: r.accessLevel, entraGroup: r.entraGroup, role: r.role, roleScope: r.roleScope,
     privileged: r.privileged, sensitiveResource: r.sensitiveResource, deprecated: r.deprecated, groupState: r.groupState,
-    sourceReference: r.sourceReference, ...change,
+    sourceReference: r.sourceReference, azureRoleDefinitionId: r.azureRoleDefinitionId, azureScope: r.azureScope, ...change,
   });
 
   return (
@@ -78,7 +79,12 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
                   <TableCell>{r.rowId} v{r.version}<Caption1 block className={s.muted}>{r.sourceReference}</Caption1></TableCell>
                   <TableCell>{r.resource} · {r.accessLevel}</TableCell>
                   <TableCell>{r.entraGroup} {r.groupState === 'ToBeCreated' && <Badge color="warning">to be created</Badge>}</TableCell>
-                  <TableCell>{r.role}{r.roleScope ? ` (${r.roleScope})` : ''}</TableCell>
+                  <TableCell>
+                    {r.role}{r.roleScope ? ` (${r.roleScope})` : ''}
+                    {r.azureRoleDefinitionId && (
+                      <Caption1 block className={s.muted}>AI agent assigns Azure role {r.azureRoleDefinitionId} at {r.azureScope}</Caption1>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div className={s.row}>
                       {r.privileged && <Badge color="danger">privileged</Badge>}
@@ -142,6 +148,46 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             <Checkbox label="Group to be created by the ID team" checked={form.toBeCreated} onChange={(_, d) => setForm({ ...form, toBeCreated: d.checked === true })} />
           </div>
           <div><Button appearance="primary" type="submit">Add row</Button></div>
+        </form>
+      )}
+
+      {isPmo && rows && (
+        <form
+          className={s.section}
+          aria-label="Azure role for the AI agent"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const row = rows.find((x) => x.value.rowId === azure.rowId);
+            if (!row) return;
+            const clear = azure.roleId.trim() === '' && azure.scope.trim() === '';
+            void run(() => api.updateMappingRow(project.projectId, row.value.rowId, body(row.value, {
+              azureRoleDefinitionId: clear ? null : azure.roleId.trim(), azureScope: clear ? null : azure.scope.trim(),
+            }), row.etag));
+          }}
+        >
+          <Subtitle2 as="h2">Azure role the AI agent assigns (PMO)</Subtitle2>
+          <Caption1 className={s.muted}>
+            Optional per row. After both approvals (Owner, then Security), the AI agent assigns this Azure role to the row's group, if the role and
+            scope are on its approved allow-list; otherwise the role assignment team does it. Leave both empty to clear.
+          </Caption1>
+          <div className={s.row}>
+            <Field label="Row" required>
+              <select value={azure.rowId} onChange={(e) => {
+                const r = rows.find((x) => x.value.rowId === e.target.value)?.value;
+                setAzure({ rowId: e.target.value, roleId: r?.azureRoleDefinitionId ?? '', scope: r?.azureScope ?? '' });
+              }}>
+                <option value="">Select a row</option>
+                {rows.map(({ value: r }) => <option key={r.rowId} value={r.rowId}>{r.rowId} · {r.resource} · {r.accessLevel}</option>)}
+              </select>
+            </Field>
+            <Field label="Azure role definition ID" hint="GUID, e.g. Reader acdd72a7-3385-48ef-bd42-f606fba81ae7">
+              <Input value={azure.roleId} onChange={(_, d) => setAzure({ ...azure, roleId: d.value })} />
+            </Field>
+            <Field label="Azure scope" hint="/subscriptions/{id}/resourceGroups/{name}">
+              <Input value={azure.scope} onChange={(_, d) => setAzure({ ...azure, scope: d.value })} />
+            </Field>
+          </div>
+          <div><Button type="submit" disabled={azure.rowId === ''}>Save Azure role</Button></div>
         </form>
       )}
 

@@ -28,6 +28,8 @@ export interface Me {
   userId: string;
   displayName: string;
   projects: ProjectSummary[];
+  /** v2.1: the AI agent provisions after both approvals (the wording in the app follows it). */
+  agentProvisioning?: boolean;
 }
 
 export interface IntakeFields {
@@ -110,6 +112,20 @@ export interface TeamTask {
   returnCount: number;
   lastDifference: string | null;
   checks: CheckResult[];
+  /** v2.1: what the AI agent did itself after both approvals, or why it left the task to the team. */
+  agent: AgentWork | null;
+}
+
+export interface AgentWork {
+  at: string;
+  userCreated: boolean;
+  groupCreated: boolean;
+  memberAdded: boolean;
+  membership: boolean;
+  mappingUpdated: boolean;
+  roleAssigned: boolean;
+  completed: boolean;
+  manual: string | null;
 }
 
 export interface WorkflowEvent {
@@ -263,6 +279,9 @@ export interface MappingRow {
   entraGroup: string;
   role: string;
   roleScope: string | null;
+  /** Optional: the Azure role (definition GUID) and scope the AI agent assigns to the group after both approvals. */
+  azureRoleDefinitionId: string | null;
+  azureScope: string | null;
   privileged: boolean;
   sensitiveResource: boolean;
   deprecated: boolean;

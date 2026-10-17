@@ -15,7 +15,7 @@ namespace PmoReview.Core.Workflow;
 /// and does the next agent step, if any. The API calls it after each human action; the worker calls it for every open
 /// request on a timer (and is the only place with the read-only Entra reader in the pilot).
 /// </summary>
-public sealed class WorkflowAgent(
+public sealed partial class WorkflowAgent(
     DataStores stores,
     ISourcesOfTruth sources,
     RunService runs,
@@ -28,7 +28,9 @@ public sealed class WorkflowAgent(
     ILogger<WorkflowAgent> logger,
     bool canCrossCheck = false,
     IDirectoryReader? directory = null,
-    IAiAssistant? assistant = null)
+    IAiAssistant? assistant = null,
+    IDirectoryWriter? writer = null,
+    IRoleAssignmentWriter? roleWriter = null)
 {
     private const string Agent = WorkflowState.AgentActor;
     private const int MaxStepsPerCall = 8;
@@ -285,12 +287,12 @@ public sealed class WorkflowAgent(
         return new Step(r with { Flow = next }, effects);
     }
 
-    private static WaitingOn WaitingFor(RequestStatus s, WorkflowState flow) => s switch
+    private WaitingOn WaitingFor(RequestStatus s, WorkflowState flow) => s switch
     {
         RequestStatus.AwaitingOwner => WaitingOn.Owner,
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
-        RequestStatus.WithIdTeam => flow.IdTeamTask?.State == TeamTaskState.Reported ? WaitingOn.Agent : WaitingOn.IdTeam,
-        RequestStatus.WithRoleTeam => flow.RoleTeamTask?.State == TeamTaskState.Reported ? WaitingOn.Agent : WaitingOn.RoleTeam,
+        RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t)) ? WaitingOn.Agent : WaitingOn.IdTeam,
+        RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
         RequestStatus.Verifying => WaitingOn.User,
         _ => WaitingOn.Agent,
     };
@@ -459,11 +461,20 @@ public sealed class WorkflowAgent(
         if (task is null || task.State == TeamTaskState.Cancelled)
         {
             var created = NewIdTeamTask(r, flow);
+            if (settings.AgentProvisioning)
+            {
+                // The agent provisions first; the ID team is told what is left (the TAP, or the whole task on a fallback).
+                var waiting = (flow with { IdTeamTask = created }).Waiting(WaitingOn.Agent, clock.UtcNow)
+                    .Log(clock.UtcNow, Agent, "id-team-task", "ID team task created; the AI agent creates the user, group and membership first.");
+                return new Step(r with { Flow = waiting }, []);
+            }
             var next = (flow with { IdTeamTask = created }).Waiting(WaitingOn.IdTeam, clock.UtcNow).Log(clock.UtcNow, Agent, "id-team-task", "ID team task created.");
             var project = await ProjectAsync(r, ct);
             var (taskSubject, taskBody) = Messages.TeamTask(r, created, settings);
             return new Step(r with { Flow = next }, [c => notifier.EnqueueAsync(r.ProjectId, r.Id, created.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), taskSubject, taskBody, c)]);
         }
+        if (ProvisioningPending(task))
+            return writer is null || directory is null ? null : await ProvisionAsync(r, task, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
 
@@ -498,15 +509,20 @@ public sealed class WorkflowAgent(
             CreatedAt = now,
             SinceAt = now,
         };
+        var byAgent = settings.AgentRoleAssignment;
         var advanced = (flow with { IdTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks }, RoleTeamTask = roleTask })
             .Log(now, Agent, "id-team-verified", "AI verified the ID team's work: user, group, membership, mapping sheet and TAP rules.")
-            .To(RequestStatus.WithRoleTeam, WaitingOn.RoleTeam, now, Agent, "role-team-task", "Role assignment task created from the response document.");
+            .To(RequestStatus.WithRoleTeam, byAgent ? WaitingOn.Agent : WaitingOn.RoleTeam, now, Agent, "role-team-task",
+                byAgent ? "Role assignment task created from the response document; the AI agent assigns the role if the mapping row allows it."
+                        : "Role assignment task created from the response document.");
         var (subject, body) = Messages.TeamTask(r, roleTask, settings);
-        return new Step(r with { Flow = advanced },
-        [
-            c => notifier.EnqueueAsync(r.ProjectId, r.Id, roleTask.Id, NotificationKind.TeamTask, Recipients.RoleTeam(projectDoc), subject, body, c),
+        var effects = new List<Func<CancellationToken, Task>>
+        {
             c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.GroupNameMismatch, IssueKind.VerificationMismatch, IssueKind.TaskSlaBreached], c),
-        ]);
+        };
+        if (!byAgent)
+            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, roleTask.Id, NotificationKind.TeamTask, Recipients.RoleTeam(projectDoc), subject, body, c));
+        return new Step(r with { Flow = advanced }, effects);
     }
 
     private Step Returned(AccessRequest r, TeamTask task, Verification v, Project? project, IssueKind kind, string stepName)
@@ -559,6 +575,8 @@ public sealed class WorkflowAgent(
         var flow = r.Flow!;
         var task = flow.RoleTeamTask;
         if (task is null) return null;
+        if (RoleAssignmentPending(task))
+            return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
 

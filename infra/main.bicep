@@ -56,6 +56,18 @@ param roleReader string = 'None'
 @description('App URL used in notification links.')
 param appUrl string = ''
 
+@description('v2.1 agent provisioning (user, group, membership) after both approvals. Approval-gated: deploy_free.sh provisioning.')
+param agentProvisioning bool = false
+
+@description('v2.1 agent role assignment (allow-listed Azure roles on the group) after both approvals. Approval-gated.')
+param agentRoleAssignment bool = false
+
+@description('Comma-separated Azure role definition GUIDs the agent may assign.')
+param roleAssignAllowedRoles string = ''
+
+@description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
+param roleAssignScopes string = ''
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -99,6 +111,10 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     adoProject: adoProject
     roleReader: roleReader
     appUrl: appUrl
+    agentProvisioning: agentProvisioning
+    agentRoleAssignment: agentRoleAssignment
+    roleAssignAllowedRoles: roleAssignAllowedRoles
+    roleAssignScopes: roleAssignScopes
   }
 }
 

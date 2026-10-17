@@ -1,6 +1,8 @@
 # SCOPE — PMO onboarding flow (v2, 17 Oct 2026)
 
-v2 replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves, creates or assigns.** People approve; the ID team and the role assignment team make the changes in their own tools and record what they did here.
+v2 replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves.** People approve; the ID team and the role assignment team make the changes in their own tools and record what they did here.
+
+**v2.1 agent provisioning (Gokul's choice, 17 Oct 2026; off until its permissions are approved):** only after the named Owner and then Security approved, the worker — deterministic code, never the AI model — creates the user, the security group (when the mapping sheet says "to be created") and the membership, and assigns the mapping row's Azure role to the group when the role and scope are on the approved allow-list. The **Temporary Access Pass stays with the ID team.** Guests, privileged rows, ambiguous or missing groups, rows without an Azure role and any refused write go to the team, with the reason (and an issue when something failed).
 History (v1 + Phase 2 hand-off): `docs/DEPLOYMENT_LOG.md`, `workflows/08-entra-handoff.md` (superseded).
 
 ## Flow overview (stated to every requester upfront)
@@ -15,11 +17,11 @@ History (v1 + Phase 2 hand-off): `docs/DEPLOYMENT_LOG.md`, `workflows/08-entra-h
 ## Who does what (strict)
 | Who | Does | Never |
 |---|---|---|
-| AI agent (API + worker) | Reviews, validates, summarises, routes, tracks, verifies, reports | Approves, creates users/groups, assigns roles or membership, issues or sees a TAP |
+| AI agent (API + worker) | Reviews, validates, summarises, routes, tracks, verifies, reports. v2.1 (switched on, worker only, after both approvals): creates user, group, membership; assigns allow-listed Azure roles to the group | Approves; writes anything before both approvals; issues or sees a TAP; updates or deletes users, groups or assignments; creates guests; privileged access |
 | Owner (named on the request) | Approves the business need | — |
 | Security | Approves risk and access level | Approves at the Owner stage of the same request |
-| ID team | Creates the user ID and Entra groups, adds membership, issues the TAP | — |
-| Role assignment team | Assigns roles | — |
+| ID team | Issues the TAP; creates the user ID and groups and adds membership when the agent does not (v2.1 off, or left to them) | — |
+| Role assignment team | Assigns roles the agent does not (v2.1 off, no Azure role on the row, not allow-listed, privileged) | — |
 | PMO | Owns the mapping sheet; informed only | Approves |
 
 Nobody else approves. A decision from anyone else is ignored, logged as an *Unauthorized approval* issue and Security is alerted.
@@ -51,11 +53,11 @@ After all approvals and group membership. One-time use, shortest lifetime (`TAP_
 ## Excluded
 | Item | Reason |
 |---|---|
-| Graph or ARM **writes** of any kind (users, groups, membership, roles, TAP, access packages) | The agent never creates or assigns |
+| Graph or ARM writes other than v2.1's four create calls (user, security group, membership, Azure role assignment) — no updates, deletes, licences, access packages, TAP | Least privilege |
 | Auto-fixing approvals, role escalation, security settings, deletions | Never automatic |
 | Storing or showing a TAP value | TAP rules |
 | Self-registration, payment, billing | Out of scope |
 | Attachments, OCR, multiple agents | Out of scope |
 
 ## UI must never contain
-Grant / assign / create-user / payment / self-sign-up controls, password fields or a TAP value field. Decision controls (Approve business need, Approve risk and access level, Reject) only in the decision panel, shown only to the person whose decision is due. Permanent banner: *"The AI agent reviews, routes, verifies and reports. It never approves, creates or assigns: only the named Owner and Security approve; the ID team and the role assignment team make the changes."* Enforced by `src/web/src/guardrails.test.ts`.
+Grant / assign / create-user / payment / self-sign-up controls, password fields or a TAP value field. Decision controls (Approve business need, Approve risk and access level, Reject) only in the decision panel, shown only to the person whose decision is due. Permanent banner: *"The AI agent reviews, routes, verifies and reports. It never approves, creates or assigns: only the named Owner and Security approve; the ID team and the role assignment team make the changes."* — with v2.1 provisioning on: *"… It never approves: only the named Owner and Security approve. Only after both approvals it creates the user, group and membership and assigns the approved role where allowed; the ID team issues the Temporary Access Pass."* (the app reads the mode from `/api/me`). Enforced by `src/web/src/guardrails.test.ts`.

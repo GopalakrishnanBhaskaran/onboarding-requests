@@ -1,6 +1,6 @@
 # Architecture — PMO onboarding flow (v2)
 
-v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves, creates or assigns**. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
+v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves**. v2.1 (optional, approval-gated): after both approvals the worker creates the user, group and membership and assigns allow-listed Azure roles (`WorkflowAgent.Provisioning.cs`, `GraphDirectoryWriter`, `ArmRoleAssignmentWriter`); the TAP stays with the ID team. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
 
 ## Components
 
@@ -106,7 +106,7 @@ All routes under `/api`, signed in, identity only from `x-ms-client-principal`. 
 ## Trust boundaries
 1. Browser → SWA: authenticated by SWA; every body field is untrusted.
 2. API → Cosmos: connection string in SWA app settings (no managed identity on managed Functions).
-3. Worker → Cosmos / Graph / ARM: managed identity; Cosmos data roles on the containers it uses only (not `userAccess`); Graph application roles **read-only** (`User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`, `AuditLog.Read.All`).
+3. Worker → Cosmos / Graph / ARM: managed identity; Cosmos data roles on the containers it uses only (not `userAccess`); Graph application roles read (`User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`, `AuditLog.Read.All`); with v2.1 provisioning approved also `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All` and Role Based Access Control Administrator on one resource group, constrained to allow-listed roles and user/group principals. The SWA API never holds a writer.
 4. Request text, team notes, model output: untrusted. Masked (`SecretMasker`) before logs, ADO, mail and prompts; the host validates every model result against the schema and recomputes the outcome.
 
 ## Design decisions

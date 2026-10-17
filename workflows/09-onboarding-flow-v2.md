@@ -45,6 +45,21 @@ v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 r
 6. User: first sign-in with the TAP, register a permanent method (Authenticator); ID team deletes the TAP if it is not one-time-consumed. → **Completed** within ~5 min; notifications listed on the request; ADO work item if enabled.
 7. Record each result in `docs/DEPLOYMENT_LOG.md` (no user ids, no TAP values).
 
+## v2.1 agent provisioning (optional; security change, approval needed)
+Chosen by Gokul on 17 Oct 2026: after both approvals the AI agent (worker, deterministic code) creates the user, group and membership and assigns allow-listed Azure roles; the **TAP stays with the ID team**.
+1. Scope: an existing resource group the agent may assign roles in (recommended: a new, empty `rg-pmo-sample-access` — creating it is its own approval).
+2. `tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/<rg> [roleIds]` → dry run lists: Graph `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All` (F56–F58); Role Based Access Control Administrator at the scope with a condition: only the given roles (default Reader `acdd72a7-…`) and only user/group principals (F59–F60); worker + SWA settings. **Wait for "approved".**
+3. `… --approved-by "Gokul <date>"`. Then `tools/deploy_free.sh params <sub>` (keeps the settings for later applies).
+4. PMO: Mapping sheet → *Azure role the AI agent assigns* → row, role definition ID, scope (inside the allowed scope). Rows without it stay with the role team.
+5. Live test: submit → Owner → Security → within 5 min the agent creates user/group/membership (request page shows "Done by the AI agent"); the ID team issues the one-time TAP in Entra and records its metadata only; the agent verifies, assigns the role, verifies → Verifying → user signs in, registers Authenticator → Completed.
+Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings off at once; removing the rights needs `--approved-by`).
+
+| Agent leaves it to the team when | Issue |
+|---|---|
+| Guest user, privileged row, row without an Azure role | none (normal) |
+| Two groups with the name, not a security group, sheet says "exists" but missing | High, Needs developer |
+| Write refused (permission), 3 failed attempts, role/scope not on the allow-list | High, Needs developer |
+
 ## Validation
 - Status table shows Request ID, requester, stage, waiting on, done, next, time in stage, ADO link.
 - Daily summary (Issues and reports) shows wait time per team; issues list shows any SLA breach, mismatch or unauthorized approval.
@@ -54,6 +69,7 @@ v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 r
 | Symptom | Action |
 |---|---|
 | AI Review, waiting on AI agent | Normal for up to 5 min: the website runs the rule checks, the worker runs the Entra check (every 5 min). *Run agent step now* cannot run the Entra check. |
+| With ID Team, waiting on AI agent > 10 min (v2.1) | The worker provisions on its next run; Issues and reports shows any `agent-error` / provisioning issue; `workflow_diag.sh`. |
 | Stuck in AI Review > 10 min | Issues and reports (or `workflow_diag.sh`): a **Needs developer** issue `agent-error:…` names the error the worker hit; Entra read failure → `DependencyFailure`. No issue at all → the worker is not running the current code: `workflow_diag.sh` shows the last worker deploy; `tools/deploy_free.sh worker <sub>`. |
 | Failed-Needs-Dev | Issues and reports → developer issue report (`NeedsDeveloper` issue); fix (redeploy if code), then Operator → *Resume after fix* on the request. |
 | Unauthorized approval issue | Security reviews who tried; nothing changed in the request. |

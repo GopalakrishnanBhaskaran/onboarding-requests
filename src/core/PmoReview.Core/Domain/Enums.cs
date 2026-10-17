@@ -2,7 +2,8 @@ namespace PmoReview.Core.Domain;
 
 /// <summary>
 /// Who does what (strict). The AI agent is not a role: it reviews, validates, summarises, routes, tracks, verifies and
-/// reports, and never approves, creates or assigns anything.
+/// reports, and never approves. Only with v2.1 provisioning switched on (approved) and only after both approvals does the
+/// worker create the user, group and membership and assign allow-listed Azure roles; the TAP stays with the ID team.
 /// </summary>
 public enum AppRole
 {

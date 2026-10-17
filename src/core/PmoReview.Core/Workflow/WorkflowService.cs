@@ -70,6 +70,8 @@ public sealed partial class WorkflowService(
     IClock clock,
     ILogger<WorkflowService> logger)
 {
+    public WorkflowSettings Settings => settings;
+
     // ---- Stage 1 ------------------------------------------------------------------------------------------------
 
     public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct)
@@ -183,12 +185,17 @@ public sealed partial class WorkflowService(
         else
         {
             var task = agent.NewIdTeamTask(r, next);
+            var byAgent = settings.AgentProvisioning;
             next = (next with { IdTeamTask = task })
-                .Log(now, WorkflowState.AgentActor, "id-team-task", "ID team task created.")
-                .To(RequestStatus.WithIdTeam, WaitingOn.IdTeam, now, caller.UserId, "security-approved", "Security approved risk and access level. Sent to the ID team.");
+                .Log(now, WorkflowState.AgentActor, "id-team-task", byAgent ? "ID team task created; the AI agent creates the user, group and membership first." : "ID team task created.")
+                .To(RequestStatus.WithIdTeam, byAgent ? WaitingOn.Agent : WaitingOn.IdTeam, now, caller.UserId, "security-approved",
+                    byAgent ? "Security approved risk and access level. The AI agent provisions the user, group and membership." : "Security approved risk and access level. Sent to the ID team.");
             record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now, State = ResponseState.Approved };
-            var (subject, body) = Messages.TeamTask(r, task, settings);
-            effects.Add(c => notifier.EnqueueAsync(projectId, requestId, task.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c));
+            if (!byAgent)
+            {
+                var (subject, body) = Messages.TeamTask(r, task, settings);
+                effects.Add(c => notifier.EnqueueAsync(projectId, requestId, task.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c));
+            }
         }
 
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
@@ -230,10 +237,14 @@ public sealed partial class WorkflowService(
         var (flow, task) = OpenTask(current.Value, AppRole.IdTeam);
         var now = clock.UtcNow;
 
-        var upn = RequestService.Text(input.UserPrincipalName, "userPrincipalName", 200) ?? throw AppException.Invalid("userPrincipalName is required.");
+        // v2.1: when the AI agent created the user, group and membership, those facts come from the task, not the form.
+        var byAgent = task.Agent is { Completed: true, Manual: null, Membership: true } a ? a : null;
+        var upn = byAgent is not null ? current.Value.DomainId!
+            : RequestService.Text(input.UserPrincipalName, "userPrincipalName", 200) ?? throw AppException.Invalid("userPrincipalName is required.");
         if (!SignIn().IsMatch(upn)) throw AppException.Invalid("userPrincipalName must be a sign-in name.");
-        var group = RequestService.Text(input.GroupName, "groupName", 256) ?? throw AppException.Invalid("groupName is required.");
-        var added = input.AddedToGroup ?? false;
+        var group = byAgent is not null ? flow.Scope!.EntraGroup
+            : RequestService.Text(input.GroupName, "groupName", 256) ?? throw AppException.Invalid("groupName is required.");
+        var added = byAgent is not null || (input.AddedToGroup ?? false);
         TapRecord? tap = null;
         if (input.Tap is { } t)
         {
@@ -251,19 +262,19 @@ public sealed partial class WorkflowService(
             var by = SecretMasker.Apply(RequestService.Text(t.IssuedBy, "tap.issuedBy", 200)) ?? caller.DisplayName;
             tap = new TapRecord(issued, expires, true, by, now);
         }
-        if (input.UserCreated == true && tap is null)
+        if ((byAgent?.UserCreated ?? input.UserCreated) == true && tap is null)
             throw AppException.Invalid("A new account needs a one-time Temporary Access Pass for the first sign-in. Record its metadata (issued, expiry, one-time, issued by) — never the pass.");
 
         var report = new IdTeamReport
         {
             UserPrincipalName = upn.ToLowerInvariant(),
-            UserObjectId = Guid(input.UserObjectId, "userObjectId"),
+            UserObjectId = byAgent?.UserObjectId ?? Guid(input.UserObjectId, "userObjectId"),
             GroupName = group,
-            GroupObjectId = Guid(input.GroupObjectId, "groupObjectId"),
-            UserCreated = input.UserCreated ?? false,
-            GroupCreated = input.GroupCreated ?? false,
+            GroupObjectId = byAgent?.GroupObjectId ?? Guid(input.GroupObjectId, "groupObjectId"),
+            UserCreated = byAgent?.UserCreated ?? input.UserCreated ?? false,
+            GroupCreated = byAgent?.GroupCreated ?? input.GroupCreated ?? false,
             AddedToGroup = added,
-            MappingSheetUpdated = input.MappingSheetUpdated ?? false,
+            MappingSheetUpdated = byAgent is not null ? byAgent.MappingUpdated || flow.Scope!.GroupState == GroupState.Exists : input.MappingSheetUpdated ?? false,
             Tap = tap,
             Notes = SecretMasker.Apply(RequestService.Text(input.Notes, "notes", 1000)),
         };
@@ -357,7 +368,7 @@ public sealed partial class WorkflowService(
             ? (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).Where(i => i.RequestId == requestId).OrderByDescending(i => i.LastSeenAt).ToList()
             : [];
         return new RequestView(Endpoints.ToItem(current), Reports.StatusLine(r, now), Reports.Timings(r, now), ActionsFor(caller, r),
-            await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhat);
+            await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhatFor(settings));
     }
 
     public async Task<IReadOnlyList<StatusLine>> ListAsync(CallerContext caller, string projectId, CancellationToken ct)
@@ -420,9 +431,9 @@ public sealed partial class WorkflowService(
         if (f.Status == RequestStatus.AwaitingOwner && caller.Has(p, Permission.ApproveAsOwner) && caller.Is(r.Owner)) list.Add(Actions.ApproveOwner);
         if (f.Status == RequestStatus.AwaitingSecurity && caller.Has(p, Permission.ApproveAsSecurity) && f.CurrentApproval(ApprovalStage.Owner)?.By != caller.UserId)
             list.Add(Actions.ApproveSecurity);
-        if (f.Status == RequestStatus.WithIdTeam && f.IdTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkIdTeamTasks))
+        if (f.Status == RequestStatus.WithIdTeam && f.WaitingOn == WaitingOn.IdTeam && f.IdTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkIdTeamTasks))
             list.Add(Actions.IdTeamTask);
-        if (f.Status == RequestStatus.WithRoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkRoleTeamTasks))
+        if (f.Status == RequestStatus.WithRoleTeam && f.WaitingOn == WaitingOn.RoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkRoleTeamTasks))
             list.Add(Actions.RoleTeamTask);
         if (f.Status == RequestStatus.Returned && caller.Has(p, Permission.SubmitRequests)) list.Add(Actions.Resubmit);
         return list;

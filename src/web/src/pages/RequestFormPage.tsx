@@ -5,7 +5,7 @@ import {
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
 import type { IntakeFields, ProjectSummary } from '../lib/types';
-import { FLOW_OVERVIEW, WHO_DOES_WHAT } from '../lib/flow';
+import { FLOW_OVERVIEW, whoDoesWhat } from '../lib/flow';
 import { ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
 type FormFields = { [K in keyof IntakeFields]-?: NonNullable<IntakeFields[K]> };
@@ -16,7 +16,7 @@ const empty: FormFields = {
 const SIGN_IN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 /** Stage 1: intake. The flow is stated upfront. A returned request is corrected here and submitted again. */
-export function RequestFormPage({ project, requestId }: { project: ProjectSummary; requestId?: string }) {
+export function RequestFormPage({ project, requestId, agent = false }: { project: ProjectSummary; requestId?: string; agent?: boolean }) {
   const s = useStyles();
   const [fields, setFields] = useState<FormFields>(empty);
   const [etag, setEtag] = useState<string | null>(null);
@@ -77,7 +77,7 @@ export function RequestFormPage({ project, requestId }: { project: ProjectSummar
           {FLOW_OVERVIEW.map((step) => <li key={step} style={{ listStyle: 'none' }}><Body1>{step}</Body1></li>)}
         </ul>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '2px 12px', margin: 0 }}>
-          {WHO_DOES_WHAT.map(([who, what]) => (
+          {whoDoesWhat(agent).map(([who, what]) => (
             <div key={who} style={{ display: 'contents' }}>
               <dt><Body1><b>{who}</b></Body1></dt>
               <dd style={{ margin: 0 }}><Body1>{what}</Body1></dd>

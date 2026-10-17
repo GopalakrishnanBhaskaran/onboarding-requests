@@ -13,7 +13,7 @@ import { RequestDetailPage } from './pages/RequestDetailPage';
 import { QueuePage } from './pages/QueuePage';
 import { MappingSheetPage } from './pages/MappingSheetPage';
 import { OperatorPage } from './pages/OperatorPage';
-import { BANNER } from './lib/flow';
+import { AGENT_BANNER, BANNER } from './lib/flow';
 
 const PROJECT_KEY = 'pmo-review.project';
 
@@ -120,7 +120,7 @@ function Shell() {
 
       {/* Permanent, non-dismissible scope statement. */}
       <MessageBar intent="info" layout="multiline" style={{ borderRadius: 0 }}>
-        <MessageBarBody>{BANNER}</MessageBarBody>
+        <MessageBarBody>{me?.agentProvisioning ? AGENT_BANNER : BANNER}</MessageBarBody>
       </MessageBar>
 
       {me && project && (
@@ -144,18 +144,18 @@ function Shell() {
             </MessageBarBody>
           </MessageBar>
         )}
-        {me && project && <Page route={route} project={project} onOpenProject={choose} />}
+        {me && project && <Page route={route} project={project} onOpenProject={choose} agent={!!me.agentProvisioning} />}
       </main>
     </div>
   );
 }
 
-function Page({ route, project, onOpenProject }: { route: Route; project: ProjectSummary; onOpenProject: (id: string) => void }) {
+function Page({ route, project, onOpenProject, agent }: { route: Route; project: ProjectSummary; onOpenProject: (id: string) => void; agent: boolean }) {
   switch (route.page) {
     case 'new':
-      return <RequestFormPage key="new" project={project} />;
+      return <RequestFormPage key="new" project={project} agent={agent} />;
     case 'edit':
-      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} />;
+      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} />;
     case 'request':
       return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
     case 'queue':

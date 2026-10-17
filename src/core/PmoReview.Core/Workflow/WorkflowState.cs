@@ -122,6 +122,26 @@ public sealed record TeamTask
     public DateTimeOffset? EscalatedAt { get; init; }
     /// <summary>AI verification of the last report.</summary>
     public IReadOnlyList<CheckResult> Checks { get; init; } = [];
+    /// <summary>v2.1: what the AI agent did itself after both approvals, or why it left the work to the team.</summary>
+    public AgentWork? Agent { get; init; }
+}
+
+/// <summary>Agent provisioning record (ids and flags only). <see cref="Manual"/> set = the team does it instead.</summary>
+public sealed record AgentWork
+{
+    public required DateTimeOffset At { get; init; }
+    public string? UserObjectId { get; init; }
+    public bool UserCreated { get; init; }
+    public string? GroupObjectId { get; init; }
+    public bool GroupCreated { get; init; }
+    public bool MemberAdded { get; init; }
+    /// <summary>The user is a member of the group (added now or already).</summary>
+    public bool Membership { get; init; }
+    public bool MappingUpdated { get; init; }
+    public bool RoleAssigned { get; init; }
+    /// <summary>Done: nothing left for the agent in this task.</summary>
+    public bool Completed { get; init; }
+    public string? Manual { get; init; }
 }
 
 public sealed record StageEntry(RequestStatus Status, WaitingOn WaitingOn, DateTimeOffset EnteredAt, DateTimeOffset? LeftAt);
