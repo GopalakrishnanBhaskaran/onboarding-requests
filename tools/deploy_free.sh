@@ -39,7 +39,7 @@ if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
 fi
 mkdir -p "$ROOT/.local"
 az account set --subscription "$SUB"
-RG_DEFAULT=rg-pmo-review-pilot
+RG_DEFAULT="rg-pmo-review-pilot"
 
 param_true() { [[ -n "$PARAMS" ]] && python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];sys.exit(0 if p.get(sys.argv[2],{}).get('value') else 1)" "$PARAMS" "$1"; }
 handoff_enabled() { param_true enableHandoff; }
@@ -307,7 +307,7 @@ PY
     ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
-    RG=rg-pmo-review-pilot
+    RG="rg-pmo-review-pilot"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
     app_settings_v2 "$RG" "$SWA"

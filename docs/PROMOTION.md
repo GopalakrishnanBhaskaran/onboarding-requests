@@ -3,7 +3,7 @@
 Each swap below is independent, switched by configuration, and **needs Gokul's written approval** (it creates paid resources). Nothing here was executed in the pilot. Prices are deliberately not given: use the **cost inputs** list with the Azure Pricing Calculator for your region and agreement.
 
 Templates: `config/pilot.settings.json` (current), `config/paid.settings.template.json` (placeholders only).
-Proof: `tests/PmoReview.Tests/Contract/PromotionPathTests.cs` builds the paid settings and runs the Azure OpenAI + queue paths end to end **with mocks** (no network, no cost). `AzureOpenAIModelTests.cs` covers the model adapter.
+Proof: `PromotionPathTests` (in `tests/PmoReview.Tests/Contract/ResultContractTests.cs`) builds the paid settings and runs the Azure OpenAI + queue paths end to end **with mocks** (no network, no cost). `AzureOpenAIModelTests.cs` covers the model adapter, the assistant and the strict-mode schema rules (F53).
 
 Safety switch: every paid provider is refused at startup unless `ALLOW_PAID_SERVICES=true` (`ReviewModelFactory`, `DispatcherFactory`).
 
@@ -13,13 +13,13 @@ Safety switch: every paid provider is refused at startup unless `ALLOW_PAID_SERV
 
 | Item | Detail |
 |---|---|
-| What changes | `AzureOpenAIReviewModel` replaces `RuleOnlyReviewModel`. Host logic is unchanged: it still computes readiness, validates citations against pinned versions and the result schema. |
+| What changes | `AzureOpenAIReviewModel` adds an AI opinion to the Stage 2 review. Host logic is unchanged: the deterministic checklist decides PASS/FAIL; the model can add concerns (a failed AI check returns the request) but never remove a failed check, and it never approves, creates or assigns. Optional `AI_REPORTS=true` (worker only) adds AI analysis to the daily summary and developer reports. |
 | Config keys | `REVIEW_MODEL_PROVIDER=AzureOpenAI`, `ALLOW_PAID_SERVICES=true`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` |
-| Code switch | `src/adapters/.../Review/ReviewModelFactory.cs` (already coded). Limits: `ReviewLimits` (4 turns, 4 tool calls, time budget, input chars, output tokens). |
-| Prerequisites | Azure OpenAI resource; a deployment of a model that supports **structured outputs (json_schema, strict) and tool calling**; an API version that supports both — **verify on Microsoft Learn at promotion time** and record in `VERIFIED_FACTS.md`. Managed identity on the API host with role **Cognitive Services OpenAI User** on the resource. No keys. |
-| Hosting constraint | SWA managed Functions **have no managed identity** (F2) and a **45 s** request limit (F3). Do swap 2 (BYO Function App) and ideally swap 3 (queue) first; keep `PROCESSING_BUDGET_SECONDS` < 45 while processing is inline. |
+| Code switch | `src/adapters/.../Review/ReviewModelFactory.cs` (already coded). One call per review, no tools; limits in `ReviewLimits` (time budget, input chars, output tokens, max 3 retries on 429 with `retry-after-ms`). Secrets/TAP masked before the prompt; token usage logged. |
+| Prerequisites | Azure OpenAI resource with a custom subdomain; a deployment of a model that supports **structured outputs (json_schema, strict)**; API version 2024-08-01-preview or later, or the GA `v1` endpoint (F53). Managed identity with role **Cognitive Services OpenAI User** on the resource. No keys. **Go-live check (F53):** Learn now shows the `/openai/v1/` endpoint with token audience `https://ai.azure.com/.default`; the code uses the deployments endpoint + `api-version` with `https://cognitiveservices.azure.com/.default` — confirm on the first SAMPLE call or switch to v1. |
+| Hosting constraint | SWA managed Functions **have no managed identity** (F2) and a **45 s** request limit (F3). The worker (Flex, managed identity) can use Azure OpenAI today for `AI_REPORTS`; for the review itself do swap 2 (BYO Function App) and ideally swap 3 (queue) first, otherwise reviews started by the API fail and go to Failed-Needs-Dev after 3 attempts. Keep `PROCESSING_BUDGET_SECONDS` < 45 while processing is inline. |
 | Approval needed | Gokul (cost + data processing). Data owner sign-off: request text is sent to the model. |
-| Validation | `dotnet test` (contract + injection tests for the model run against a mock); then a SAMPLE-only live smoke test; measure the 90% agreement / 25% time-saving targets here. |
+| Validation | `dotnet test` (contract, schema and injection tests run against a mock); then a SAMPLE-only live smoke test. |
 | Rollback | Set `REVIEW_MODEL_PROVIDER=RuleOnly`. No data migration; runs record `reviewerProvider` and `promptVersion`. |
 | Cost inputs | Model and deployment type; requests per month; average input and output tokens per review (≤ 4 turns); region; whether provisioned or pay-as-you-go. |
 
@@ -40,11 +40,11 @@ Safety switch: every paid provider is refused at startup unless `ALLOW_PAID_SERV
 
 | Item | Detail |
 |---|---|
-| What changes | Analyze returns **202 Queued** immediately; a queue-triggered Function runs the same `ReviewProcessor` via `QueueMessageHandler`. The SPA already polls. Removes the 45 s ceiling on review time. |
+| What changes | Submitting a request queues its review instead of running it inside the HTTP call; a queue-triggered Function runs the same `ReviewProcessor` via `QueueMessageHandler`. The SPA already refreshes while the agent has the next step. Removes the 45 s ceiling on review time. |
 | Config keys | `REVIEW_DISPATCHER=Queue`, `ALLOW_PAID_SERVICES=true`, `REVIEW_QUEUE_NAME`. |
 | Code switch | `DispatcherFactory` (coded). To add: an `IQueueClient` implementation (Storage Queues or Service Bus SDK) and a queue-triggered function that calls `QueueMessageHandler.HandleAsync` — ~30 lines; both blocked in the pilot because they need paid resources. |
 | Prerequisites | Swap 2 (managed Functions are HTTP-only, F1). Storage account queue or Service Bus namespace; managed identity with *Storage Queue Data Contributor* / *Azure Service Bus Data Sender/Receiver*; poison-queue handling; operator recovery stays as the safety net. |
-| Alternative | Power Automate flow from the locked pack: trigger on new `reviewRuns` with status Queued → call the processing endpoint. Requires premium connector licensing. |
+| Alternative | Power Automate flow: trigger on new `reviewRuns` with status Queued → call the processing endpoint. Requires premium connector licensing. |
 | Approval needed | Gokul. |
 | Rollback | `REVIEW_DISPATCHER=Inline`. Queued runs left behind are recovered by the Operator endpoint (marked Failed(Timeout)) and retried. |
 | Cost inputs | Messages per month (≈ 1 per review + retries); Service Bus tier or Storage transactions; Power Automate licence model if used. |
@@ -73,16 +73,17 @@ Safety switch: every paid provider is refused at startup unless `ALLOW_PAID_SERV
 | Rollback | Change SKU back to Free (custom auth and BYO Functions stop working — do swap 2 rollback first). |
 | Cost inputs | Standard plan per app per month; bandwidth above the included amount. |
 
-## 6. Optional: Cosmos → Dataverse + Power Apps (locked pack)
+## 6. Optional: Cosmos → Dataverse + Power Apps
 
 | Container | Dataverse table | Notes |
 |---|---|---|
-| projects | Project | |
-| requirementRules | Requirement Rule | keep `ruleId + version` alternate key; Published records read-only |
-| roleMappings | Role Mapping | reference only; no group assignment |
-| requests | Access Request | revision column server-maintained |
-| reviewRuns | Review Run | snapshot + SHA-256 via custom API (locked pack); status changes only by the processing identity |
-| reviewDecisions | Review Decision | |
+| projects | Project | contacts, domain suffix, group naming pattern |
+| mappingSheet | Mapping Sheet Row | PMO edits; versioned; fingerprint per resource |
+| responseDocument | Response Record | updated by the agent and the role team report |
+| requests | Access Request | workflow state (`flow`) written only by the agent identity |
+| reviewRuns | Review Run | snapshot + SHA-256; status changes only by the processing identity |
+| notifications | Notification | outbox |
+| issues | Issue | issues list |
 | userAccess | (security roles + business units/teams) | replaces deny-by-default table with Dataverse row-level security |
 
 Code switch: implement `IDocumentStore<T>` over the Dataverse Web API (or keep Cosmos and only move the UI). Prerequisites: Dataverse capacity, Power Apps licences, premium connectors. Cost inputs: licences per user, Dataverse database/file capacity, Power Automate runs.
@@ -101,5 +102,5 @@ Code switch: implement `IDocumentStore<T>` over the Dataverse Web API (or keep C
 1. Swap 5 (SWA Standard) + swap 2 (BYO Function App, managed identity) — removes the connection string.
 2. Swap 4 (App Insights) — observe before adding the model.
 3. Swap 3 (queue) — removes the 45 s ceiling.
-4. Swap 1 (Azure OpenAI) — then measure agreement and time saving with real reviewers.
+4. Swap 1 (Azure OpenAI review) — `AI_REPORTS` on the worker can come earlier (it already has a managed identity).
 5. Swap 7 (pipelines) any time after 1.

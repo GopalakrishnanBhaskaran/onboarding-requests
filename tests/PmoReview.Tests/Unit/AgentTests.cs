@@ -83,6 +83,21 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task Owner_manager_lookup_refused_by_graph_escalates_to_the_fallback_contact()
+    {
+        var app = TestApp.Create();
+        app.Directory.SetManager("sample-user-olivia@sample.invalid", "sample.olivia.manager@sample.invalid");
+        var id = await app.To(RequestStatus.AwaitingOwner);
+        app.Clock.Advance(TimeSpan.FromHours(25));
+        await app.RunWorker();
+        app.Directory.FailWith = "GraphForbidden";
+        app.Clock.Advance(TimeSpan.FromHours(24));
+        await app.RunWorker();
+        Assert.Equal(["sample.owner.manager.alpha@sample.invalid"], Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.Escalation).To);
+        Assert.Equal(RequestStatus.AwaitingOwner, await app.Status(id));
+    }
+
+    [Fact]
     public async Task Failed_review_is_retried_at_most_three_times_then_failed_needs_dev_with_a_developer_report()
     {
         var app = TestApp.With(new FakeModel((_, _) => throw new HttpRequestException("model down")));

@@ -86,6 +86,19 @@ public class GraphDirectoryReaderTests
     }
 
     [Fact]
+    public async Task Manager_lookup_refused_by_graph_is_graph_forbidden()
+    {
+        // Learn (17 Oct 2026) lists application permissions for GET /users/{id}/manager as "Not supported" (F49):
+        // a 403 must surface as GraphForbidden so the agent falls back to the configured contact.
+        var (reader, _) = Reader(h => h
+            .On(HttpMethod.Get, $"{G}users?$filter=userPrincipalName eq 'sample.e1001@sample.invalid'", $$"""{"value":[{"id":"{{UserId}}","userPrincipalName":"sample.e1001@sample.invalid"}]}""")
+            .On(HttpMethod.Get, $"{G}users/{UserId}/manager", """{"error":{"code":"Authorization_RequestDenied"}}""", HttpStatusCode.Forbidden));
+
+        var e = await Assert.ThrowsAsync<DirectoryReadException>(() => reader.GetManagerAsync("sample.e1001@sample.invalid", CancellationToken.None));
+        Assert.Equal("GraphForbidden", e.Category);
+    }
+
+    [Fact]
     public async Task Missing_user_is_null_and_quotes_are_escaped()
     {
         var (reader, http) = Reader(h => h.On(HttpMethod.Get, $"{G}users?", """{"value":[]}"""));

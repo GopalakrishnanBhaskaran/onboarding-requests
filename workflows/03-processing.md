@@ -1,22 +1,19 @@
-# 03 — Processing
+# 03 — Processing and the agent step (v2)
 
-> **v2 (17 Oct 2026):** the request flow, roles and checks changed — see `workflows/09-onboarding-flow-v2.md` and `docs/ARCHITECTURE.md`. This SOP records how the phase was built; the build and test commands in `CLAUDE.md` are current.
+**Purpose:** Truthful review statuses under duplicates, concurrency, edits, timeouts and retries; one idempotent agent step that moves a request through the flow.
 
-**Purpose:** Run reviews with truthful statuses under duplicates, concurrency, edits, timeouts and retries.
-
-**Inputs:** Engine (Phase 2); `VERIFIED_FACTS` F3 (45 s gateway limit).
+**Inputs:** Engine (02); `VERIFIED_FACTS` F3 (45 s gateway limit).
 
 **Steps**
-1. `IReviewDispatcher`; `InlineDispatcher` active; `QueueDispatcher` stub (throws if enabled without paid flag).
-2. `POST /api/requests/{id}/analyze`: authorise → read request + ETag → snapshot + hash → create run `Queued` with `idempotencyKey = requestId:revision:nonce` → claim with ETag → `Running` → engine → validate → `Completed` / `Failed`.
-3. Before commit, re-read request revision. Changed → `Superseded`, keep history.
-4. Duplicate (same key) → return the existing run id; never a second Completed.
-5. Retry → new run with `retryOfRunId`.
-6. `POST /api/operator/runs/recover`: Operator only; `Running` older than N minutes → `Failed`, `errorCategory=Timeout`.
-7. Processing budget constant (default 30 s) below the 45 s gateway cut-off.
+1. `Processing/RunService.cs`: deterministic run id per request revision and trigger; `idempotencyKey` unique; `InlineDispatcher` active, `QueueDispatcher` coded (paid flag required).
+2. `Processing/ReviewProcessor.cs`: claim with ETag → `Running` → engine → validate → `Completed` / `Failed`; revision changed before commit → `Superseded`. Processing budget 30 s (< 45 s).
+3. `Workflow/WorkflowAgent.cs` `AdvanceAsync`: computes one step from stored state; writes the request (ETag) first, then idempotent effects (notifications, issues, ADO) keyed `requestId:step`. Called inline by the API after every action and by the worker timer every 5 minutes.
+4. Safe auto-fixes only: retry max 3, reuse an existing group, fix ID/name format, refresh the sheet read; then Failed-Needs-Dev with a developer report. Operator **Resume after fix** sends it back to the failed stage.
+5. SLA: reminder at SLA, escalation to the manager at 2× SLA (Graph manager or project contact). Never skips a stage, never auto-approves.
+6. Operator `POST …/operator/recover`: runs stuck in Queued/Running past `STUCK_RUN_MINUTES` → Failed (Timeout).
 
-**Outputs:** dispatcher, endpoints, tests.
+**Outputs:** run service, processor, agent, endpoints.
 
-**Validation (exit gate):** duplicate, concurrent analyze, edit-during-processing, timeout and retry tests leave truthful statuses.
+**Validation (exit gate):** `ProcessingTests`, `AgentTests`, `FlowTests`; AC13, AC18, AC22.
 
-**Failure handling:** ETag conflict on claim → another worker owns it; return existing run. Any exception → `Failed` with safe `errorCategory` (no stack traces, no request text in logs).
+**Failure handling:** ETag conflict → another caller owns the step; reload and stop. Any exception → `Failed` with a safe category (no stack traces, no request text in logs).

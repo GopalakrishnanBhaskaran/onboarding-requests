@@ -89,6 +89,41 @@ public class AzureOpenAIModelTests
     }
 
     [Fact]
+    public async Task Response_schemas_follow_the_azure_openai_strict_mode_subset()
+    {
+        // Learn, structured outputs (checked 17 Oct 2026, F53): every property required, additionalProperties false on
+        // every object, at most 5 levels of nesting, and these keywords are not supported.
+        string[] unsupported = ["minLength", "maxLength", "pattern", "format", "minimum", "maximum", "multipleOf", "patternProperties",
+            "unevaluatedProperties", "propertyNames", "minProperties", "maxProperties", "unevaluatedItems", "contains", "minContains",
+            "maxContains", "minItems", "maxItems", "uniqueItems"];
+        var review = new ScriptedHandler(() => ScriptedHandler.Final(Pass));
+        await EngineHarness.Run(EngineHarness.Complete(), ScriptedHandler.Model(review));
+        var assistant = new ScriptedHandler(() => ScriptedHandler.Final("""{"analysis":"ok"}"""));
+        await new AzureOpenAIAssistant(ScriptedHandler.Chat(assistant)).AnalyseAsync("daily-summary", "facts", CancellationToken.None);
+
+        foreach (var request in new[] { review.Requests.Single().Body, assistant.Requests.Single().Body })
+        {
+            var format = JsonDocument.Parse(request).RootElement.GetProperty("response_format").GetProperty("json_schema");
+            Assert.True(format.GetProperty("strict").GetBoolean());
+            Check(format.GetProperty("schema"), depth: 1);
+        }
+
+        void Check(JsonElement node, int depth)
+        {
+            foreach (var p in node.EnumerateObject()) Assert.DoesNotContain(p.Name, unsupported);
+            if (node.TryGetProperty("properties", out var props))
+            {
+                Assert.True(depth <= 5, "nesting deeper than 5 levels");
+                Assert.False(node.GetProperty("additionalProperties").GetBoolean());
+                var required = node.GetProperty("required").EnumerateArray().Select(r => r.GetString()!).Order().ToList();
+                Assert.Equal(props.EnumerateObject().Select(p => p.Name).Order().ToList(), required);
+                foreach (var p in props.EnumerateObject()) Check(p.Value, depth + 1);
+            }
+            if (node.TryGetProperty("items", out var items)) Check(items, depth);
+        }
+    }
+
+    [Fact]
     public void System_prompt_never_approves_creates_or_assigns()
     {
         Assert.Contains("never approve, create, assign or decide access", AzureOpenAIReviewModel.SystemPrompt);

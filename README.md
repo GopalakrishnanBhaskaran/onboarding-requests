@@ -1,19 +1,30 @@
-# onboarding-requests — PMO Request Review (zero-cost pilot)
+# onboarding-requests — PMO onboarding flow (v2)
 
-Checks whether an onboarding/access request is ready for **human** review. It never approves, routes or grants anything.
+Onboarding / access requests from submission to verified access:
 
-Runs on Azure free tiers only (Static Web Apps Free + managed Functions, Cosmos DB free tier). Paid components (Azure OpenAI reviewer, queue processing, App Insights, managed identity) are coded behind interfaces and switched off.
+1. Requester submits the request
+2. AI review (mapping sheet + response document)
+3. Owner approval
+4. Security approval
+5. ID team creates user/group (+ TAP)
+6. Role assignment team assigns roles
+7. AI verification, notifications, audit
+
+The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves, creates or assigns.** The named Owner and Security approve; the ID team and the role assignment team make the changes in their own tools and record them here. The Temporary Access Pass never enters the app (metadata only).
+
+Runs on Static Web Apps Free + managed Functions, Cosmos DB free tier and one Flex Consumption worker (managed identity, Microsoft Graph **read-only**). Azure OpenAI, mail and Azure DevOps adapters are coded and off.
 
 | Start here | |
 |---|---|
-| `CLAUDE.md` | rules, stack, commands |
-| `SCOPE.md` | included / excluded |
-| `docs/ARCHITECTURE.md` | components, API, statuses, design decisions |
-| `docs/VERIFIED_FACTS.md` | platform facts with source and status |
-| `docs/PILOT_REPORT.md` | acceptance results |
-| `docs/RUNBOOK.md` | run locally, deploy, operate |
-| `docs/COSTS.md` | zero-cost basis and evidence log |
+| `CLAUDE.md` | hard rules, stack, commands |
+| `SCOPE.md` | flow, who does what, TAP rules, included / excluded |
+| `docs/NEXT_SESSION.md` | current state and the approval-gated deploy steps |
+| `workflows/09-onboarding-flow-v2.md` | SOP: deploy, live end-to-end test, failure handling |
+| `docs/ARCHITECTURE.md` | components, lifecycle, stage → code, API |
+| `docs/VERIFIED_FACTS.md` | platform facts with Microsoft Learn source and status |
+| `docs/PILOT_REPORT.md` | acceptance results (local, SAMPLE data) |
+| `docs/RUNBOOK.md` | run locally, operate |
 | `docs/PROMOTION.md` | how to switch on each paid component |
-| `workflows/` | SOPs per phase |
+| `docs/DEPLOYMENT_LOG.md` | what was deployed, approved and tested, with evidence |
 
-Quick start: `dotnet test` · `tools/run_acceptance.sh` · `tools/run_local.sh` (then http://localhost:4280).
+Quick start: `dotnet test --project tests/PmoReview.Tests -f net10.0` · `npm --prefix src/web test` · `tools/run_local.sh` (then http://localhost:4280 and `npm --prefix src/web run e2e`) · `tools/run_acceptance.sh`.

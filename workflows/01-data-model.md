@@ -1,21 +1,18 @@
-# 01 — Data model and access
+# 01 — Data model and access (v2)
 
-> **v2 (17 Oct 2026):** the request flow, roles and checks changed — see `workflows/09-onboarding-flow-v2.md` and `docs/ARCHITECTURE.md`. This SOP records how the phase was built; the build and test commands in `CLAUDE.md` are current.
+**Purpose:** Store requests, workflow state and the two sources of truth in Cosmos with server-side, deny-by-default access per project.
 
-**Purpose:** Build the Cosmos model, the server-side access model and snapshot logic, and prove cross-project isolation.
-
-**Inputs:** Approved schema in `docs/PHASE0_PLAN.md` §3; `VERIFIED_FACTS` F12–F17.
+**Inputs:** `SCOPE.md` (roles, sources of truth); `VERIFIED_FACTS` F12–F17.
 
 **Steps**
-1. `src/core`: domain records, `IRepository`, `AccessPolicy` (role → permitted actions), `SnapshotBuilder` (canonical JSON + SHA-256).
-2. `src/adapters/CosmosRepository`: one database, shared throughput ≤ 1000 RU/s, 7 containers with partition keys from the plan; unique key `/idempotencyKey` on `reviewRuns`; ETag `IfMatch` on every replace.
-3. `src/api`: `ClientPrincipalReader` (header only, reject missing/malformed), `AuthorizationGuard` (deny by default, project filter on every query).
-4. `staticwebapp.config.json`: all routes require `authenticated`; block non-Entra providers (`/.auth/login/github` etc. → 404).
-5. `tools/seed_sample_data.py`: SAMPLE data only.
-6. Tests: two users in two projects; read, list, update, analyze, decide, forged body `projectId`/`userId`, missing header, unknown user.
+1. `src/core/Domain` + `Workflow/WorkflowState.cs`: `Project` (contacts, domain-ID suffix, group naming pattern), `MappingRow`, `ResponseRecord`, `AccessRequest` with its workflow state (`flow`: status, waiting on, reviewed scope, approvals, team tasks, final checks, stages, events, attempts).
+2. `src/core/Storage/DataStores.cs` + `src/adapters/Storage/CosmosDocumentStore.cs`: 8 containers — `projects`, `requests`, `reviewRuns` (unique `/idempotencyKey`), `userAccess` (`/userId`), `mappingSheet`, `responseDocument`, `notifications`, `issues`; legacy v1 containers stay declared but unused. ETag `If-Match` on every replace.
+3. `src/core/Security/Access.cs`: roles Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator → permissions; identity only from `x-ms-client-principal`; 404 for a project the caller has no role in, 403 for a missing permission.
+4. `staticwebapp.config.json`: every route needs `authenticated` except `/signed-out.html`; `/logout` → `/.auth/logout?post_logout_redirect_uri=/signed-out.html`; non-Entra providers blocked.
+5. `tools/seed_sample_data.py`: SAMPLE data only (`--domain-suffix` for real UPN suffixes; `--register-user` with v2 roles).
 
-**Outputs:** code, tests, seed script, updated `VERIFIED_FACTS` (SWA auth Free vs Standard).
+**Outputs:** domain, stores, access policy, seed script, infra container list (`infra/modules/pilot.bicep`, kept in step by `InfraConsistencyTests`).
 
-**Validation (exit gate):** cross-project read/review/tamper tests all fail closed (403/404, no data in body).
+**Validation (exit gate):** `AccessTests` and AC25 — cross-project read, write and approval attempts fail closed with no data in the body; forged body fields are ignored.
 
-**Failure handling:** emulator not available → run Cosmos-dependent tests against an in-memory repository implementing the same contract, and mark emulator run as pending. Any test showing disclosure blocks the phase.
+**Failure handling:** any test showing disclosure blocks the phase. No Cosmos emulator → the in-memory store implements the same contract (ETag, unique keys).
