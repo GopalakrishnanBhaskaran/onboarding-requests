@@ -1,0 +1,63 @@
+# 09 — Onboarding flow v2 (AI review, Owner → Security, ID team, role team, AI verification)
+
+**Purpose:** Run the v2 flow: the AI agent reviews, routes, tracks, verifies and reports; the named Owner and Security approve; the ID team and the role assignment team make the changes. The agent never approves, creates or assigns.
+
+**Supersedes:** `08-entra-handoff.md` (Phase 2/2b/2c: Entra access packages, auto-assign, joiner provisioning, show-once TAP). Built 17 Oct 2026 on branch `claude/charming-goldberg-2f0ejk`; **not deployed yet**.
+
+## Flow (stated to every requester upfront)
+1. Requester submits the request
+2. AI review (mapping sheet + response document)
+3. Owner approval
+4. Security approval
+5. ID team creates user/group (+ TAP)
+6. Role assignment team assigns roles
+7. AI verification, notifications, audit
+
+## People and app roles (`userAccess`, per project)
+| App role | Person | Can |
+|---|---|---|
+| Requester | anyone requesting access for a joiner | submit, correct and resubmit a returned request |
+| Owner | business owners (only the one **named** on a request decides it) | approve / reject the business need |
+| Security | security approvers | approve / reject risk and access level; issues list; reports |
+| IdTeam | identity team | pick up and record Stage 4 tasks; mark a mapping-sheet group as created |
+| RoleTeam | role assignment team | pick up and record Stage 5 tasks |
+| PMO | PMO | edit the mapping sheet; reports (informed only, never approves) |
+| Operator | pilot operator | issues, reports, run the agent step now, recover stuck reviews |
+
+v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 roles.
+
+## Deploy (each step needing approval is marked)
+1. `tools/deploy_free.sh params <sub>` (after a Cloud Shell reset), set `enableHandoff=true`, `deployWorker=true` in `.local/params.json` (the worker is the AI agent).
+2. `tools/deploy_free.sh whatif <sub> .local/params.json` → review `.local/whatif.txt`. Expected: + containers `mappingSheet`, `responseDocument`, `notifications`, `issues`; worker Cosmos data roles re-scoped to the containers it uses; worker app settings (`WORKFLOW_SCHEDULE`, `NOTIFY_SENDER=Outbox`, `ROLE_READER=None`, SLAs, `TAP_MAX_LIFETIME_MINUTES`); retired `ENTRA_*` settings off. No new resource types; cost unchanged (₹50–300/month from credits). **Wait for "approved".**
+3. `tools/deploy_free.sh apply <sub> .local/params.json --approved-by "Gokul <date>"` (deploys app + worker, seeds SAMPLE data).
+4. `tools/deploy_free.sh grant-graph <sub>` — Graph **read** roles: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All (Global Administrator or Privileged Role Administrator). **Security change: approval.**
+5. `tools/deploy_free.sh revoke-graph-writes <sub>` (dry run lists the 7 Phase 2b/2c roles) → after approval `… --approved-by "Gokul <date>"`. **Security change: approval.**
+6. Seed with the tenant domain so domain-specific IDs match real UPNs: `COSMOS_CONNECTION_STRING=… python3 tools/seed_sample_data.py --domain-suffix @<tenant>.onmicrosoft.com`.
+7. Each tester signs in once, reads `userId` from `/.auth/me`, then `python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles <roles>`. Use separate people (or InPrivate windows) for Requester, Owner, Security, IdTeam, RoleTeam: the same person cannot be Owner approver and Security approver of one request.
+8. `bash tools/workflow_diag.sh <sub>` — worker running, settings, Graph roles (read-only), containers.
+
+## End-to-end test (live)
+1. Requester: New onboarding request → `sample.e2e1`, SAMPLE Databricks Engineering / User, Owner = the Owner tester's sign-in name. Expect **AI Review**, then within ~5 min **Awaiting Owner** (worker finishes the Entra cross-check; group not in Entra → FAIL unless the row is "to be created").
+2. Owner: My actions → open → *Approve business need* → **Awaiting Security**. Check a second Owner sees no decision buttons.
+3. Security: *Approve risk and access level* → **With ID Team**; ID team notified.
+4. ID team (in Entra, not in the app): create the user (if new) and group per the task, add membership, **then** issue a one-time TAP with the shortest lifetime and give it to the user directly. In the app: Pick up task → record user ID, group, checkboxes, TAP issued/expiry/one-time/issued-by → **With Role Team** within ~5 min (Entra verified). A wrong group name → task Returned with the exact difference.
+5. Role team (in Azure/Databricks): assign the role from the task. In the app: record exactly what was assigned → **Verifying**.
+6. User: first sign-in with the TAP, register a permanent method (Authenticator); ID team deletes the TAP if it is not one-time-consumed. → **Completed** within ~5 min; notifications listed on the request; ADO work item if enabled.
+7. Record each result in `docs/DEPLOYMENT_LOG.md` (no user ids, no TAP values).
+
+## Validation
+- Status table shows Request ID, requester, stage, waiting on, done, next, time in stage, ADO link.
+- Daily summary (Issues and reports) shows wait time per team; issues list shows any SLA breach, mismatch or unauthorized approval.
+- `tools/workflow_diag.sh` shows only read Graph roles on the worker after step 5.
+
+## Failure handling
+| Symptom | Action |
+|---|---|
+| Stuck in AI Review > 10 min | `workflow_diag.sh`; worker log line `workflow-agent done`, Operator → *Run agent step now*; Entra read failure → issue `DependencyFailure`. |
+| Failed-Needs-Dev | Issues and reports → developer issue report (`NeedsDeveloper` issue); fix (redeploy if code), then Operator → *Resume after fix* on the request. |
+| Unauthorized approval issue | Security reviews who tried; nothing changed in the request. |
+| Task past SLA | Reminder, then escalation to the team manager (project contacts). |
+| Mapping sheet changed mid-flow | Agent re-runs the review automatically; new approvals needed only if group or role changed. |
+
+## Phase 2 leftovers in the tenant (decide, do not auto-delete)
+The Phase 2 access package `SAMPLE Data Engineer – Dev`, policy "PMO Review auto-assign", group `SAMPLE-GRP-ALPHA-DEV-ENG`, accounts `sample.joiner*` with P2 licences and the `handoffs` / `joinerPasses` containers are not used by v2. Removing them is a deletion: list them for Gokul and act only on his written decision.

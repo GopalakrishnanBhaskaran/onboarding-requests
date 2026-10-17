@@ -1,5 +1,7 @@
 # 03 — Processing
 
+> **v2 (17 Oct 2026):** the request flow, roles and checks changed — see `workflows/09-onboarding-flow-v2.md` and `docs/ARCHITECTURE.md`. This SOP records how the phase was built; the build and test commands in `CLAUDE.md` are current.
+
 **Purpose:** Run reviews with truthful statuses under duplicates, concurrency, edits, timeouts and retries.
 
 **Inputs:** Engine (Phase 2); `VERIFIED_FACTS` F3 (45 s gateway limit).

@@ -1,5 +1,7 @@
 # 01 — Data model and access
 
+> **v2 (17 Oct 2026):** the request flow, roles and checks changed — see `workflows/09-onboarding-flow-v2.md` and `docs/ARCHITECTURE.md`. This SOP records how the phase was built; the build and test commands in `CLAUDE.md` are current.
+
 **Purpose:** Build the Cosmos model, the server-side access model and snapshot logic, and prove cross-project isolation.
 
 **Inputs:** Approved schema in `docs/PHASE0_PLAN.md` §3; `VERIFIED_FACTS` F12–F17.

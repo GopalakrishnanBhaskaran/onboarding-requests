@@ -61,6 +61,8 @@ public static class Endpoints
         });
         host.Map("POST", "projects/{projectId}/requests/{requestId}/advance", async c =>
             Ok(await workflow.AdvanceAsync(c.Caller, c["projectId"], c["requestId"], c.Request.CorrelationId, c.Ct)));
+        host.Map("POST", "projects/{projectId}/requests/{requestId}/resume", async c =>
+            Ok(await workflow.ResumeAsync(c.Caller, c["projectId"], c["requestId"], c.Request.CorrelationId, c.Ct)));
 
         // Sources of truth.
         host.Map("GET", "projects/{projectId}/mapping-sheet", async c =>

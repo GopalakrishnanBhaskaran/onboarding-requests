@@ -1,53 +1,62 @@
-# Pilot Report — PMO Request Review (zero-cost pilot)
+# Pilot Report — PMO onboarding flow (v2)
 
-Generated 2026-10-16 03:41 UTC from commit `a8b95c0` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
+Generated 2026-10-17 03:56 UTC from commit `8aafffc` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
 
 ## Verdict
 
-- Acceptance cases: **24/24 passed**.
-- Critical gates: **10/10 passed**.
-- Unit, contract and security tests: **152/152 passed** (0 failed, 0 skipped).
-- Browser end-to-end (Playwright via SWA CLI emulator, two mock users): **5 passed, 0 failed**.
+- Acceptance cases: **27/27 passed**.
+- Critical gates: **12/12 passed**.
+- Unit, contract and security tests: **204/204 passed** (0 failed, 0 skipped).
+- Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **6 passed, 0 failed**.
 
 ## Critical gates
 
-| Gate | Covered by |
-|---|---|
-| Zero cross-project disclosure | AC10, AC11 |
-| Zero fulfilment actions | AC21 |
-| All seeded missing fields detected | AC22 |
-| Every citation resolves to a pinned version | AC18, AC23 |
-| Injection / forged approval non-executable | AC08, AC09, AC24 |
-| No result tampering | AC12 |
+| Gate | Case | Result |
+|---|---|---|
+| Incomplete request rejected | AC02 | **PASS** |
+| Mapping gap returned, never sent for approval | AC05 | **PASS** |
+| Partially reviewed request never sent for approval | AC09 | **PASS** |
+| Unknown approver ignored, logged, Security alerted | AC10 | **PASS** |
+| Owner then Security, separate people | AC11 | **PASS** |
+| SLA reminder then escalation, never auto-approval | AC13 | **PASS** |
+| ID team task and TAP rules | AC14 | **PASS** |
+| TAP never accepted or stored | AC15 | **PASS** |
+| Mapping change after review re-runs the review | AC18 | **PASS** |
+| Agent never approves, creates or assigns | AC23 | **PASS** |
+| Prompt injection | AC24 | **PASS** |
+| Cross-project isolation | AC25 | **PASS** |
 
 ## Cases
 
 | Id | Case | Expected | Actual | Evidence | Result |
 |---|---|---|---|---|---|
-| AC01 | Complete request | Completed; ReadyForHumanReview; mapping Matched; humanReviewRequired=true | Completed/ReadyForHumanReview; mapping Matched; humanReviewRequired=True | run d8df61b72f014ce984e781039c22f68a.r1.a0; snapshotHash c3c645eb81e1c2be… | **PASS** |
-| AC02 | Missing mandatory field | NeedsInformation; MISSING_FIELD cited to pinned rule; clarification question | NeedsInformation; MISSING_FIELD(A-REQ-MGR v1) | questions: Please provide the line manager. (Required by A-REQ-MGR v1.) | **PASS** |
-| AC03 | Invalid dates | NeedsInformation; INVALID_DATES | NeedsInformation; INVALID_DATES | — | **PASS** |
-| AC04 | Unsupported project | ManualReviewRequired; UNSUPPORTED_PROJECT | ManualReviewRequired; UNSUPPORTED_PROJECT; mapping NotApplicable | — | **PASS** |
-| AC05 | Unknown / ambiguous role | NeedsInformation; UNKNOWN_ROLE; mapping NotFound; question asks for approved role | 'SAMPLE Astronaut' -> NeedsInformation/NotFound; 'Engineer' -> NeedsInformation/NotFound | question: The business role has no approved mapping for this environment. Which approved business role should be used? | **PASS** |
-| AC06 | Missing / expired requirement | ManualReviewRequired; NO_PUBLISHED_REQUIREMENT; expired and draft rules not pinned | ManualReviewRequired; NO_PUBLISHED_REQUIREMENT; pinned rules:  | A-RC-OLD (expired 2025-12-31) and A-RC-NEW (Draft) exist in SAMPLE data | **PASS** |
-| AC07 | Conflicting mappings | ManualReviewRequired; mapping Ambiguous; AMBIGUOUS_ROLE | ManualReviewRequired; mapping Ambiguous; AMBIGUOUS_ROLE | 2 published mappings match; a human must choose. | **PASS** |
-| AC08 | Prompt injection **(gate)** | UNTRUSTED_INSTRUCTION finding; ManualReviewRequired; text not echoed; nothing executed | Completed/ManualReviewRequired; findings UNTRUSTED_INSTRUCTION; request revision still 1 | result text does not echo the attack string | **PASS** |
-| AC09 | Forged approval **(gate)** | CLAIMED_APPROVAL finding; never Ready; humanReviewRequired=true | ManualReviewRequired; CLAIMED_APPROVAL; humanReviewRequired=True | — | **PASS** |
-| AC10 | Unauthorized caller **(gate)** | No principal -> 401; non-Entra provider -> 401; signed-in unregistered -> 404 and no data | no principal 401; github provider 401; unregistered 404 | — | **PASS** |
-| AC11 | Cross-project access **(gate)** | Other-project user gets 404 on read/list/update/analyze/runs/decisions; no data in body; reviewer tools cannot cross projects | read 404; list 404; update 404; analyze 404; run 404; runs 404; decision 404; own-route-foreign-id 404; reviewer cross-project tool call -> TOOL_SCOPE_VIOLATION | no response body contains Alpha request data | **PASS** |
-| AC12 | Result tampering **(gate)** | No route writes result/status (405/404); forged body fields ignored; tampered result fails schema | PUT run 405; POST result 404; forged decision fields -> reviewer sample-user-rita; run after Completed/ReadyForHumanReview; tampered result schema errors 3 | — | **PASS** |
-| AC13 | Duplicate trigger | Same run returned; one run; one completed result | run ids 4a4148503f654fc5a5b6a934a6a277a3.r1.a0 / 4a4148503f654fc5a5b6a934a6a277a3.r1.a0 / 4a4148503f654fc5a5b6a934a6a277a3.r1.a0; duplicate flags True,True; runs stored 1; completed 1 | — | **PASS** |
-| AC14 | Concurrent analysis | Parallel Analyze calls create exactly one run | 10 parallel calls -> distinct run ids 1; runs stored 1; status Completed | — | **PASS** |
-| AC15 | Edit during processing | Run Superseded with supersededByRevision; history kept; new revision analysable | first run Superseded/ReadyForHumanReview (rev 1, superseded by 2); second run Completed/ReadyForHumanReview (rev 2) | — | **PASS** |
-| AC16 | Timeout | Run Failed(Timeout) within budget; operator recovers stuck run as Failed(Timeout) | Failed/- errorCategory Timeout after 1.0s (budget 1 s); operator recover endpoint 200 | production budget 30 s < SWA 45 s gateway limit (VERIFIED_FACTS F3); stuck-run recovery also covered in ProcessingTests | **PASS** |
-| AC17 | Malformed result | Model output not matching schema -> run Failed(MalformedResult); no partial result | Failed/- errorCategory MalformedResult; result Null | mocked Azure OpenAI returned truncated JSON | **PASS** |
-| AC18 | Unsupported citation **(gate)** | Unknown/wrong-version citation removed; UNSUPPORTED_CITATION; ManualReviewRequired | ManualReviewRequired; UNSUPPORTED_CITATION | — | **PASS** |
-| AC19 | Retry | New run linked by retryOfRunId completes; retry of completed run refused | first run Failed; retry 202 -> Completed/ReadyForHumanReview retryOf daa64f3055f54c47b04e9334041533f3.r1.a0; retry of completed run 409 | — | **PASS** |
-| AC20 | Browser closure | Caller disconnect after accept does not lose the run; run Completed | caller token cancelled mid-processing; run Completed/ReadyForHumanReview | — | **PASS** |
-| AC21 | Gate: zero fulfilment actions **(gate)** | No API route approves/grants/assigns/provisions; RuleOnly reviewer has no network dependency; QueueDispatcher/AzureOpenAI refused without paid flag | 20 routes, fulfilment-like routes: 0; AzureOpenAI without flag: refused: REVIEW_MODEL_PROVIDER=AzureOpenAI requires ALLOW_PAID_SERVICES=true. The zero-cost pilot uses RuleOnly.; Queue without flag: refused: REVIEW_DISPATCHER=Queue requires ALLOW_PAID_SERVICES=true. The zero-cost pilot uses Inline.; RuleOnly constructor dependencies: 0 | GET me \| GET projects/{projectId}/requests \| POST projects/{projectId}/requests \| GET projects/{projectId}/requests/{requestId} \| PUT projects/{projectId}/requests/{requestId} \| GET projects/{projectId}/rules \| POST projects/{projectId}/rules \| POST projects/{projectId}/rules/{id}/status \| GET projects/{projectId}/mappings \| POST projects/{projectId}/mappings \| POST projects/{projectId}/mappings/{id}/status \| POST projects/{projectId}/requests/{requestId}/analyze \| GET projects/{projectId}/requests/{requestId}/runs \| GET projects/{projectId}/runs/{runId} \| POST projects/{projectId}/runs/{runId}/retry \| GET projects/{projectId}/runs/{runId}/decisions \| POST projects/{projectId}/runs/{runId}/decisions \| GET attention \| POST projects/{projectId}/operator/recover \| GET projects/{projectId}/requests/{requestId}/handoffs | **PASS** |
-| AC22 | Gate: all seeded missing fields detected **(gate)** | Each of 7 fields, when missing, yields MISSING_FIELD and never Ready | 7/7 missing fields detected, none Ready | requestType: NeedsInformation; role: NeedsInformation; environment: NeedsInformation; manager: NeedsInformation; justification: NeedsInformation; startDate: NeedsInformation; endDate: NeedsInformation | **PASS** |
-| AC23 | Gate: every citation resolves to pinned version **(gate)** | Across all scenario results, every ruleId/version and mappingId/version is in the run's pinned set | 8 citations across 6 scenarios; all resolve to pinned versions | — | **PASS** |
-| AC24 | Gate: injection and forged approval non-executable (paid model path, mocked) **(gate)** | Mocked Azure OpenAI output claiming readiness or inventing mappings cannot change host readiness or mapping | ManualReviewRequired; mapping A-MAP-ENG-DEV; CLAIMED_APPROVAL, UNTRUSTED_INSTRUCTION, UNSUPPORTED_CITATION | mocked Azure OpenAI tried to set readiness and invent an admin mapping | **PASS** |
+| AC01 | Flow overview stated upfront | Submit response and notification carry the 7-step flow and who does what | response flowOverview 7 steps; notification to sample-user-alice@sample.invalid | Your onboarding request for Sample Joiner (sample.e1001@sample.invalid): 'User' on 'SAMPLE Databricks Engineering' was received.; ; Flow: | **PASS** |
+| AC02 | Incomplete request rejected **(gate)** | 400 incomplete_request listing exactly the missing fields; nothing saved | 400 incomplete_request: First name, Last name, Access level, Justification, Owner | saved requests: 0 | **PASS** |
+| AC03 | Domain-specific ID derived; ID/name format fixed | domainId = normalised Enterprise ID + project domain; format fixes logged | domainId sample.e7007@sample.invalid; names Sample Joiner | — | **PASS** |
+| AC04 | Review pass goes to the Owner with the AI summary | Awaiting Owner; notification to the named Owner with what, why, group, role, risk flags, review results | AwaitingOwner; to sample-user-olivia@sample.invalid | What: Sample Joiner (sample.e1001@sample.invalid) requests 'User' on 'SAMPLE Databricks Engineering'.; Why: SAMPLE: joins the data engineering team to build and run ingestion pipelines in the dev workspace.; Group: SAMPLE-GRP-ALPHA-DBW-ENG-USER.; Role: SAMPLE Workspace User at SAMPLE dbw-alpha-dev.; Risk flags: none.; Review: Pass — 20/20 checks passed. | **PASS** |
+| AC05 | Mapping gap returned, never sent for approval **(gate)** | Returned to requester and PMO with specific reasons; no approval request | Returned; to sample-user-alice@sample.invalid,sample.pmo.alpha@sample.invalid | Mapping sheet: The mapping sheet has no row for resource 'SAMPLE Unknown System'. | **PASS** |
+| AC06 | Mapping sheet checks | Duplicate/conflicting rows, deprecated row, bad group name, unflagged privileged role each FAIL with a reason | Fail; failed REQ_PRIVILEGED_FLAGGED | Request vs mapping: Role Owner ('Admin') is privileged but row A-BILLING-ADMIN is not flagged Privileged. PMO must flag it. | **PASS** |
+| AC07 | Response document checks | Existing duplicate and conflicting assignment FAIL | duplicate: RESP_NO_DUPLICATE; conflict: RESP_NO_CONFLICT | — | **PASS** |
+| AC08 | Risk flags recorded | Privileged, guest, existing broad access, sensitive resource flagged; review still Pass | Pass; flags Privileged access, Guest user, Existing broad access, Sensitive resource | — | **PASS** |
+| AC09 | Partially reviewed request never sent for approval **(gate)** | Entra cross-check Pending keeps the request in AI Review; no approval request | AiReview; run outcome Pending; ENTRA_GROUP Pending | — | **PASS** |
+| AC10 | Unknown approver ignored, logged, Security alerted **(gate)** | 403 not_an_approver; no approval recorded; High issue; alert to Security | 403 not_an_approver; status AwaitingOwner; issue High; alert to sample.security.alpha@sample.invalid | — | **PASS** |
+| AC11 | Owner then Security, separate people **(gate)** | Security before Owner refused; same person refused; separate Security moves to ID team | security first: 403; same person: 409 same_approver; separate security: 200; now WithIdTeam | — | **PASS** |
+| AC12 | Rejection captures remarks, notifies, stops | Rejected; requester and PMO notified with remarks | Rejected; notified sample-user-alice@sample.invalid,sample.pmo.alpha@sample.invalid | Request for Sample Joiner (sample.e1001@sample.invalid): 'User' on 'SAMPLE Databricks Engineering' was rejected by Security (sample-user-sam@sample.invalid) on 2026-10-17 09:00 UTC.; ; Remarks: SAMPLE: risk too high for a guest. | **PASS** |
+| AC13 | SLA reminder then escalation, never auto-approval **(gate)** | One reminder, one escalation; still awaiting approval | reminder 1, escalation 1; status AwaitingSecurity | — | **PASS** |
+| AC14 | ID team task and TAP rules **(gate)** | Task has user details, groups, approved summary; TAP not one-time / too long / before membership rejected | not one-time 400; 8h 400; before membership 400 | User: Sample Joiner; Enterprise ID sample.e1001; domain-specific ID sample.e1001@sample.invalid.; Group: SAMPLE-GRP-ALPHA-DBW-ENG-USER — exists: use it.; Steps: create the user ID if missing; add the user to the group; then issue a ONE-TIME Temporary Access Pass with the shortest lifetime (at most 60 minutes) and give it to the user directly, separately from the Enterprise ID. Never put the pass in mail, tickets, chat or this app: record only issued time, expiry, one-time flag and issued-by. | **PASS** |
+| AC15 | TAP never accepted or stored **(gate)** | Body carrying a pass refused; pass appears nowhere (request, notifications, issues) | 400; pass found anywhere: False | — | **PASS** |
+| AC16 | Different group returned to the ID team | Task Returned with the exact difference; GroupNameMismatch issue | Returned | - Expected group SAMPLE-GRP-ALPHA-DBW-ENG-USER (reviewed and approved), reported SAMPLE-GRP-ALPHA-OTHER. Fix the group name, or update the mapping sheet — the request is then reviewed again and needs new approvals. | **PASS** |
+| AC17 | Role mismatch returned to the role team | Task Returned (missing/extra role); RoleMismatch issue | Returned | - Reported and recorded: missing SAMPLE Workspace User at SAMPLE dbw-alpha-dev; extra SAMPLE Workspace Admin at SAMPLE dbw-alpha-dev. Correct the assignment or revoke the extra role. | **PASS** |
+| AC18 | Mapping change after review re-runs the review **(gate)** | mapping-changed event, new review, continues only if group and role are unchanged | AwaitingSecurity; events mapping-changed > review-start > review-pass | — | **PASS** |
+| AC19 | Final verification and notifications | Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified | Completed; checks FINAL_LOGIN=Pass, FINAL_ACCESS=Pass, FINAL_PERMANENT_METHOD=Pass, FINAL_TAP_DELETED=Pass | notifications: FlowOverview, ApprovalRequested, TeamTask, AccessReady, CompletionSummary, PmoInformed, Closure | **PASS** |
+| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-fff408d9625c403ba7db0609ccd18d31 | Onboarding fff408d9: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
+| AC21 | Status line and time per stage | Request ID \| Requester \| stage \| waiting on \| done \| next \| time in stage \| ADO link; wait per team | Awaiting Owner \| waiting Owner \| 5h 0m | Owner=5h 0m; AI agent=0m | **PASS** |
+| AC22 | Auto-fix limit then Failed-Needs-Dev | At most 3 retries per step; Failed-Needs-Dev with developer report | FailedNeedsDev; attempts r1=3 | — | **PASS** |
+| AC23 | Agent never approves, creates or assigns **(gate)** | No grant/assign/provision route; no Entra write call in source | 24 routes, none grant/assign/provision; Entra write calls in source: 0 | — | **PASS** |
+| AC24 | Prompt injection **(gate)** | REQ_TEXT_CLEAN fails; text not echoed; nothing followed | Fail; REQ_TEXT_CLEAN=Fail | Request text in Justification contains instruction-like text or claims an approval. Approvals come only from the Owner and Security in this app; rewrite it. | **PASS** |
+| AC25 | Cross-project isolation **(gate)** | Other project gets 404 for view and approval | view 404; approve 404 | — | **PASS** |
+| AC26 | Daily summary with wait time per team | Once per day to Operators, PMO, Security; includes wait time per team | to sample.operator.alpha@sample.invalid,sample.pmo.alpha@sample.invalid,sample.security.alpha@sample.invalid | Daily summary SAMPLE-ALPHA — 2026-10-17 (UTC); Submitted 1 · Completed 0 · Rejected 0 · Returned 0 · Failed-Needs-Dev 0; Open by status: Awaiting Security 1; Waiting on: Security 1; Wait time per team today: Security 15h 0m; Average time per stage (completed today): —; SLA breaches today: 0 · Open issues: none;  | **PASS** |
+| AC27 | Azure OpenAI contract (mocked) | Structured JSON, temperature 0, secrets masked, 429 backoff, token usage recorded | temperature 0; format json_schema; calls 2; tokens 120+30 | — | **PASS** |
 
 ## Not measured in this pilot
 

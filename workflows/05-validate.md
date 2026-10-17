@@ -1,5 +1,7 @@
 # 05 — Validate
 
+> **v2 (17 Oct 2026):** the request flow, roles and checks changed — see `workflows/09-onboarding-flow-v2.md` and `docs/ARCHITECTURE.md`. This SOP records how the phase was built; the build and test commands in `CLAUDE.md` are current.
+
 **Purpose:** Prove the pilot meets the critical gates before any deployment.
 
 **Inputs:** All code; seeded SAMPLE data.

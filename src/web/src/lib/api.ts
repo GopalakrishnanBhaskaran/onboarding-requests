@@ -97,6 +97,7 @@ export const api = {
   reportRoleTeam: (projectId: string, requestId: string, assignedRoles: AssignedRole[], notes: string) =>
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/role-team/report`, { assignedRoles, notes: notes || null }),
   advance: (projectId: string, requestId: string) => call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/advance`, {}),
+  resume: (projectId: string, requestId: string) => call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/resume`, {}),
 
   mappingSheet: (projectId: string) => call<{ items: Item<MappingRow>[] }>('GET', `${p(projectId)}/mapping-sheet`),
   addMappingRow: (projectId: string, row: Record<string, unknown>) => call<Item<MappingRow>>('POST', `${p(projectId)}/mapping-sheet`, row),

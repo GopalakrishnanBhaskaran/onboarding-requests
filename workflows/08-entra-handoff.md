@@ -1,4 +1,6 @@
-# 08 — Entra hand-off (Phase 2, Option A)
+# 08 — Entra hand-off (Phase 2, Option A) — SUPERSEDED
+
+> **Superseded on 17 Oct 2026 by `09-onboarding-flow-v2.md`.** In v2 the agent never creates or assigns: the ID team and the role assignment team make the changes and the app verifies them. Kept as the record of what is live until v2 is deployed; do not extend.
 
 **Purpose:** Take an accepted, ready review through to access in Microsoft Entra, without the app approving or assigning anything.
 

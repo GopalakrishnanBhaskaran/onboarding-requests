@@ -1,70 +1,61 @@
-# SCOPE — PMO Request Review, Phase 1 Pilot
+# SCOPE — PMO onboarding flow (v2, 17 Oct 2026)
 
-**Status:** Draft. The "Final Power Apps Build Prompts (LOCKED v1.0, 9 Oct 2026)" pack was **not attached** to the build session. This table is built from the pilot prompt (v1.0, 16 Oct 2026) only. It must be reconciled line by line against the locked pack before plan approval (Q7).
+v2 replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves, creates or assigns.** People approve; the ID team and the role assignment team make the changes in their own tools and record what they did here.
+History (v1 + Phase 2 hand-off): `docs/DEPLOYMENT_LOG.md`, `workflows/08-entra-handoff.md` (superseded).
 
-The pilot checks whether an onboarding/access request is ready for human review. It **does not approve, route, fulfil or grant anything.**
+## Flow overview (stated to every requester upfront)
+1. Requester submits the request
+2. AI review (mapping sheet + response document)
+3. Owner approval
+4. Security approval
+5. ID team creates user/group (+ TAP)
+6. Role assignment team assigns roles
+7. AI verification, notifications, audit
 
-## Phase 2 addition — Entra hand-off (approved by Gokul, 16 Oct 2026)
-Option A: after a Reviewer accepts a ready review, the app gives the new joiner the **My Access link** of the mapped **Entra access package**. Entra runs the approval, adds the group membership, enforces the end date and keeps the audit trail. A background worker reads Entra (read-only) and shows the status in the app. The app still never approves, assigns or removes access. Paid from Azure credits, budget ₹2,000/month. Workflow: `workflows/08-entra-handoff.md`.
+## Who does what (strict)
+| Who | Does | Never |
+|---|---|---|
+| AI agent (API + worker) | Reviews, validates, summarises, routes, tracks, verifies, reports | Approves, creates users/groups, assigns roles or membership, issues or sees a TAP |
+| Owner (named on the request) | Approves the business need | — |
+| Security | Approves risk and access level | Approves at the Owner stage of the same request |
+| ID team | Creates the user ID and Entra groups, adds membership, issues the TAP | — |
+| Role assignment team | Assigns roles | — |
+| PMO | Owns the mapping sheet; informed only | Approves |
 
-| Now included (Phase 2) | Still excluded |
-|---|---|
-| New joiner sign-in name (UPN) on the request, format-checked, never looked up | Creating users or groups from the app |
-| Mapping → access package link (Maintainer, versioned) | Graph writes; `adminAdd` direct assignment |
-| Hand-off record + My Access link on Accepted | Approval screens in the app |
-| Read-only status sync (requested, pending approval, delivered, denied, expired, end-date check) | Emails/Teams from the app (Entra sends its own) |
+Nobody else approves. A decision from anyone else is ignored, logged as an *Unauthorized approval* issue and Security is alerted.
 
-### Phase 2b — automatic Entra assignment (approved by Gokul, 16 Oct 2026, in this session)
-Choices: **Reviewer Accept = access decision**, **four-eyes on**, **admin script for the Entra setup**. Off by default (`enableAutoAssign` / `ENTRA_AUTO_ASSIGN`).
-When on, a **second Reviewer** (not the person who created or analysed the request) accepting a *Ready for human review* run is the access decision. The worker then files **one** Entra `adminAdd` assignment request for the snapshot joiner, on the pinned mapping's access package, through the **"PMO Review auto-assign"** policy (direct assignments only, no self-requests, no approval stage, max 180 days), for the reviewed start/end dates. Entra adds the group membership and removes it on the end date; the worker reads the status back.
+## Sources of truth (read fresh on every request; never hardcoded or cached)
+| Source | Holds | Container |
+|---|---|---|
+| PMO-to-Entra Group Mapping Sheet | resource + access level → Entra group → role (scope, privileged, sensitive, deprecated, group state) | `mappingSheet` |
+| Response Document | user, group, role, approvals, justification, assigned roles | `responseDocument` |
 
-| Now included (Phase 2b) | Still excluded |
-|---|---|
-| One Graph write: `POST assignmentRequests` with `requestType=adminAdd`, only for packages in the one allowed catalog | Any other Graph write (no removals, no updates, no group/user/policy changes) from the app or worker |
-| Graph `User.ReadBasic.All` to resolve the joiner's object id | Creating users; looking up anything else about the joiner |
-| Admin setup script (catalog, package, policy, mapping link) run by a Global Administrator | The worker creating or changing access packages or policies (until Phase 2c) |
-
-### Phase 2c — automatic accounts and packages (approved by Gokul, 16 Oct 2026, in this session)
-Choices: **Temporary Access Pass** for the first sign-in (shown once in the app), **packages set up automatically when a mapping is published**, **P2 licence assigned**. Off by default (`enableJoinerProvisioning`, `enablePackageAutoCreate`; both need auto-assign).
-
-| Now included (Phase 2c) | Still excluded |
-|---|---|
-| Worker creates the joiner's account when no user has the reviewed UPN (`sample.` prefix, tenant domain only), random password nobody sees | Changing, disabling or deleting any existing user; passwords shown to anyone |
-| Entra ID P2 licence on accounts the app created | Licences for existing users |
-| Temporary Access Pass (starts on the reviewed start date, 8 h), shown **once** to a PMO/Reviewer, then removed; TTL deletes the record | Sending the pass by email/Teams; TAPs for existing users |
-| Package set-up for published mappings: group (`SAMPLE-GRP-`, security, never role-assignable), catalog resource, access package `<role> – <env> [<mapping id>]`, Member role, "PMO Review auto-assign" policy; next mapping version with the link | Using existing role-assignable or non-security groups; any package outside the PMO catalog |
+A change to the mapping sheet rows of a resource after review re-runs the review of in-flight requests for that resource; if the group or role changed, earlier approvals are superseded.
 
 ## Included
-| Area | What the pilot does |
+| Stage | What the app does |
 |---|---|
-| Request capture | PMO user creates/edits a request for their own project with minimum fields |
-| Snapshot | Server freezes the request at Analyze time with a SHA-256 hash |
-| Deterministic checks | Mandatory fields, date/type consistency, supported project/environment, published + effective requirement exists |
-| Reference lookups | Two read-only tools: published requirements, approved role mapping (project-scoped, version-pinned) |
-| Review result | Findings with citations, mapping assessment, clarification questions, readiness |
-| Readiness | NeedsInformation / ReadyForHumanReview / ManualReviewRequired. Host computes it, not the reviewer |
-| Run history | Every run kept, with revision, versions used, Superseded label |
-| Reviewer feedback | Accepted / Corrected / Escalated on review **quality** (not access approval) |
-| Maintainer | Publish SAMPLE rules and role mappings (server-side role check) |
-| Operator | Mark stuck runs as Failed (timeout) |
-| Paid adapters | Azure OpenAI reviewer and queue dispatcher coded, unit-tested with mocks, **disabled** |
+| 1 Intake | Enterprise ID, first/last name, resource, access level, justification, Owner (sign-in name), guest flag. Domain-specific ID derived. Incomplete → rejected listing exactly what is missing. Safe format fixes only (spaces, case). |
+| 2 AI review | Checks: intake complete; mapping row exists / single group+role / no conflict / group naming / not deprecated; response document format / no duplicate / no conflict / role match / justification; request vs mapping (level justified, privileged flagged, text clean); Entra cross-check (read-only, or "to be created by ID team"); risk flags (privileged, guest, broad, sensitive). PASS → Owner with AI summary; FAIL → returned to requester + PMO with reasons. Never sent on unreviewed or partly reviewed (Entra check still pending). |
+| 3 Approvals | Owner, then Security; valid only from the named Owner / a Security member, in the app (tracked channel tied to the request id and the reviewed run). Reject → remarks captured, requester + PMO notified, stop. Past SLA → reminder, then escalation to the manager. Never skipped, never automatic. |
+| 4 ID team | Task with the reviewed user ID and group. The team records what it did and TAP **metadata** only. AI verifies user, group, naming, membership, mapping sheet updated (if the group was to be created) and TAP rules; mismatch → returned with the exact difference. |
+| 5 Role team | Task from the response document. The team records exactly what it assigned; AI verifies the exact roles (no extra, none missing) and, where enabled, the Azure role assignment (read-only). |
+| 6 Final | Login test (sign-in logs), permanent method registered, TAP deleted, access present; notifications to user/Owner/Security/PMO/teams; ADO work item with the full trail; time per stage and wait time per team. |
+| Status tracking | Request ID · Requester · Current stage · Waiting on · Done · Next · Time in stage · ADO link. Statuses: Submitted, AI Review, Returned, Awaiting Owner, Awaiting Security, Rejected, With ID Team, With Role Team, Verifying, Completed, Failed-Needs-Dev. |
+| Issue handling | Auto-fix only safe, idempotent items (retry max 3, reuse existing group, fix ID/name format, refresh sheet read). Idempotency key = request id + step. Issues list, end-to-end log analysis, developer issue report, daily summary with wait time per team. |
+| Azure OpenAI (coded, off) | Managed identity, structured JSON with schema validation, temperature 0, reviews/recommends only, secrets/TAP masked before the prompt, back-off on 429, token usage logged. |
 
-## Deferred / excluded
+## TAP rules
+After all approvals and group membership. One-time use, shortest lifetime (`TAP_MAX_LIFETIME_MINUTES`, default 60). Never in logs, ADO, mails or prompts (masked `******`). Delivered only to the user by the ID team, separate from the Enterprise ID. No blind retries. Not for guest/privileged users without Security approval. The app logs only: issued, timestamp, expiry, one-time flag, issued-by. The API refuses any body that carries a pass value.
+
+## Excluded
 | Item | Reason |
 |---|---|
-| **Fulfilment of any kind** | Pilot ends at human review |
-| Approval routing / approver workflow | In Entra (Phase 2), never in this app |
-| Identity creation, Microsoft Graph writes | Out of scope (Graph **reads** by the worker are Phase 2) |
-| Group assignment, credential issue | Entra assigns via the access package (Phase 2); never this app |
-| Email / Teams notifications | Out of scope |
-| Ticket creation or sync | Out of scope |
-| Billing / chargeback | Out of scope |
-| Multiple agents / agent framework | Single deterministic reviewer |
-| Attachments, OCR | Out of scope |
-| AI model at runtime | Coded but disabled (cost) |
-| Background queue processing | Coded as stub; inline in pilot |
-| App Insights, SLA, custom domain | Paid; see `docs/PROMOTION.md` |
-| 90% reviewer agreement and 25% time-saving targets | Measured later with real reviewers and the AI model |
+| Graph or ARM **writes** of any kind (users, groups, membership, roles, TAP, access packages) | The agent never creates or assigns |
+| Auto-fixing approvals, role escalation, security settings, deletions | Never automatic |
+| Storing or showing a TAP value | TAP rules |
+| Self-registration, payment, billing | Out of scope |
+| Attachments, OCR, multiple agents | Out of scope |
 
 ## UI must never contain
-Approve, grant access, payment or self-sign-up controls. Permanent banner: *"This checks request readiness. A ready review is not an access decision."* (changed 16 Oct 2026 for Phase 2b: with auto-assign on, the second Reviewer's acceptance — not the readiness check — leads to an Entra assignment).
+Grant / assign / create-user / payment / self-sign-up controls, password fields or a TAP value field. Decision controls (Approve business need, Approve risk and access level, Reject) only in the decision panel, shown only to the person whose decision is due. Permanent banner: *"The AI agent reviews, routes, verifies and reports. It never approves, creates or assigns: only the named Owner and Security approve; the ID team and the role assignment team make the changes."* Enforced by `src/web/src/guardrails.test.ts`.

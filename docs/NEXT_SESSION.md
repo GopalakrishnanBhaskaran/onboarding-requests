@@ -1,60 +1,60 @@
-# Next session — handoff (written 16 Oct 2026, end of day)
+# Next session — handoff (written 17 Oct 2026)
 
-Start by reading this file, `CLAUDE.md` (hard rules), `docs/DEPLOYMENT_LOG.md` (last ~15 rows) and `workflows/08-entra-handoff.md`.
-Branch `claude/optimistic-rubin-zipq5x`, PR https://github.com/GopalakrishnanBhaskaran/onboarding-requests/pull/1.
-Team summary (Claude Docs): https://claude.ai/code/artifact/9ff2a599-a62d-4bac-b7f4-1d4f947a57e8
+Start with this file, `CLAUDE.md` (hard rules), `SCOPE.md`, `workflows/09-onboarding-flow-v2.md` and the last rows of `docs/DEPLOYMENT_LOG.md`.
+Branch `claude/charming-goldberg-2f0ejk` (v2). The previous branch `claude/optimistic-rubin-zipq5x` / PR https://github.com/GopalakrishnanBhaskaran/onboarding-requests/pull/1 holds Phase 1 + 2/2b/2c (what is live). No PR opened for v2.
 
-## Where things stand (all live, all evidenced in DEPLOYMENT_LOG)
-- Phase 1 review app on SWA Free + Cosmos free tier: https://icy-smoke-04dcd4300.6.azurestaticapps.net
-- Phase 2 / 2b / 2c on: a **second Reviewer's Accept** → worker (Flex, every 5 min) creates the joiner account if missing (`sample.` UPNs only), assigns Entra ID P2, issues a Temporary Access Pass (TAP), files `adminAdd` → Entra adds the group; published mappings get their group/package/policy automatically.
-- Live proof 16 Oct: sample.joiner + sample.joiner2 Delivered; sample.joiner3 + sample.joiner1 accounts/licence/TAP created by the app; joiner3 assignment *scheduled* for its start date 17 Oct.
-- 432 .NET + 3 web tests pass. Cost ₹0 so far (budget ₹2,000/month).
+## What changed (v2, built 17 Oct, NOT deployed)
+- New flow: requester → AI review (mapping sheet + response document) → **named Owner** → **Security** → **ID team** (user/group + TAP) → **role team** → AI verification, notifications, audit. Statuses: Submitted, AI Review, Returned, Awaiting Owner, Awaiting Security, Rejected, With ID Team, With Role Team, Verifying, Completed, Failed-Needs-Dev.
+- The agent **never approves, creates or assigns**. All Graph write code (access packages, `adminAdd`, create user/licence/TAP/group/package) and the `handoffs` / `joinerPasses` flows were removed. Worker Graph = read only (users, groups, `checkMemberGroups`, auth methods, sign-in logs, manager).
+- TAP: recorded as metadata only (issued, expiry, one-time, issued-by); the API rejects any pass value; "after all approvals" compared at minute precision.
+- Sources of truth in Cosmos: `mappingSheet` (PMO edits in the app), `responseDocument`; a mapping change re-runs the review of in-flight requests.
+- App roles now: Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator (Reviewer/Maintainer grant nothing → re-register users).
+- Operator **Resume after fix** for Failed-Needs-Dev (back to the failed stage; a failed review starts a new review).
+- Optional, off: Azure OpenAI reviewer/assistant, Graph `sendMail`, ADO work items, ARM role read.
+- Evidence (local): 234 .NET tests, `docs/PILOT_REPORT.md` 27/27 acceptance (12/12 gates), 6/6 Playwright E2E through the SWA emulator (full flow to Completed, Returned, Owner reject, isolation, mapping sheet, signed-out page), 6 SPA guardrail tests.
 
-## Tasks requested by Gokul for 17 Oct (not started — do these, in this order)
-1. **TAP not visible in the UI → add an explicit "Show Temporary Access Pass" button.**
-   - Today `PassBox` (src/web/src/pages/RequestDetailPage.tsx) renders only when `GET …/handoffs` returns a `passes[]` entry for the latest hand-off.
-   - First diagnose (read-only): open `/api/projects/SAMPLE-ALPHA/requests/<id>/handoffs` in the browser — is `passes` present? Was the app redeployed after Phase 2c (apply at 19:14 UTC ran `swa deploy`; check the build has `Show pass (once)`)? Does `joinerPasses` hold a doc for `f717b9b2….r1` (extend `tools/handoff_diag.sh` to list pass docs **without the secret**)?
-   - Change: show a button **"Show Temporary Access Pass"** whenever the hand-off has `joinerAccountCreatedByApp && tapIssuedAt`, independent of `passes[]`; it calls `POST …/handoffs/{id}/pass/reveal`; show the server's message when already shown/expired. Keep show-once + ETag server rules. Guardrail test: avoid the words approve/grant access.
-2. **Add the joiner to the group right after the second Accept** (do not wait for the reviewed start date; Gokul: "no need to wait").
-   - Change `AssignmentOrder.For` (src/core/PmoReview.Core/Handoff/HandoffSync.cs): start = now always; keep end = reviewed end date. TAP start = now too (`JoinerProvisioning`, Provisioning.cs).
-   - Update tests `Order_uses_the_reviewed_period_and_never_starts_in_the_past`, `New_joiner_gets_account_licence_and_one_pass_then_the_assignment` (ValidFrom), docs (SCOPE Phase 2c row, workflow 08, team doc section "The flow" step 7).
-   - Record the decision in DEPLOYMENT_LOG (scope change: access starts at acceptance, not the start date).
-3. **Sign out does not work (Gmail and pilot.admin).**
-   - Cause (likely): `staticwebapp.config.json` `/logout` → `/.auth/logout?post_logout_redirect_uri=/`; `/` needs `authenticated`, so the 401 override sends the browser straight to `/.auth/login/aad`, and the Microsoft session signs it back in silently.
-   - Fix: add a public `signed-out.html` (route `allowedRoles: ["anonymous"]`, exclude from navigationFallback) with a "Sign in again / use another account" link; `post_logout_redirect_uri=/signed-out.html`; optionally also end the Microsoft session (`https://login.microsoftonline.com/common/oauth2/v2.0/logout`). For switching accounts, try `/.auth/login/aad?prompt=select_account` (UNVERIFIED that SWA passes it through — check docs, record in VERIFIED_FACTS).
-   - `InfraConsistencyTests`/guardrail tests may assert the config: update them.
-4. Deploy: `tools/deploy_free.sh app <sub>` (UI/API; code only, no Azure resource change) and `tools/deploy_free.sh worker <sub>` (item 2). Then E2E with a new joiner (`sample.joiner4@…`, start today) and log results.
+## The 17 Oct handoff tasks
+1. Show-TAP button — **superseded**: the app never holds a pass in v2; the ID team gives it to the user directly.
+2. Group access right after the second Accept — **superseded**: the ID team adds membership after Security approval; the agent verifies it.
+3. Sign-out — **done** in code: `/logout` → `/.auth/logout?post_logout_redirect_uri=/signed-out.html` (public page with "sign in again" and Microsoft sign-out links). Confirm live after the `app` redeploy (F54).
 
-## Checks due
-- 17 Oct after 00:00 UTC: joiner3 Delivered + member of SAMPLE-GRP-ALPHA-DEV-ENG; first sign-in with the TAP (valid 17 Oct 00:00–08:00 UTC) at https://myaccess.microsoft.com.
-- 17–18 Oct: `tools/cost_check.sh rg-pmo-review-pilot` (first worker cost).
-- 29 Oct / 5 Nov / 6 Nov: expiry → app shows *Expired* (joiner2+3 / joiner1 / joiner).
-- Before 10 Nov: SWA API .NET 9 → 10 retest (F21). Before ~15 Nov: P2 trial decision.
-- Before production: reduce worker Graph privilege (F43), `User.Create` instead of User.ReadWrite.All (F40).
+## Deploy v2 (each approval is Gokul's)
+Full steps: `workflows/09-onboarding-flow-v2.md`.
+1. `tools/deploy_free.sh params <sub>`; `enableHandoff=true`, `deployWorker=true`.
+2. `tools/deploy_free.sh whatif <sub> .local/params.json` → show `.local/whatif.txt` → **wait for "approved"** (expected: 4 new containers, worker Cosmos roles re-scoped, worker settings; no new resource types; cost unchanged).
+3. `apply … --approved-by "Gokul <date>"` (deploys app + worker, seeds SAMPLE).
+4. `grant-graph` (4 read roles) — **approval**. Then `revoke-graph-writes` dry run → **approval** → `--approved-by`.
+5. Seed `--domain-suffix @<tenant>.onmicrosoft.com`; register testers with v2 roles (separate people for Owner and Security).
+6. `bash tools/workflow_diag.sh <sub>`; live E2E per workflow 09; log results.
+Before step 4, re-check F44–F54 in `docs/VERIFIED_FACTS.md` on Microsoft Learn (all UNVERIFIED; learn.microsoft.com was blocked in the build environment).
+**Bicep was not compiled in the build session** (no Bicep CLI; aka.ms and NuGet blocked). The v2 Bicep diff was reviewed by hand and `InfraConsistencyTests` pass; run `az bicep build --file infra/main.bicep` in Cloud Shell first (the what-if compiles it too) and fix any error before showing the what-if.
+Incremental deployment does **not** delete the worker's old Cosmos role assignments on `handoffs`, `joinerPasses`, `roleMappings`: list them after apply (`workflow_diag.sh` prints them) and remove only with approval.
+
+## Decisions for Gokul
+- Phase 2 leftovers in the tenant (access package, auto-assign policy, `SAMPLE-GRP-ALPHA-DEV-ENG`, `sample.joiner*` accounts with P2 licences, `handoffs`/`joinerPasses` containers): keep or remove (removal is a deletion — only on his written decision).
+- Turn on later (each needs approval): mail (`Mail.Send` + application access policy), ADO (worker identity added to the org), ARM role read (Reader on scopes), Azure OpenAI (new resource, rule 2).
+- P2 trial ends ~15 Nov: sign-in log checks (F48) need P1/P2.
+
+## Checks still due
+- Cost: `tools/cost_check.sh rg-pmo-review-pilot` (first worker cost).
+- 29 Oct / 5 Nov / 6 Nov: Phase 2 assignment expiries (only relevant while Phase 2 is live).
+- Before 10 Nov: SWA API .NET 9 → 10 retest (F21).
 
 ## Environment facts (no secrets)
-- Tenant `gopalakrishnanbaskarangmail.onmicrosoft.com`; subscription `5b9f9810-0512-49e5-b7f7-0159bc488570`; RG `rg-pmo-review-pilot`.
-- Resources: `swa-pmo-pilot-pkt2ofpqmlf3e` (eastasia, Free), `cosmos-pmo-pilot-pkt2ofpqmlf3e` (free tier, db `pmoreview`, 9 containers incl. `handoffs`, `joinerPasses`), `func-pmo-worker-pkt2ofpqmlf3e` + `asp-pmo-worker-…` (FC1) + `stpmoworkpkt2ofpqmlf3e`.
-- Entra: catalog `PMO Pilot SAMPLE` (1f0593d1-c71e-4d17-8068-7afa6bc24ea5); Dev package `SAMPLE Data Engineer – Dev` (4fe9213d-db34-420f-a39a-f70a4bd96cbd) with group SAMPLE-GRP-ALPHA-DEV-ENG; policy "PMO Review auto-assign" (8772cc0d-…); TAP method enabled (All users, ≥ 8 h).
-- Worker Graph roles (7): EntitlementManagement.Read.All/ReadWrite.All, User.ReadBasic.All, User.ReadWrite.All, LicenseAssignment.ReadWrite.All, UserAuthenticationMethod.ReadWrite.All, Group.ReadWrite.All.
-- People: Gmail account = PMO + Reviewer + Maintainer in the app; pilot.admin = second Reviewer (app) and Entra admin. Use separate InPrivate windows.
+- Subscription `5b9f9810-0512-49e5-b7f7-0159bc488570`; RG `rg-pmo-review-pilot`; SWA `swa-pmo-pilot-pkt2ofpqmlf3e` (https://icy-smoke-04dcd4300.6.azurestaticapps.net); Cosmos `cosmos-pmo-pilot-pkt2ofpqmlf3e` (db `pmoreview`); worker `func-pmo-worker-pkt2ofpqmlf3e` (FC1) + storage `stpmoworkpkt2ofpqmlf3e`.
+- Worker today (Phase 2c, live): 7 Graph roles incl. write roles (see F43) — to be revoked after approval.
 
-## Cloud Shell after a reset (Gmail, Bash, "No storage account required")
+## Cloud Shell after a reset
 ```bash
 az account set --subscription 5b9f9810-0512-49e5-b7f7-0159bc488570
-cd ~ && { [ -d onboarding-requests ] && cd onboarding-requests && git pull -q origin claude/optimistic-rubin-zipq5x; } \
-  || { git clone -q -b claude/optimistic-rubin-zipq5x https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests; }
+cd ~ && { [ -d onboarding-requests ] && cd onboarding-requests && git fetch -q origin claude/charming-goldberg-2f0ejk && git checkout -q claude/charming-goldberg-2f0ejk && git pull -q; } \
+  || { git clone -q -b claude/charming-goldberg-2f0ejk https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests; }
 pip install --user -q -r tools/requirements.txt
-# entra-package.json is lost on reset; recreate before params:
-mkdir -p .local
-cat > .local/entra-package.json <<'EOF'
-{"catalogId":"1f0593d1-c71e-4d17-8068-7afa6bc24ea5","accessPackageId":"4fe9213d-db34-420f-a39a-f70a4bd96cbd","myAccessLink":"https://myaccess.microsoft.com/@gopalakrishnanbaskarangmail.onmicrosoft.com#/access-packages/4fe9213d-db34-420f-a39a-f70a4bd96cbd"}
-EOF
-tools/deploy_free.sh params 5b9f9810-0512-49e5-b7f7-0159bc488570 --provision
-bash tools/handoff_diag.sh 5b9f9810-0512-49e5-b7f7-0159bc488570
+tools/deploy_free.sh params 5b9f9810-0512-49e5-b7f7-0159bc488570
+bash tools/workflow_diag.sh 5b9f9810-0512-49e5-b7f7-0159bc488570
 ```
 
 ## Working rules to keep
-- Approval gate: any Azure resource change → `whatif`, show it, wait for "approved". Code-only redeploys (`app`, `worker`) need no approval.
+- Any Azure resource or permission change → `whatif`/dry run, show it, wait for "approved". Code-only redeploys (`app`, `worker`) need no approval — but deploying v2 code to the live worker before the what-if/apply would run v2 against containers that do not exist yet: do the approved apply first.
 - Never paste or log a TAP, password or connection string; never record personal user ids in docs.
-- Commit trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`; push to `claude/optimistic-rubin-zipq5x` (updates PR #1).
+- Commit trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`; push to `claude/charming-goldberg-2f0ejk`; no PR unless asked.

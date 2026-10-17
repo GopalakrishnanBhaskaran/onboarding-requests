@@ -1,184 +1,121 @@
-# Architecture — PMO Request Review Pilot
+# Architecture — PMO onboarding flow (v2)
 
-Scope is the locked v1.0 scope. Only the hosting stack changes for the pilot. Every paid component sits behind an interface so the same code is promoted later.
+v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves, creates or assigns**. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
 
-## Component diagram
+## Components
 
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI["SPA<br/>React + Vite + Fluent UI"]
+    UI["SPA (React + Vite + Fluent UI)<br/>intake · status · decision panel · team tasks<br/>mapping sheet · issues and reports"]
   end
-
   subgraph SWA["Azure Static Web Apps — Free"]
-    AUTH["Built-in auth<br/>pre-configured Entra ID"]
-    subgraph API["Managed Functions (C# isolated, HTTP only)"]
-      FN["HTTP functions<br/>requests · analyze · runs · decisions · rules · operator"]
-      AZ["AuthZ guard<br/>x-ms-client-principal → userAccess<br/>deny by default"]
-    end
+    AUTH["Built-in auth (Entra)"]
+    API["Managed Functions (.NET 9 isolated, HTTP)<br/>ApiHost → Endpoints → WorkflowService<br/>agent step runs inline after each action"]
   end
-
-  subgraph CORE["src/core (no Azure SDK)"]
-    ENG["Review engine<br/>deterministic checks → model → host validation"]
-    TOOLS["Read-only tools<br/>GetPublishedRequirements<br/>GetApprovedRoleMapping"]
-    IF1(["IReviewModel"])
-    IF2(["IReviewDispatcher"])
-    IF3(["IRepository"])
-    SCHEMA["review-result.v1.json"]
+  subgraph W["AI agent worker — Flex Consumption, managed identity"]
+    T["Timer every 5 min (WORKFLOW_SCHEDULE)<br/>WorkflowAgent.AdvanceAsync for open requests<br/>outbox · daily summary"]
   end
+  COSMOS[("Cosmos DB free tier<br/>projects · requests · reviewRuns · userAccess<br/>mappingSheet · responseDocument · notifications · issues")]
+  GRAPH["Microsoft Graph (READ only)<br/>users · groups · checkMemberGroups<br/>authentication/methods · auditLogs/signIns · manager"]
+  ARM["ARM roleAssignments (READ, optional)"]
+  ADO["Azure DevOps work item (optional)"]
+  MAIL["Graph sendMail (optional)"]
+  AOAI["Azure OpenAI (coded, off)"]
 
-  subgraph ADP["src/adapters"]
-    RULE["RuleOnlyReviewModel<br/>ACTIVE"]
-    AOAI["AzureOpenAIReviewModel<br/>DISABLED"]
-    INL["InlineDispatcher<br/>ACTIVE"]
-    QUE["QueueDispatcher<br/>DISABLED stub"]
-    REPO["CosmosRepository"]
-  end
-
-  COSMOS[("Cosmos DB NoSQL<br/>free tier · shared 1000 RU/s<br/>7 containers")]
-
-  UI -- "HTTPS + auth cookie" --> AUTH --> FN
-  FN --> AZ
-  FN --> IF2
-  IF2 -.-> INL
-  IF2 -.-> QUE
-  INL --> ENG
-  ENG --> TOOLS
-  ENG --> IF1
-  IF1 -.-> RULE
-  IF1 -.-> AOAI
-  ENG --> SCHEMA
-  TOOLS --> IF3
-  AZ --> IF3
-  IF3 -.-> REPO --> COSMOS
-
-  classDef off stroke-dasharray: 5 5,opacity:0.6
-  class AOAI,QUE off
+  UI --> AUTH --> API --> COSMOS
+  T --> COSMOS
+  T --> GRAPH
+  T -.-> ARM
+  T -.-> ADO
+  T -.-> MAIL
+  API -.-> AOAI
+  T -.-> AOAI
+  classDef off stroke-dasharray: 5 5,opacity:0.7
+  class ARM,ADO,MAIL,AOAI off
 ```
 
-Solid lines run in the pilot. Dashed boxes are coded, tested with mocks, and switched off by config.
+The SWA managed API has **no managed identity** (F2), so it cannot read Entra. The review it runs inline marks the Entra cross-check *Pending*; the worker completes it. A request is never sent for approval while any check is Pending (outcome precedence: Fail > Pending > Pass). Locally (`PILOT_LOCAL_DEV` + `ALLOW_UNVERIFIED_ENTRA`) the Entra checks show "not checked (local development)".
 
-## Stack mapping (A1)
-
-| Locked design (paid) | Zero-cost pilot (Azure) | Promotion path (paid, later) |
-|---|---|---|
-| Model-driven Power App | SWA **Free**, SPA UI | Keep SWA (Standard) or move UI to Power Apps |
-| Entra sign-in via Power Apps | SWA built-in auth, pre-configured Entra ID | SWA Standard custom Entra app registration |
-| Dataverse tables + security roles | Cosmos DB NoSQL **free tier** + server-side `userAccess` | Dataverse, or Cosmos with managed identity |
-| Dataverse plug-in snapshot | API creates snapshot + SHA-256 server-side | Dataverse custom API |
-| Power Automate processing flow | `IReviewDispatcher` → `InlineDispatcher` | Queue-triggered Function or Power Automate flow |
-| Azure Functions (isolated) | SWA **managed** Functions, C# isolated, HTTP only | BYO Function App + managed identity + Key Vault |
-| Azure OpenAI reviewer | `IReviewModel` → `RuleOnlyReviewModel` | `AzureOpenAIReviewModel` (coded, tested, disabled) |
-| Application Insights | Off; structured logs only | App Insights with sampling |
-| Azure Pipelines | SWA CLI deploy | Azure Pipelines, multi-stage |
-
-## Analyze flow (pilot)
-
-```mermaid
-sequenceDiagram
-  participant U as SPA
-  participant F as POST /api/requests/{id}/analyze
-  participant C as Cosmos
-  participant E as Review engine
-  U->>F: Analyze (client nonce)
-  F->>C: userAccess lookup (from client principal)
-  F->>C: read request (ETag, revision)
-  F->>C: create reviewRun Queued (unique idempotencyKey)
-  F->>C: claim run (ETag) → Running
-  F->>E: snapshot + pinned rule/mapping versions
-  E-->>F: result (host-computed readiness, citations checked)
-  F->>F: validate against schema v1
-  F->>C: revision changed? → Superseded, else Completed/Failed
-  F-->>U: 202 + runId
-  loop every 3 s, up to 60 s
-    U->>C: GET /api/runs/{runId}
-  end
-```
-
-**Honest limitation:** in the pilot the engine runs inside the Analyze HTTP call. The SWA gateway cuts API calls at 45 s (`VERIFIED_FACTS` F3), so the processing budget is capped well below that. If the browser closes after the request is accepted, the function keeps running and persists the run; the user sees it in history on return. A true background queue is the paid `QueueDispatcher` path.
-
-## Trust boundaries
-1. Browser → SWA: authenticated by SWA. Everything from the browser is untrusted, including body fields naming users or projects.
-2. Function → Cosmos: connection string from SWA app settings (no managed identity on managed Functions, F2).
-3. Request text → reviewer: untrusted content. Never interpreted as instructions.
-4. Reviewer output → host: untrusted. Host recomputes readiness and validates every citation against pinned versions.
-
-## API (as built)
-
-All routes are under `/api`, require SWA sign-in, and take identity **only** from `x-ms-client-principal`. Project-scoped routes check the caller's `userAccess` grant for `{projectId}` before any read; a project the caller has no role in returns **404** (existence is not revealed), a role without the permission returns **403**.
-
-| Method + route | Permission (roles) |
-|---|---|
-| GET `me` | any signed-in user (empty project list if unregistered) |
-| GET/POST `projects/{projectId}/requests` | View (PMO, Reviewer) / Edit (PMO) |
-| GET/PUT `projects/{projectId}/requests/{requestId}` | View / Edit — PUT needs `If-Match`; server bumps `revision` |
-| POST `projects/{projectId}/requests/{requestId}/analyze` `{nonce}` | Analyze (PMO) → 202 `{runId, processingStatus, duplicate}` |
-| GET `projects/{projectId}/requests/{requestId}/runs` | ViewRuns (PMO, Reviewer, Operator) |
-| GET `projects/{projectId}/runs/{runId}` | ViewRuns |
-| POST `projects/{projectId}/runs/{runId}/retry` `{nonce}` | Analyze — only a Failed run of the current revision |
-| GET/POST `projects/{projectId}/runs/{runId}/decisions` | ViewRuns / RecordDecision (Reviewer) — quality feedback, not approval |
-| GET `attention` | Reviewer projects only: latest Failed or ManualReviewRequired run per request |
-| GET/POST `projects/{projectId}/rules`, `.../mappings` | ViewReferenceData / ManageReferenceData (Maintainer) — creates a new Draft version |
-| POST `projects/{projectId}/rules/{id}/status`, `.../mappings/{id}/status` | Maintainer — Draft→Published→Retired only, `If-Match` |
-| POST `projects/{projectId}/operator/recover` | RecoverRuns (Operator) |
-| GET `projects/{projectId}/requests/{requestId}/handoffs` | ViewRuns — Phase 2, read-only; `{enabled, items}` |
-
-No route writes `result`, `snapshot`, versions or status; only `ReviewProcessor` does (AC12). No route writes hand-off records; an Accepted decision creates one, the worker updates it.
-
-## Phase 2: Entra hand-off (Option A, approved 16 Oct 2026)
-
-```mermaid
-sequenceDiagram
-  participant P as PMO
-  participant R as Reviewer
-  participant A as App (SWA API)
-  participant C as Cosmos
-  participant J as New joiner
-  participant E as Microsoft Entra
-  participant W as Worker (Flex, managed identity)
-  P->>A: request + joiner UPN, Analyze
-  A->>C: run Completed, ReadyForHumanReview, mapping Matched (pinned version)
-  R->>A: decision Accepted
-  A->>C: handoff {status AwaitingJoinerRequest, My Access link from pinned mapping}
-  P-->>J: sends My Access link
-  J->>E: requests access package (userAdd, dates, justification)
-  E->>E: approval policy (approver), assignment, expiry, audit, emails
-  loop every 5 min
-    W->>E: GET assignmentRequests / assignments (Read.All only)
-    W->>C: handoff status (ETag), end-date check
-  end
-```
-
-| Concern | Design |
-|---|---|
-| Who approves | Entra approval policy on the access package. The app's Accepted is a readiness sign-off, not approval. |
-| Who assigns / removes | Entra (access package resource role + expiry). The app holds no write permission. |
-| Identity matching | Snapshot `joinerUpn` vs Entra `requestor`/`target` `principalName` or `email`, case-insensitive; only requests created after the hand-off (−10 min). |
-| Drift check | Entra end date later than the reviewed end date (or none) → visible warning. |
-| Failure | Graph errors stored as a category; last known status kept; retried next cycle. |
-| Privilege | Worker: Graph `EntitlementManagement.Read.All`; Cosmos data role on `handoffs` only; Storage Blob Data Owner on its own account. No keys. |
-| Switch off | `ENTRA_HANDOFF_ENABLED=false` (SWA) stops new hand-offs; stopping the worker stops cost. Review flow unaffected. |
-
-## Design decisions that differ from the prompt (with reasons)
-
-| Prompt | Built | Why |
-|---|---|---|
-| `IReviewDispatcher.DispatchAsync(reviewRunId, correlationId)` | `DispatchAsync(projectId, reviewRunId, correlationId)` | Runs are partitioned by `/projectId`; a single-partition read is cheap and stays within one authorised project. A lookup by id alone is a cross-partition query. |
-| Idempotency key `requestId + revision + nonce` | Kept (unique key), **plus** deterministic run id `{requestId}.r{revision}.a{attempt}` | The nonce key alone allows two runs if two tabs send different nonces. The deterministic id makes concurrent Analyze calls collide, so one revision has one run unless a Failed run is explicitly retried (AC13, AC14). |
-| `az deployment group what-if` | `az deployment sub what-if` | The resource group is created by the deployment, so it must also pass the approval gate. |
-| Functions Core Tools for local runs | `tools/local-api` (dev-only, loopback) behind the SWA CLI emulator | Core Tools binaries could not be downloaded in the build environment. Both hosts call the same `ApiHost`. |
-| Request form "validation" | Client-side length/date hints only; empty fields allowed | The review must be able to report missing fields; the server enforces lengths and types. |
-
-## Processing statuses
+## Request lifecycle
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Queued: Analyze / Retry (run created, snapshot + SHA-256)
-  Queued --> Running: claim with ETag
-  Running --> Completed: result valid, revision unchanged
-  Running --> Superseded: request revision changed before commit
-  Running --> Failed: Timeout / MalformedResult / DependencyUnavailable / Internal
-  Queued --> Failed: Operator recover (stuck)
-  Running --> Failed: Operator recover (stuck)
-  Failed --> [*]: Retry creates a new run (retryOfRunId)
+  [*] --> Submitted: requester submits (intake validated, domain ID derived)
+  Submitted --> AiReview: agent starts review (idempotency key = request id + step)
+  AiReview --> AwaitingOwner: PASS (all checks, Entra cross-check done)
+  AiReview --> Returned: FAIL (reasons to requester + PMO)
+  Returned --> Submitted: requester corrects and resubmits
+  AiReview --> FailedNeedsDev: review failed 3 times
+  AwaitingOwner --> AwaitingSecurity: named Owner approves
+  AwaitingOwner --> Rejected: Owner rejects (remarks)
+  AwaitingSecurity --> WithIdTeam: Security approves
+  AwaitingSecurity --> Rejected: Security rejects (remarks)
+  WithIdTeam --> WithRoleTeam: report verified (user, group, naming, membership, sheet, TAP rules)
+  WithIdTeam --> WithIdTeam: mismatch → task returned with the exact difference
+  WithRoleTeam --> Verifying: exact roles verified
+  WithRoleTeam --> WithRoleTeam: mismatch → task returned
+  Verifying --> Completed: sign-in, permanent method, TAP deleted, access present
+  Verifying --> WithIdTeam: access not in place
+  Verifying --> FailedNeedsDev: past VERIFY_SLA_HOURS
+  AwaitingOwner --> AiReview: mapping sheet changed (also from AwaitingSecurity, WithIdTeam, WithRoleTeam)
+  FailedNeedsDev --> Submitted: Operator resumes after the fix (failed review → new review; other stages resume where they failed)
 ```
+
+After a mapping change the review is re-run: if the reviewed group and role are unchanged the request resumes its stage; otherwise the approvals are superseded and it goes back to Awaiting Owner.
+
+## Stage → code
+
+| Stage | Code | Notes |
+|---|---|---|
+| 1 Intake | `Services/RequestService` | Required fields; safe format fixes (spaces, case); missing fields returned in `error.details` (`incomplete_request`). |
+| 2 AI review | `Review/ReviewEngine`, `Review/ReviewChecks`, `Processing/RunService` + `ReviewProcessor` | Reads both sources fresh (`Sources/StoreSourcesOfTruth`, 3 attempts). Result validated against `schema/review-result.v2.json`. Sheet fingerprint (SHA-256 of the resource's rows) stored on the run. |
+| 3 Approvals | `Workflow/WorkflowService.RespondAsync` | Only the named Owner (sign-in name), then a Security member who is not the Owner approver; tied to request id + reviewed run id. Others → ignored, *Unauthorized approval* issue, Security alerted. |
+| 4 ID team | `WorkflowService.ReportIdTeamAsync`, `Workflow/Verifier.IdTeamAsync` | TAP metadata only; the body is rejected if it carries a pass value. |
+| 5 Role team | `WorkflowService.ReportRoleTeamAsync`, `Verifier.RoleTeamAsync` | Exact roles vs response document; optional ARM read. Response document updated with what was assigned. |
+| 6 Final | `WorkflowAgent.FinalAsync`, `Verifier.FinalAsync` | Sign-in log, auth methods (permanent method, TAP gone), membership. Notifications, ADO work item with the trail, timings. |
+| SLA | `WorkflowAgent.ApprovalSlaAsync` / `TaskSlaAsync` | Reminder at SLA, escalation to the manager at 2× SLA (Graph manager or project contact). |
+| Issues + reports | `Workflow/Notifier` (`IssueLog`), `Workflow/Reports` | Issues list (severity keeps the max), daily summary with wait time per team, developer report; optional AI analysis (`IAiAssistant`). |
+
+## Agent step (idempotent)
+
+`WorkflowAgent.AdvanceAsync(request)` computes **one** step from the stored state: next request document + side effects (notifications, issues, ADO). The request is written first with its ETag; effects run after and are idempotent (`Ids.Key = requestId:step`). Retryable failures record an attempt and **stop** the call (max 3, then Failed-Needs-Dev with a developer report); nothing is retried blindly in a loop. Both the API (inline after each action) and the worker (timer) call the same method.
+
+## API
+
+All routes under `/api`, signed in, identity only from `x-ms-client-principal`. A project the caller has no role in → 404; missing permission → 403. Updates need `If-Match`.
+
+| Method + route | Who |
+|---|---|
+| GET `me`, GET `queue` (my actions) | any signed-in user |
+| GET/POST `projects/{p}/requests` | project members / Requester |
+| GET/PUT `projects/{p}/requests/{id}` | members / Requester (resubmit only when Returned) |
+| GET `projects/{p}/requests/{id}/trail` | members |
+| POST `projects/{p}/requests/{id}/approvals` `{decision, remarks, reviewRunId}` | named Owner (Owner stage), Security (Security stage) |
+| POST `projects/{p}/requests/{id}/tasks/{id-team\|role-team}/pickup` · `/report` | IdTeam / RoleTeam |
+| POST `projects/{p}/requests/{id}/advance` | Operator (runs the agent step now) |
+| POST `projects/{p}/requests/{id}/resume` | Operator — Failed-Needs-Dev only, after a developer fix: back to the failed stage, attempts reset |
+| GET/POST `projects/{p}/mapping-sheet`, PUT `…/{rowId}` | members / PMO |
+| POST `projects/{p}/mapping-sheet/{rowId}/group` | IdTeam (group created) |
+| GET `projects/{p}/response-document` | members |
+| GET `projects/{p}/issues` | Security, Operator |
+| GET `projects/{p}/reports/daily/{date}`, `…/reports/developer` | Security, PMO, Operator |
+| GET `projects/{p}/requests/{id}/runs`, GET `…/runs/{runId}` | members |
+| POST `projects/{p}/runs/{runId}/retry`, POST `…/operator/recover` | Operator |
+
+## Trust boundaries
+1. Browser → SWA: authenticated by SWA; every body field is untrusted.
+2. API → Cosmos: connection string in SWA app settings (no managed identity on managed Functions).
+3. Worker → Cosmos / Graph / ARM: managed identity; Cosmos data roles on the containers it uses only (not `userAccess`); Graph application roles **read-only** (`User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`, `AuditLog.Read.All`).
+4. Request text, team notes, model output: untrusted. Masked (`SecretMasker`) before logs, ADO, mail and prompts; the host validates every model result against the schema and recomputes the outcome.
+
+## Design decisions
+
+| Decision | Why |
+|---|---|
+| Workflow state lives in the request document (`flow`) | One document, one ETag: a stage change and its audit entry commit together. |
+| Agent runs inline in the API and on the worker timer | The requester sees the next stage immediately; Entra-dependent checks finish within ~5 minutes. |
+| Teams record their work; the agent verifies | The agent never needs write permissions; mismatches go back with the exact difference. |
+| TAP metadata only, minute precision | The pass never reaches the app; times come from a datetime-local input, so "after approval" compares to the minute. |
+| `tools/local-api` instead of Functions Core Tools locally | Core Tools could not be downloaded in the build environment; both hosts call the same `ApiHost`. |
+| `az deployment sub what-if` | The resource group is created by the deployment, so it passes the approval gate too. |

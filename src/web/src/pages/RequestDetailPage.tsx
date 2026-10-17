@@ -99,6 +99,9 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
           {view.actions.includes('Resubmit') && (
             <Button appearance="primary" icon={<Edit20Regular />} as="a" href={href({ page: 'edit', requestId: r.id })}>Correct and resubmit</Button>
           )}
+          {isOperator && st.status === 'FailedNeedsDev' && (
+            <Button appearance="primary" onClick={() => void api.resume(project.projectId, r.id).then(done).catch(setError)}>Resume after fix</Button>
+          )}
           {isOperator && <Button onClick={() => void api.advance(project.projectId, r.id).then(done).catch(setError)}>Run agent step now</Button>}
           <Button icon={<ArrowClockwise20Regular />} onClick={() => void load()}>Refresh</Button>
           <Caption1 className={s.muted}>Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</Caption1>

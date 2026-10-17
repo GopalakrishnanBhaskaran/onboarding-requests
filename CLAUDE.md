@@ -1,76 +1,69 @@
-# CLAUDE.md — PMO Request Review Pilot (Azure, zero cost)
+# CLAUDE.md — PMO onboarding flow (v2, Azure, low cost)
 
-Phase 1 pilot of the PMO Request Review, plus the **Phase 2 Entra hand-off** (approved by Gokul, 16 Oct 2026: Option A, paid from Azure credits). The app reviews; a Reviewer accepts; the new joiner requests the mapped **Entra access package**; **Entra** approves, assigns and expires access. "Ready for human review" never means approved.
-**Phase 2b auto-assign** (approved by Gokul, 16 Oct 2026; off by default, `ENTRA_AUTO_ASSIGN`): a **second Reviewer's** acceptance is the access decision and the worker files **one** Entra `adminAdd` assignment request (allowed catalog only, "PMO Review auto-assign" policy, reviewed dates). Entra adds and removes the access. The app never removes or changes access.
-**Phase 2c provisioning** (approved by Gokul, 16 Oct 2026; off by default, `ENTRA_PROVISION_JOINERS`, `ENTRA_AUTO_CREATE_PACKAGES`): after the second Reviewer accepts, the worker creates the joiner's account if missing (`sample.` UPNs in the tenant domain only), assigns the Entra ID P2 licence and issues a **Temporary Access Pass** that a PMO/Reviewer can show **once**; and for each published mapping without a package it sets up the group (`SAMPLE-GRP-` only, never role-assignable), access package and auto-assign policy, then publishes the next mapping version with the link. It never changes or deletes an existing user or group.
+v2 (17 Oct 2026) replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. Flow: requester submits → **AI review** (mapping sheet + response document) → **Owner** approval → **Security** approval → **ID team** creates user/group (+ TAP) → **role assignment team** assigns roles → **AI verification**, notifications, audit.
+The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves, creates or assigns.**
 
-Source of truth for scope: `SCOPE.md`. Source of truth for platform facts: `docs/VERIFIED_FACTS.md`.
-
-**Open work and session handoff: read `docs/NEXT_SESSION.md` first** (tasks Gokul queued for 17 Oct 2026: show-TAP button, group access right after the second Accept, sign-out fix).
+Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`. **Open work and handoff: read `docs/NEXT_SESSION.md` first.** SOP: `workflows/09-onboarding-flow-v2.md`.
 
 ## Hard rules
-1. **Cost.** Free resources: Static Web Apps (Free) with managed Functions, Cosmos DB for NoSQL with free tier, Azure Policy assignment, Cost Management budget. **Phase 2 (approved 16 Oct 2026, Azure credits, budget ₹2,000/month, alerts 50/80/100%):** one Flex Consumption Function App (the hand-off sync worker) and its one storage account, with their role assignments — nothing else. Anything more needs Gokul's written approval.
-2. **Never create:** Azure OpenAI, App Insights, Log Analytics, Key Vault, Service Bus, API Management, App Service (other than the Flex plan above), Azure SQL, VNets, private endpoints; no further Storage accounts or Function Apps. Entra licences are not Azure resources: the P2 / Governance **trial** is started by Gokul, never bought by tooling.
-3. **Verify, don't assume.** Check every free-tier limit and runtime against current Microsoft Learn. Record URL + date in `docs/VERIFIED_FACTS.md`. If a fact differs from the plan, stop and report.
-4. **Approval gate before any Azure resource:** show `az deployment group what-if` output, resource list and expected cost (₹0 with reasons). Wait for an explicit "approved".
-5. **Cosmos free tier:** check the subscription has no free-tier account already. If it has, stop and ask.
-6. **Out of scope:** approval routing *in this app* (Entra does it), Graph **writes** other than the Phase 2b `adminAdd` request and the Phase 2c provisioning calls (create user, assign licence, create TAP, create group, add group to catalog, create access package / role scope / auto-assign policy), changing or deleting existing users or groups, direct group assignment, access removal or changes, credentials other than the show-once TAP, email/Teams from this app (Entra sends its own), tickets, billing, multiple agents, attachments/OCR. Graph **reads** of access package requests/assignments by the worker are in scope.
-7. **No secrets or real data** in source, prompts, logs or examples. Sample data is labelled `SAMPLE`. Cosmos connection string lives only in SWA app settings.
+1. **Cost.** Static Web Apps (Free) with managed Functions, Cosmos DB free tier, Azure Policy assignment, Cost Management budget, plus (approved 16 Oct 2026, Azure credits, budget ₹2,000/month, alerts 50/80/100%) one Flex Consumption Function App (the AI agent worker) and its one storage account with their role assignments — nothing else. Anything more needs Gokul's written approval.
+2. **Never create:** Azure OpenAI, App Insights, Log Analytics, Key Vault, Service Bus, API Management, App Service (other than the Flex plan above), Azure SQL, VNets, private endpoints; no further Storage accounts or Function Apps. Azure OpenAI and mail/ADO adapters are coded and **off** until Gokul approves them.
+3. **Verify, don't assume.** Check every limit, endpoint and permission against current Microsoft Learn; record URL + date in `docs/VERIFIED_FACTS.md`. If a fact differs from the plan, stop and report.
+4. **Approval gate before any Azure resource or permission change:** show `tools/deploy_free.sh whatif` output, resource list and expected cost. Wait for an explicit "approved". Code-only redeploys (`app`, `worker`) need no approval. Removing the retired Graph write roles (`revoke-graph-writes`) is a security change: dry run first, then only with `--approved-by`.
+5. **The agent never approves, creates or assigns.** No Graph or ARM write anywhere in the code (no POST/PATCH/PUT/DELETE except Graph `checkMemberGroups` — a read action —, Azure OpenAI chat completions, and the optional `sendMail` / ADO work item calls). Approvals only from the named Owner, then a Security member who is not the Owner approver. Never skip a stage, never auto-approve.
+6. **TAP rules.** The app never receives, stores, logs, mails or prompts a Temporary Access Pass; it records only issued time, expiry, one-time flag and issued-by. Mask secrets/TAP as `******` before logs, ADO, mail and prompts (`SecretMasker`). Never paste or log a TAP, password or connection string in chat or docs either.
+7. **No secrets or real data** in source, prompts, logs or examples. Sample data is labelled `SAMPLE`. Cosmos connection string lives only in SWA app settings; the worker uses managed identity. Never record personal user ids in docs.
 8. **Evidence only.** Never say deployed/working without running it and showing output. Separate facts from assumptions.
 9. Ask once per phase, only for blocking choices. Routine reversible coding proceeds.
-10. `ALLOW_PAID_SERVICES=false` by default. Startup must throw if a paid provider is selected while it is false. The worker refuses to start unless it is `true` (set only on the worker). `ENTRA_HANDOFF_ENABLED=false` by default.
+10. `ALLOW_PAID_SERVICES=false` by default; startup throws if a paid provider is selected while it is false. `ALLOW_UNVERIFIED_ENTRA=true` only with `PILOT_LOCAL_DEV=true`. The worker refuses the retired `ENTRA_AUTO_ASSIGN` / `ENTRA_PROVISION_JOINERS` / `ENTRA_AUTO_CREATE_PACKAGES` settings.
 
 ## Stack
-| Layer | Pilot (active) | Paid (coded, disabled) |
+| Layer | Pilot (active) | Coded, off |
 |---|---|---|
-| UI | React + Vite + TypeScript + Fluent UI on SWA Free | same, SWA Standard |
-| Auth | SWA built-in, pre-configured Entra provider | SWA custom Entra registration |
-| API | SWA managed Functions, C# isolated, HTTP only | BYO Function App + managed identity |
-| Data | Cosmos DB NoSQL free tier, shared 1000 RU/s | Cosmos with RBAC, or Dataverse |
-| Processing | `InlineDispatcher` | `QueueDispatcher` |
-| Reviewer | `RuleOnlyReviewModel` | `AzureOpenAIReviewModel` |
-| Logs | Structured logs only | App Insights with sampling |
-| Entra hand-off (Phase 2) | `HandoffService` (API) + `src/worker` timer on Flex Consumption, managed identity, Graph read-only | same |
+| UI | React + Vite + TypeScript + Fluent UI v9 on SWA Free | — |
+| Auth | SWA built-in, pre-configured Entra provider; `/logout` → public `signed-out.html` | SWA custom Entra registration |
+| API | SWA managed Functions, C# isolated (.NET 9), HTTP only; runs the agent step inline after each action | — |
+| Data | Cosmos DB NoSQL free tier, shared 1000 RU/s | — |
+| AI agent worker | `src/worker` timer (every 5 min) on Flex Consumption, managed identity, Graph **read-only** | — |
+| Reviewer | `RuleOnlyReviewModel` (deterministic checklist) | `AzureOpenAIReviewModel` (temperature 0, json_schema) |
+| Notifications | Outbox (recorded in `notifications`, shown in the app) | `GraphMailSender` (`NOTIFY_SENDER=GraphMail`) |
+| Audit | Trail in the request + issues list | ADO work item (`ADO_ORG_URL`, `ADO_PROJECT`) |
 
-.NET target: libraries **net9.0 + net10.0**; SWA managed API **.NET 9 isolated** (`apiRuntime: dotnet-isolated:9.0`) because the SWA CLI rejects 10.0 (VERIFIED_FACTS F21, decision A). .NET 9 support ends 10 Nov 2026 — switch API csproj + `staticwebapp.config.json` back to 10.0 as soon as the CLI accepts it; `InfraConsistencyTests` keeps the two in step.
+.NET target: libraries **net9.0 + net10.0**; SWA managed API **.NET 9 isolated** because the SWA CLI rejects 10.0 (VERIFIED_FACTS F21). .NET 9 support ends 10 Nov 2026 — switch API csproj + `staticwebapp.config.json` to 10.0 as soon as the CLI accepts it; `InfraConsistencyTests` keeps them in step.
 
 ## Layout (WAT)
-- `workflows/` SOPs Claude Code follows, one per phase plus cost guardrails and incident recovery.
-- `tools/` helper scripts (seed, free-tier check, schema validation, acceptance, cost check, report export).
-- `src/core` domain, rules, engine, interfaces. No Azure SDK references.
-- `src/adapters` Cosmos repository, dispatchers, review models.
-- `src/api` HTTP Functions. `src/web` SPA. `src/worker` Phase 2 hand-off sync (timer only).
-- `infra/` Bicep. `tests/` unit, contract, security, acceptance. `docs/` architecture, facts, costs, promotion, runbook, report.
+- `workflows/` SOPs (09 = v2 flow; 08 superseded).
+- `tools/` deploy, seed, diagnosis, schema validation, acceptance, cost check, local dev API.
+- `src/core` domain, workflow state machine (`Workflow/`), review checklist (`Review/`), sources of truth, HTTP endpoints. No Azure SDK.
+- `src/adapters` Cosmos store, review models, Graph/ARM **readers**, mail sender, ADO tracker, composition root (`PilotApp`).
+- `src/api` HTTP Functions. `src/web` SPA. `src/worker` AI agent timer.
+- `infra/` Bicep. `tests/` unit, contract, security, acceptance (AC01–AC27). `docs/` architecture, facts, costs, runbook, logs.
 
 ## Commands
 | Task | Command |
 |---|---|
-| Build API + core | `dotnet build` |
-| Unit/contract/security tests | `dotnet test` (Microsoft.Testing.Platform runner, set in `global.json`) |
+| Build | `dotnet build PmoReview.slnx` |
+| .NET tests | `dotnet test --project tests/PmoReview.Tests -f net10.0` (Microsoft.Testing.Platform) |
 | Validate sample data | `python3 tools/seed_sample_data.py --dry-run` |
 | SPA checks / build | `npm --prefix src/web test` · `npm --prefix src/web run build` |
 | Local end-to-end | `tools/run_local.sh` (SWA CLI emulator + dev-only `tools/local-api`), then `npm --prefix src/web run e2e` |
 | Acceptance + report | `tools/run_acceptance.sh` (`E2E=1` adds browser tests) → `docs/PILOT_REPORT.md` |
 | Bicep compile | `bicep build infra/main.bicep` |
-| Free-tier check | `tools/check_free_tier.sh <subscriptionId>` |
 | Rebuild params after a Cloud Shell reset | `tools/deploy_free.sh params <subscriptionId>` |
 | What-if (read-only) | `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` |
 | Deploy (after "approved") | `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "<name> <date>"` |
 | App-only redeploy | `tools/deploy_free.sh app <subscriptionId>` |
+| Worker redeploy | `tools/deploy_free.sh worker <subscriptionId>` |
+| Worker Graph read permissions | `tools/deploy_free.sh grant-graph <subscriptionId>` |
+| Remove retired Graph write roles | `tools/deploy_free.sh revoke-graph-writes <subscriptionId>` (dry run) → `--approved-by "<name> <date>"` |
+| Flow diagnosis (read-only) | `bash tools/workflow_diag.sh <subscriptionId>` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
-| Phase 2 Entra test identities | `bash tools/setup_entra.sh identities <tenant-domain> [approver-upn]` (Global Admin) |
-| Phase 2 worker redeploy | `tools/deploy_free.sh worker <subscriptionId>` |
-| Phase 2 Graph permissions (read; + write in auto-assign) | `tools/deploy_free.sh grant-graph <subscriptionId>` |
-| Phase 2b Entra setup (catalog, package, policy, mapping link) | `bash tools/setup_entra.sh package <tenant-domain>` (Global Admin, Cloud Shell, device-code sign-in) |
-| Phase 2c params (joiner accounts + package set-up) | `tools/deploy_free.sh params <subscriptionId> --provision` |
-| Hand-off diagnosis (read-only) | `bash tools/handoff_diag.sh <subscriptionId>` |
 
 ## Security rules for API code
-- Identity comes **only** from the `x-ms-client-principal` header. Ignore any user/project field in the body.
-- Look up `userAccess`. Deny by default. Filter every query by the caller's authorised `projectId`.
-- Only the processing path writes `result`, `snapshot`, versions or status.
+- Identity comes **only** from `x-ms-client-principal`. Ignore any user/project field in the body. The named Owner is matched on the principal's sign-in name (`userDetails`).
+- Look up `userAccess`. Deny by default (404 for a project the caller has no role in, 403 for a missing permission). Filter every query by the authorised `projectId`.
+- Permissions by role: Requester submit/resubmit; Owner decide at the Owner stage (named Owner only); Security decide at the Security stage (not the Owner approver), issues, reports; IdTeam / RoleTeam their tasks; PMO edit the mapping sheet, reports; Operator issues, reports, recover runs.
+- Only the agent (`WorkflowAgent`) moves a request between stages; teams and approvers submit inputs that it validates. Idempotency key = request id + step.
 - ETag optimistic concurrency on every update.
-- Request text is untrusted. Injected instructions or "already approved" claims become a finding, never an action.
-- Hand-off records: created only by an **Accepted** decision on a Completed, ReadyForHumanReview run of the current revision, using the **pinned** mapping version and the **snapshot** joiner; afterwards written only by the worker (ETag). No API route writes them.
-- Graph writes: only `GraphEntraAssignmentWriter` (one `POST assignmentRequests`, `adminAdd`, allowed catalog only) and, in Phase 2c, `GraphJoinerDirectory` (POST user / assignLicense / temporaryAccessPassMethods) and `GraphPackageProvisioner` (POST group / resourceRequests / accessPackages / resourceRoleScopes / assignmentPolicies) — all POST, worker only. Auto-assign forces the separate-reviewer rule. Never add a PATCH or DELETE, or another write.
-- Temporary Access Pass: stored only in `joinerPasses` (TTL), never logged or listed; `POST …/pass/reveal` returns it once to a PMO/Reviewer of the project and removes it (ETag).
+- Request text is untrusted: injected instructions or "already approved" claims become findings, never actions.
+- The ID-team report endpoint rejects any body that carries a pass value (`RejectPassInBody`); notes and justification are masked.

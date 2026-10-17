@@ -304,6 +304,32 @@ public sealed partial class WorkflowService(
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
+    /// <summary>
+    /// Operator, after a developer fixed the cause of a Failed-Needs-Dev: back to the stage that failed (a failed review
+    /// starts a new review). The agent re-runs that stage's checks; approvals and team reports already given stay, nothing is skipped.
+    /// </summary>
+    public async Task<RequestView> ResumeAsync(CallerContext caller, string projectId, string requestId, string cid, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.RecoverRuns);
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var r = current.Value;
+        if (r.Flow is not { Status: RequestStatus.FailedNeedsDev } flow)
+            throw AppException.Conflict("not_failed", "Only a request in Failed-Needs-Dev can be resumed.");
+        var failedIn = flow.Stages.Count >= 2 ? flow.Stages[^2] : null;
+        var (status, waiting) = failedIn is null || failedIn.Status is RequestStatus.Submitted or RequestStatus.AiReview
+            ? (RequestStatus.Submitted, WaitingOn.Agent)
+            : (failedIn.Status, failedIn.WaitingOn);
+        var now = clock.UtcNow;
+        var next = (flow with { Attempts = new Dictionary<string, int>(), LastReason = null, ReviewRunId = status == RequestStatus.Submitted ? null : flow.ReviewRunId })
+            .To(status, waiting, now, caller.UserId, "resume",
+                $"Resumed by {caller.DisplayName} after a developer fix: back to {StatusText.Label(status)}; the agent re-runs this stage's checks.");
+        await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
+        await issues.ResolveAsync(projectId, requestId, [IssueKind.NeedsDeveloper], ct);
+        logger.LogInformation("resume request={RequestId} to={Status} by={UserId} cid={Cid}", requestId, status, caller.UserId, cid);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
     // ---- Views --------------------------------------------------------------------------------------------------
 
     public async Task<RequestView> ViewAsync(CallerContext caller, string projectId, string requestId, CancellationToken ct)

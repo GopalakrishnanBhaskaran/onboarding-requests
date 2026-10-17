@@ -75,7 +75,7 @@ def main() -> int:
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     gates = [c for c in cases if c["gate"]]
     lines = [
-        "# Pilot Report — PMO Request Review (zero-cost pilot)",
+        "# Pilot Report — PMO onboarding flow (v2)",
         "",
         f"Generated {now} from commit `{args.commit}` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** "
         "(in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). "
@@ -92,7 +92,7 @@ def main() -> int:
         lines.append(f"- Unit, contract and security tests: **{s.get('passed', 0)}/{s.get('tests', 0)} passed** ({s.get('failed', 0)} failed, {s.get('skipped', 0)} skipped).")
     if args.e2e and args.e2e.exists():
         e2e = json.loads(args.e2e.read_text(encoding="utf-8")).get("stats", {})
-        lines.append(f"- Browser end-to-end (Playwright via SWA CLI emulator, two mock users): **{e2e.get('expected', 0)} passed, {e2e.get('unexpected', 0)} failed**.")
+        lines.append(f"- Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **{e2e.get('expected', 0)} passed, {e2e.get('unexpected', 0)} failed**.")
     else:
         lines.append("- Browser end-to-end: not included in this run (run with `E2E=1` while `tools/run_local.sh` is up).")
 
@@ -100,14 +100,9 @@ def main() -> int:
         "",
         "## Critical gates",
         "",
-        "| Gate | Covered by |",
-        "|---|---|",
-        "| Zero cross-project disclosure | AC10, AC11 |",
-        "| Zero fulfilment actions | AC21 |",
-        "| All seeded missing fields detected | AC22 |",
-        "| Every citation resolves to a pinned version | AC18, AC23 |",
-        "| Injection / forged approval non-executable | AC08, AC09, AC24 |",
-        "| No result tampering | AC12 |",
+        "| Gate | Case | Result |",
+        "|---|---|---|",
+        *[f"| {md(c['case'])} | {c['id']} | **{'FAIL' if c['id'] in gate_fail else 'PASS'}** |" for c in gates],
         "",
         "## Cases",
         "",

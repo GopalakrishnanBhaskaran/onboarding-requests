@@ -117,6 +117,56 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task Operator_resumes_failed_needs_dev_at_the_failed_stage_after_the_fix()
+    {
+        var app = TestApp.Create();
+        var id = await app.To(RequestStatus.WithIdTeam);
+        app.Directory.AddUser(TestApp.DefaultUser);
+        app.Directory.AddMember(TestApp.DefaultGroup, TestApp.DefaultUser);
+        await app.ReportIdTeam(id, app.IdReport());
+        app.Directory.FailWith = "GraphUnavailable";
+        for (var i = 0; i < 4; i++) await app.RunWorker();
+        Assert.Equal(RequestStatus.FailedNeedsDev, await app.Status(id));
+
+        var path = $"projects/{TestApp.Alpha}/requests/{id}/resume";
+        Assert.Equal(403, (await app.Call(TestApp.Ivan, "POST", path)).Status);
+        app.Directory.FailWith = null; // the developer fixed the cause
+        var resumed = await app.Call(TestApp.Oscar, "POST", path);
+        Assert.Equal(200, resumed.Status);
+
+        var flow = (await app.Request(id)).Flow!;
+        Assert.Contains(flow.Events, e => e.Step == "resume");
+        Assert.Empty(flow.Attempts);
+        Assert.NotNull(flow.IdTeamTask!.IdReport); // the team's report is kept, not redone
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.WithRoleTeam, await app.Status(id));
+        Assert.DoesNotContain(await app.Issues(id), i => i.Kind == IssueKind.NeedsDeveloper && i.Status == IssueStatus.Open);
+        Assert.Equal(409, (await app.Call(TestApp.Oscar, "POST", path)).Status);
+    }
+
+    [Fact]
+    public async Task Resuming_a_failed_review_starts_a_new_review_and_never_skips_the_approvals()
+    {
+        var down = true;
+        var rules = new RuleOnlyReviewModel();
+        var app = TestApp.With(new FakeModel((ctx, ct) => down ? throw new HttpRequestException("model down") : rules.ReviewAsync(ctx, new(), ct)));
+        var id = await app.SubmitId();
+        for (var i = 0; i < 5; i++) await app.RunWorker();
+        Assert.Equal(RequestStatus.FailedNeedsDev, await app.Status(id));
+
+        down = false;
+        Assert.Equal(200, (await app.Call(TestApp.Oscar, "POST", $"projects/{TestApp.Alpha}/requests/{id}/resume")).Status);
+        await app.RunWorker();
+
+        var r = await app.Request(id);
+        Assert.Equal(RequestStatus.AwaitingOwner, r.Flow!.Status);
+        Assert.Empty(r.Flow.Approvals);
+        var runs = (await app.Stores.Runs.ListAsync(TestApp.Alpha)).Where(x => x.Value.RequestId == id).Select(x => x.Value).ToList();
+        Assert.Contains(runs, x => x.Trigger == "resume"); // new review in the API, Entra cross-check finished by the worker
+        Assert.Equal(ReviewOutcome.Pass, runs.Single(x => x.Id == r.Flow.Scope!.ReviewRunId).Outcome);
+    }
+
+    [Fact]
     public async Task Repeated_worker_runs_are_idempotent()
     {
         var app = TestApp.Create();
