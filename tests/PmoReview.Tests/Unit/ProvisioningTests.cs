@@ -154,7 +154,7 @@ public class ProvisioningTests
     [Theory]
     [InlineData("forbidden")]
     [InlineData("ambiguous")]
-    public async Task Refused_write_or_ambiguous_group_goes_to_the_id_team_with_a_high_issue(string kind)
+    public async Task Write_refused_for_24_hours_or_ambiguous_group_goes_to_the_id_team_with_a_high_issue(string kind)
     {
         var app = App();
         var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005"));
@@ -162,11 +162,69 @@ public class ProvisioningTests
         else app.Directory.AddGroup(TestApp.DefaultGroup); // a second group with the reviewed name
 
         await app.RunWorker();
+        if (kind == "forbidden")
+        {
+            app.Clock.Advance(TimeSpan.FromHours(24)); // the permission never arrived
+            await app.RunWorker();
+        }
         var r = await app.Request(id);
         Assert.Equal(WaitingOn.IdTeam, r.Flow!.WaitingOn);
         Assert.NotNull(r.Flow.IdTeamTask!.Agent!.Manual);
         Assert.Contains(await app.Issues(id), i => i.Kind == IssueKind.NeedsDeveloper && i.Severity == IssueSeverity.High && i.Status == IssueStatus.Open);
         Assert.False(app.Directory.IsMember(TestApp.DefaultGroup, "sample.e2005@sample.invalid"));
+    }
+
+    [Fact]
+    public async Task A_refused_write_waits_for_the_new_permission_and_finishes_when_it_arrives()
+    {
+        var app = App();
+        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005"));
+        app.Writer.FailWith = "GraphForbidden"; // just granted, not yet in the agent's cached token (F61)
+
+        await app.RunWorker();
+        var r = (await app.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.Agent), (r.Status, r.WaitingOn));
+        Assert.True(r.IdTeamTask!.Agent is { RefusedSince: not null, Manual: null, Completed: false });
+        Assert.Single(r.Events, e => e.Step == "agent-waiting-permission");
+        Assert.Contains(await app.Issues(id), i => i.Kind == IssueKind.DependencyFailure && i.Severity == IssueSeverity.Warning && i.Status == IssueStatus.Open);
+        Assert.DoesNotContain(await app.Notifications(id), n => n.Kind == NotificationKind.TeamTask);
+
+        var events = r.Events.Count;
+        app.Clock.Advance(TimeSpan.FromHours(6));
+        await app.RunWorker();
+        Assert.Equal(events, (await app.Request(id)).Flow!.Events.Count); // still refused: nothing new written
+
+        app.Writer.FailWith = null; // the token now carries the permission
+        app.Clock.Advance(TimeSpan.FromHours(6));
+        await app.RunWorker();
+        r = (await app.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Status, r.WaitingOn));
+        Assert.True(r.IdTeamTask!.Agent is { UserCreated: true, Completed: true, Manual: null });
+        Assert.DoesNotContain(await app.Issues(id), i => i.Kind == IssueKind.DependencyFailure && i.Status == IssueStatus.Open);
+        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.TeamTask && n.Body.Contains("ONE-TIME", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_refused_role_assignment_waits_for_the_permission_too()
+    {
+        var app = App();
+        await AzureRole(app);
+        app.Directory.AddUser("sample.e2008@sample.invalid");
+        var id = await Approved(app, Finance("sample.e2008"));
+        app.RoleWriter.FailWith = "ArmForbidden";
+        await app.RunWorker(); // provisions (existing account)
+        await app.RunWorker(); // verifies the ID step; the role assignment is refused
+
+        var r = (await app.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithRoleTeam, WaitingOn.Agent), (r.Status, r.WaitingOn));
+        Assert.True(r.RoleTeamTask!.Agent is { RefusedSince: not null, Manual: null });
+        Assert.DoesNotContain(await app.Notifications(id), n => n.Subject.StartsWith("Role assignment team", StringComparison.Ordinal));
+
+        app.RoleWriter.FailWith = null;
+        app.Clock.Advance(TimeSpan.FromHours(1));
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.Verifying, await app.Status(id));
+        Assert.Single(app.RoleWriter.Calls);
     }
 
     [Fact]

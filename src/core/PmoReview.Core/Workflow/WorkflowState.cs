@@ -148,6 +148,8 @@ public sealed record AgentWork
     /// <summary>Done: nothing left for the agent in this task.</summary>
     public bool Completed { get; init; }
     public string? Manual { get; init; }
+    /// <summary>First refusal of the agent's write (permission not in its token yet); retried until <see cref="WorkflowSettings.PermissionWait"/>.</summary>
+    public DateTimeOffset? RefusedSince { get; init; }
 }
 
 public sealed record StageEntry(RequestStatus Status, WaitingOn WaitingOn, DateTimeOffset EnteredAt, DateTimeOffset? LeftAt);

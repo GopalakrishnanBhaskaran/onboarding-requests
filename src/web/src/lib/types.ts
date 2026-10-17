@@ -129,6 +129,8 @@ export interface AgentWork {
   roleAssigned: boolean;
   completed: boolean;
   manual: string | null;
+  /** First refusal of the agent's write; it retries every run until the new permission reaches it (up to ~24 h). */
+  refusedSince?: string | null;
 }
 
 export interface WorkflowEvent {

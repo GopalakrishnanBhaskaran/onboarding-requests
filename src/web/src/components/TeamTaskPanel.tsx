@@ -20,6 +20,14 @@ export function TaskSummary({ task, title }: { task: TeamTask; title: string }) 
           <MessageBarBody>The AI agent left this task to your team: {task.agent.manual}.</MessageBarBody>
         </MessageBar>
       )}
+      {task.agent?.refusedSince && !task.agent.completed && !task.agent.manual && (
+        <MessageBar intent="info" layout="multiline">
+          <MessageBarBody>
+            The AI agent is waiting for its newly granted permission (refused since {dateTime(task.agent.refusedSince)}). It retries every run for up to
+            24 hours; a new permission can take that long to reach it. After that this task comes to your team.
+          </MessageBarBody>
+        </MessageBar>
+      )}
       {task.agent?.completed && !task.agent.manual && (
         <Caption1>
           {task.agent.roleAssigned

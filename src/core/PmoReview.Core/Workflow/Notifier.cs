@@ -29,6 +29,11 @@ public sealed record WorkflowSettings
     public IReadOnlyList<string> RoleAssignAllowedRoleIds { get; init; } = [];
     /// <summary>Scopes (prefixes, e.g. /subscriptions/…/resourceGroups/rg-x) where the agent may assign roles.</summary>
     public IReadOnlyList<string> RoleAssignScopes { get; init; } = [];
+    /// <summary>
+    /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
+    /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
+    /// </summary>
+    public TimeSpan PermissionWait { get; init; } = TimeSpan.FromHours(24);
 
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {

@@ -22,7 +22,7 @@ public sealed partial class WorkflowAgent
         settings.AgentProvisioning && task.State == TeamTaskState.Open && task.Agent is not ({ Completed: true } or { Manual: not null });
 
     private bool RoleAssignmentPending(TeamTask task) =>
-        settings.AgentRoleAssignment && task.State == TeamTaskState.Open && task.Agent is null;
+        settings.AgentRoleAssignment && task.State == TeamTaskState.Open && task.Agent is not ({ Completed: true } or { Manual: not null });
 
     private bool BothApprovalsCurrent(WorkflowState flow) =>
         flow.CurrentApproval(ApprovalStage.Owner)?.Decision == ApprovalDecision.Approved
@@ -30,7 +30,7 @@ public sealed partial class WorkflowAgent
 
     // ---- Stage 4: user, group, membership --------------------------------------------------------------------------
 
-    private async Task<Step> ProvisionAsync(AccessRequest r, TeamTask task, CancellationToken ct)
+    private async Task<Step?> ProvisionAsync(AccessRequest r, TeamTask task, CancellationToken ct)
     {
         var flow = r.Flow!;
         var scope = flow.Scope!;
@@ -95,7 +95,7 @@ public sealed partial class WorkflowAgent
         }
         catch (DirectoryWriteException e) when (e.Forbidden)
         {
-            return ToIdTeam(r, task, work with { Manual = $"Entra refused the agent's write ({e.Category}): the permission is missing" }, project, now, IssueSeverity.High);
+            return RefusedOrTeam(r, task, work, e.Category, project, now, isIdTeam: true);
         }
         catch (DirectoryReadException e)
         {
@@ -127,6 +127,8 @@ public sealed partial class WorkflowAgent
 
         work = work with { At = now, Completed = true };
         var done = Done(work, r, scope);
+        List<Func<CancellationToken, Task>> resolved = work.RefusedSince is null ? []
+            : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]; // the permission arrived
         if (work.UserCreated)
         {
             // A new account needs a one-time TAP for the first sign-in: only the ID team issues it.
@@ -135,7 +137,7 @@ public sealed partial class WorkflowAgent
                 .Log(now, Agent, "agent-provisioned", $"{done} The ID team issues the one-time Temporary Access Pass.");
             var (subject, body) = Messages.TeamTask(r, tapTask, settings);
             return new Step(r with { Flow = next },
-                [c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{tapTask.Id}:tap", NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c)], Stop: true);
+                [.. resolved, c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{tapTask.Id}:tap", NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c)], Stop: true);
         }
 
         // Existing account: nothing left for the ID team. Verified on the next run (Entra reads lag right after a write).
@@ -152,7 +154,7 @@ public sealed partial class WorkflowAgent
         };
         var verify = (flow with { Scope = newScope, IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-provisioned", $"{done} Existing account: no TAP needed. Verified on the next agent run.");
-        return new Step(r with { Flow = verify }, [], Stop: true);
+        return new Step(r with { Flow = verify }, resolved, Stop: true);
     }
 
     private static string Done(AgentWork w, AccessRequest r, ReviewedScope scope) =>
@@ -209,9 +211,43 @@ public sealed partial class WorkflowAgent
         ], Stop: true);
     }
 
+    /// <summary>
+    /// A refused write (403) right after the permissions were granted is expected: a managed identity's token is cached for
+    /// about 24 hours (F61), so new permissions can take hours to reach the agent. Keep what is done and retry every run for
+    /// <see cref="WorkflowSettings.PermissionWait"/>; after that the team does it, with a High issue.
+    /// </summary>
+    private Step? RefusedOrTeam(AccessRequest r, TeamTask task, AgentWork work, string category, Project? project, DateTimeOffset now, bool isIdTeam)
+    {
+        var since = work.RefusedSince ?? now;
+        var where = isIdTeam ? "Entra" : "Azure";
+        if (now - since >= settings.PermissionWait)
+        {
+            var reason = $"{where} refused the agent's write ({category}) since {since:u}: the permission is missing";
+            return isIdTeam
+                ? ToIdTeam(r, task, work with { Manual = reason }, project, now, IssueSeverity.High)
+                : ToRoleTeam(r, task, work with { Manual = reason }, project, now, IssueSeverity.High);
+        }
+        if (work.RefusedSince is not null && work == task.Agent) return null; // still waiting, nothing new to keep
+
+        var flow = r.Flow!;
+        var kept = task with { Agent = work with { At = now, RefusedSince = since } };
+        var next = isIdTeam ? flow with { IdTeamTask = kept } : flow with { RoleTeamTask = kept };
+        if (work.RefusedSince is not null) return new Step(r with { Flow = next }, [], Stop: true); // progress before the refusal
+
+        var what = isIdTeam ? "provisioning" : "role assignment";
+        next = next.Log(now, Agent, "agent-waiting-permission",
+            $"{where} refused the agent's {what} write ({category}). A newly granted permission can take up to about 24 hours to reach the agent; " +
+            $"retried every agent run until {since + settings.PermissionWait:u}, then the {(isIdTeam ? "ID team" : "role assignment team")} does it.");
+        return new Step(r with { Flow = next },
+        [
+            c => issues.RecordAsync(r.ProjectId, r.Id, $"permission:{task.Id}", IssueKind.DependencyFailure, IssueSeverity.Warning,
+                $"Agent {what} waiting for its permission ({category}); retried every run for up to {settings.PermissionWait.TotalHours:0} h, then the team does it.", null, c),
+        ], Stop: true);
+    }
+
     // ---- Stage 5: Azure role on the group --------------------------------------------------------------------------
 
-    private async Task<Step> AssignRoleAsync(AccessRequest r, TeamTask task, CancellationToken ct)
+    private async Task<Step?> AssignRoleAsync(AccessRequest r, TeamTask task, CancellationToken ct)
     {
         var flow = r.Flow!;
         var scope = flow.Scope!;
@@ -251,7 +287,7 @@ public sealed partial class WorkflowAgent
         }
         catch (DirectoryWriteException e) when (e.Forbidden)
         {
-            return ToRoleTeam(r, task, work with { Manual = $"Azure refused the agent's role assignment ({e.Category})" }, project, now, IssueSeverity.High);
+            return RefusedOrTeam(r, task, work, e.Category, project, now, isIdTeam: false);
         }
         catch (DirectoryReadException e)
         {
@@ -270,7 +306,8 @@ public sealed partial class WorkflowAgent
         };
         var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-role-assigned", $"AI agent assigned {scope.Role} (Azure role {roleId}) at {azureScope} to group {scope.EntraGroup} and updated the response document.");
-        return new Step(r with { Flow = next }, []);
+        return new Step(r with { Flow = next }, work.RefusedSince is null ? []
+            : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]); // the permission arrived
     }
 
     /// <summary>Scope prefix match on whole path segments (…/rg-a does not allow …/rg-ab).</summary>

@@ -237,6 +237,8 @@ provisioning() {
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true -o none
   echo "Provisioning on. Graph permissions now held by $name:"
   list_graph_roles "$mi"
+  echo "Note: new Graph permissions can take up to ~24 h to reach the worker's managed identity token (VERIFIED_FACTS F61)."
+  echo "Until then the agent's writes are refused and it retries every run; the request page says it is waiting for the permission."
 }
 
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;

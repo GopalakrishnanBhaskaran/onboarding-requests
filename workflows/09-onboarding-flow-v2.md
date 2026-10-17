@@ -49,7 +49,7 @@ v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 r
 Chosen by Gokul on 17 Oct 2026: after both approvals the AI agent (worker, deterministic code) creates the user, group and membership and assigns allow-listed Azure roles; the **TAP stays with the ID team**.
 1. Scope: the resource group the agent may assign roles in (recommended: a new, empty `rg-pmo-sample-access`). If it does not exist, the dry run lists its creation (free, empty, same region as the pilot) and the approved run creates it.
 2. `tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/<rg> [roleIds]` → dry run lists: Graph `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All` (F56–F58); Role Based Access Control Administrator at the scope with a condition: only the given roles (default Reader `acdd72a7-…`) and only user/group principals (F59–F60); worker + SWA settings. **Wait for "approved".**
-3. `… --approved-by "Gokul <date>"`. Then `tools/deploy_free.sh params <sub>` (keeps the settings for later applies).
+3. `… --approved-by "Gokul <date>"`. Then `tools/deploy_free.sh params <sub>` (keeps the settings for later applies). New Graph permissions can take up to ~24 h to reach the worker (managed identity token cache, F61): until then the agent's writes are refused and it retries every run (request shows "waiting for its newly granted permission"; a Warning issue); still refused after 24 h → the team does it.
 4. PMO: Mapping sheet → *Azure role the AI agent assigns* → row, role definition ID, scope (inside the allowed scope). Rows without it stay with the role team.
 5. Live test: submit → Owner → Security → within 5 min the agent creates user/group/membership (request page shows "Done by the AI agent"); the ID team issues the one-time TAP in Entra and records its metadata only; the agent verifies, assigns the role, verifies → Verifying → user signs in, registers Authenticator → Completed.
    A request already With ID Team when provisioning is switched on (task not yet reported) is provisioned by the agent on the next worker run; its ID team task becomes TAP-only.
@@ -59,7 +59,8 @@ Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings 
 |---|---|
 | Guest user, privileged row, row without an Azure role | none (normal) |
 | Two groups with the name, not a security group, sheet says "exists" but missing | High, Needs developer |
-| Write refused (permission), 3 failed attempts, role/scope not on the allow-list | High, Needs developer |
+| Write refused (permission): retried every run for 24 h (new permissions reach the worker late, F61) | Warning while waiting; resolved when it works |
+| Write still refused after 24 h, 3 failed attempts, role/scope not on the allow-list | High, Needs developer |
 
 ## Validation
 - Status table shows Request ID, requester, stage, waiting on, done, next, time in stage, ADO link.
