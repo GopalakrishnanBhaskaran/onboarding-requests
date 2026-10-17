@@ -66,7 +66,7 @@ export function RequestsPage({ project }: { project: ProjectSummary }) {
                 <TableRow key={r.requestId}>
                   <TableCell>
                     <Link href={href({ page: 'request', requestId: r.requestId })}>{r.requestId.slice(0, 8)}</Link>
-                    <Caption1 block className={s.muted}>{r.domainId} · {r.accessLevel} on {r.resource}</Caption1>
+                    <Caption1 block className={s.muted}>{r.resource ? `${r.domainId ?? "—"} · ${r.accessLevel} on ${r.resource}` : "v1 request (read-only)"}</Caption1>
                   </TableCell>
                   <TableCell>{r.requester}</TableCell>
                   <TableCell><Badge appearance="filled" color={statusColor[r.status]}>{r.currentStage}</Badge></TableCell>

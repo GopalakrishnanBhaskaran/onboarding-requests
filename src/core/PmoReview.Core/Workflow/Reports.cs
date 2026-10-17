@@ -60,7 +60,8 @@ public static class Reports
     {
         var flow = r.Flow;
         if (flow is null)
-            return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? r.CreatedBy, RequestStatus.Completed, "Legacy (v1)", WaitingOn.None, "—", [], "—", 0, "—", null,
+            // v1 documents carry only the platform user id: never show it.
+            return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? "—", RequestStatus.Completed, "Legacy (v1)", WaitingOn.None, "—", [], "—", 0, "—", null,
                 r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt);
         var inStage = flow.IsOpen || flow.Status == RequestStatus.Returned ? now - flow.StageSince : TimeSpan.Zero;
         return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? r.CreatedBy, flow.Status, StatusText.Label(flow.Status), flow.WaitingOn,

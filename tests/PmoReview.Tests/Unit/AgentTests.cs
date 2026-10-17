@@ -199,6 +199,7 @@ public class AgentTests
         var list = await app.Call(TestApp.Alice, "GET", $"projects/{TestApp.Alpha}/requests");
         Assert.Equal(200, list.Status);
         Assert.Contains("Legacy (v1)", list.Body);
+        Assert.DoesNotContain("sample-user-alice", list.Body); // v1 documents carry only the platform user id: never shown
         var view = await app.View(legacy.Id);
         Assert.Equal(200, view.Status);
         Assert.Empty(view.Json.GetProperty("actions").EnumerateArray());
