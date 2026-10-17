@@ -38,9 +38,9 @@ fi
 
 COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
 echo "== Requests (latest 15), issues, notifications =="
-python3 -c "import azure.cosmos" 2>/dev/null || pip install --user -q -r "$ROOT/tools/requirements.txt"
+PYTHON=$("$ROOT/tools/cosmos_python.sh")
 COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings \
-  --query "connectionStrings[0].connectionString" -o tsv 2>/dev/null) python3 - <<'PY'
+  --query "connectionStrings[0].connectionString" -o tsv 2>/dev/null) "$PYTHON" - <<'PY'
 import os
 from collections import Counter
 from azure.cosmos import CosmosClient

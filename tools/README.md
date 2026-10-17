@@ -6,6 +6,7 @@ Helper scripts Claude Code and operators run (v2 onboarding flow).
 |---|---|
 | `deploy_free.sh` | `whatif` · `apply --approved-by` · `app` · `worker` · `status` · `params` · `grant-graph` (worker Graph **read** roles) · `revoke-graph-writes` (removes the retired Phase 2b/2c write roles; dry run unless `--approved-by`). |
 | `workflow_diag.sh` | Read-only diagnosis: worker state and settings, Graph roles held (flags any write role), Cosmos roles, latest requests by stage, open issues, outbox. |
+| `cosmos_python.sh` | Prints a Python with the Cosmos SDK (`requirements.txt`), installing it on demand (user site, else `.local/venv`). Used by the seed step of `deploy_free.sh` and by `workflow_diag.sh`. |
 | `seed_sample_data.py` | Seed SAMPLE projects, mapping sheet, response document and users into Cosmos (`--domain-suffix @<tenant>` for domain-specific IDs); `--register-user <id> --project <p> --roles <v2 roles>`. Refuses non-SAMPLE data. |
 | `run_local.sh` | Local end-to-end: dev-only `local-api` (in-memory SAMPLE data) behind the SWA CLI emulator on :4280. |
 | `local-api/` | Loopback-only host for the same `ApiHost`; refuses to start without `PILOT_LOCAL_DEV=true`. |

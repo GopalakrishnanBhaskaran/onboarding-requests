@@ -80,8 +80,8 @@ public sealed class TestApp
 
     public static TestApp Create() => new(new PilotSettings(), null, null, null);
 
-    /// <summary>Same wiring on other stores (the Cosmos emulator contract test), seeded with the SAMPLE data.</summary>
-    public static TestApp On(DataStores stores) => new(new PilotSettings(), null, null, null, stores);
+    /// <summary>Same wiring on other stores (the Cosmos emulator contract test, or a restart with new settings), seeded with the SAMPLE data.</summary>
+    public static TestApp On(DataStores stores, PilotSettings? settings = null) => new(settings ?? new PilotSettings(), null, null, null, stores);
 
     /// <summary>Real wiring with an optional scripted reviewer, settings, queue, or a directory reader in the API process.</summary>
     public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null) =>

@@ -34,7 +34,8 @@
 #   tools/deploy_free.sh provisioning <subscriptionId> off [--approved-by "<name> <date>"]
 #       v2.1 agent provisioning after both approvals. "on": Graph User.Create, Group.Create, GroupMember.ReadWrite.All;
 #       Role Based Access Control Administrator on <scope> constrained to <roleIds> (default Reader) and user/group
-#       principals; worker + SWA settings. "off": settings off, then (approved) removes those rights.
+#       principals; worker + SWA settings; creates the empty resource group <scope> if it is missing (free).
+#       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -168,7 +169,7 @@ rbac_condition() {
 }
 
 provisioning() {
-  local mode="$1" scope="${2:-}" roles="${3:-$READER_ROLE_ID}" name mi graph perm role assignment swa rg_name
+  local mode="$1" scope="${2:-}" roles="${3:-$READER_ROLE_ID}" name mi graph perm role assignment swa rg_name rg_sub rg_loc rg_new
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -195,13 +196,12 @@ provisioning() {
 
   [[ "$scope" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]+$ ]] \
     || { echo "Scope must be a resource group: /subscriptions/<id>/resourceGroups/<name>"; return 1; }
-  rg_name="${scope##*/}"
-  if [[ "$(az group exists -n "$rg_name" --subscription "$(cut -d/ -f3 <<<"$scope")")" != "true" ]]; then
-    echo "Resource group $rg_name does not exist. Creating it is a separate, approval-gated change (free, empty):"
-    echo "  az group create -n $rg_name -l centralindia --tags pilot=pmo-review purpose=sample-access"
-    return 1
-  fi
-  echo "Plan for $name (managed identity $mi):"
+  rg_name="${scope##*/}"; rg_sub=$(cut -d/ -f3 <<<"$scope")
+  rg_loc=$(az group show -n "$RG_DEFAULT" --query location -o tsv)
+  rg_new=false
+  [[ "$(az group exists -n "$rg_name" --subscription "$rg_sub")" == "true" ]] || rg_new=true
+  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  if $rg_new; then echo "  Resource group: create $rg_name in $rg_loc, empty (free), tags pilot=pmo-review purpose=sample-access"; fi
   for perm in "${GRAPH_PROVISION_ROLES[@]}"; do echo "  Graph application permission: $perm"; done
   echo "  Azure: Role Based Access Control Administrator at $scope, condition: only roles {$roles}, only User/Group principals"
   echo "  Worker settings: AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true ROLE_ASSIGN_ALLOWED_ROLES=$roles ROLE_ASSIGN_SCOPES=$scope"
@@ -209,6 +209,10 @@ provisioning() {
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
+  fi
+  if $rg_new; then
+    az group create -n "$rg_name" -l "$rg_loc" --subscription "$rg_sub" --tags pilot=pmo-review purpose=sample-access -o none
+    echo "Created resource group $rg_name (approved by $APPROVED_BY)"
   fi
   for perm in "${GRAPH_PROVISION_ROLES[@]}"; do
     role=$(graph_role_id "$perm")
@@ -319,6 +323,7 @@ case "$CMD" in
     COSMOS=$(echo "$OUT" | python3 -c "import json,sys;print(json.load(sys.stdin)['cosmosAccountName']['value'])")
     echo "$OUT" > "$ROOT/.local/deployment-outputs.json"
 
+    PYTHON=$("$ROOT/tools/cosmos_python.sh")
     # Secret handling: piped straight from Cosmos into SWA app settings. Never echoed, never on disk.
     CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
     az staticwebapp appsettings set -n "$SWA" -g "$RG" --setting-names \
@@ -327,7 +332,7 @@ case "$CMD" in
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
     app_settings_v2 "$RG" "$SWA"
     deploy_app "$RG" "$SWA"
-    COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
+    COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
     unset CS
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
@@ -423,10 +428,11 @@ PY
     RG="rg-pmo-review-pilot"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
+    PYTHON=$("$ROOT/tools/cosmos_python.sh") # before the upload: a missing package fails fast, not after it
     app_settings_v2 "$RG" "$SWA"
     deploy_app "$RG" "$SWA"
     CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
-    COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
+    COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
     unset CS
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"

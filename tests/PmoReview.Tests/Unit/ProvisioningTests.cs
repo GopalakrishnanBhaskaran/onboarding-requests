@@ -18,14 +18,16 @@ public class ProvisioningTests
     private const string FinanceUser = "sample.e2001@sample.invalid";
     private const string FinanceGroup = "SAMPLE-GRP-ALPHA-FIN-VIEW";
 
-    private static TestApp App(bool roles = true) => TestApp.With(settings: new PilotSettings
+    private static PilotSettings On(bool roles = true) => new()
     {
         Workflow = new WorkflowSettings
         {
             AgentProvisioning = true, AgentRoleAssignment = roles,
             RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader], RoleAssignScopes = [Scope],
         },
-    });
+    };
+
+    private static TestApp App(bool roles = true) => TestApp.With(settings: On(roles));
 
     private static object Finance(string enterpriseId = "sample.e2001", bool guest = false) =>
         TestApp.Intake(enterpriseId: enterpriseId, resource: "SAMPLE Finance Reports", accessLevel: "Viewer", guest: guest);
@@ -224,6 +226,31 @@ public class ProvisioningTests
         Assert.All(r.Flow.Approvals, a => Assert.True(a.Superseded));
         Assert.Empty(app.RoleWriter.Calls);
         Assert.Equal("b24988ac-6180-42a0-ab88-20f7382dd24c", r.Flow.Scope!.AzureRoleDefinitionId);
+    }
+
+    [Fact]
+    public async Task A_request_already_with_the_id_team_when_provisioning_is_switched_on_is_provisioned_on_the_next_run()
+    {
+        // Live case: both approvals given while provisioning was off, so the ID team got the full manual task.
+        var off = TestApp.Create();
+        var id = await Approved(off, Finance());
+        var before = (await off.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (before.Status, before.WaitingOn));
+        Assert.Null(before.IdTeamTask!.Agent);
+
+        // Provisioning switched on: the worker restarts with the new settings on the same data.
+        var on = TestApp.On(off.Stores, On());
+        await on.RunWorker();
+        Assert.Equal([$"create-user {FinanceUser}", $"create-group {FinanceGroup}", $"add-member {FinanceUser} {FinanceGroup}"], on.Writer.Calls);
+        var r = (await on.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Status, r.WaitingOn));
+        Assert.True(r.IdTeamTask!.Agent is { UserCreated: true, GroupCreated: true, Membership: true, Completed: true, Manual: null });
+        Assert.Equal(before.IdTeamTask.Id, r.IdTeamTask.Id); // same task: the ID team now only issues the TAP
+        Assert.Contains("ONE-TIME Temporary Access Pass", r.IdTeamTask.Instructions);
+        Assert.Contains(await on.Notifications(id), n => n.Kind == NotificationKind.TeamTask && n.Body.Contains("ONE-TIME", StringComparison.Ordinal));
+
+        await on.RunWorker();
+        Assert.Equal(3, on.Writer.Calls.Count);
     }
 
     [Fact]
