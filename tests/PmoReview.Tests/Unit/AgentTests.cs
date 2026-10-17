@@ -182,6 +182,38 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task Legacy_v1_request_documents_are_listed_read_only_and_skipped_by_the_agent()
+    {
+        // Shape of the v1 / Phase 2 requests still in the live container (17 Oct 2026: 7 such documents), incl. Cosmos system fields.
+        var legacy = PmoReview.Core.Common.AppJson.Deserialize<AccessRequest>("""
+            {"id":"sample-legacy-0001","projectId":"SAMPLE-ALPHA","requestType":"NewJoiner","role":"SAMPLE Data Engineer","environment":"Dev",
+             "manager":"SAMPLE Manager One","justification":"SAMPLE","startDate":"2026-10-17","endDate":"2026-10-29",
+             "joinerUpn":"sample.joiner3@sample.invalid","createdBy":"sample-user-alice","createdAt":"2026-10-16T19:00:00+00:00",
+             "updatedBy":"sample-user-alice","updatedAt":"2026-10-16T19:20:26+00:00","revision":1,"schemaVersion":1,
+             "_rid":"x","_self":"x","_etag":"\"x\"","_attachments":"x","_ts":1760642426}
+            """)!;
+        Assert.Null(legacy.Flow);
+        var app = TestApp.Create();
+        await app.Stores.Requests.CreateAsync(legacy);
+
+        var list = await app.Call(TestApp.Alice, "GET", $"projects/{TestApp.Alpha}/requests");
+        Assert.Equal(200, list.Status);
+        Assert.Contains("Legacy (v1)", list.Body);
+        var view = await app.View(legacy.Id);
+        Assert.Equal(200, view.Status);
+        Assert.Empty(view.Json.GetProperty("actions").EnumerateArray());
+        Assert.Equal(200, (await app.Call(TestApp.Alice, "GET", "queue")).Status);
+
+        await app.RunWorker();
+        Assert.Null((await app.Request(legacy.Id)).Flow);
+        Assert.Equal(409, (await app.Approve(legacy.Id, TestApp.Olivia)).Status);
+
+        var id = await app.SubmitId(); // a v2 request in the same project still advances
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.AwaitingOwner, await app.Status(id));
+    }
+
+    [Fact]
     public async Task Repeated_worker_runs_are_idempotent()
     {
         var app = TestApp.Create();
