@@ -206,6 +206,27 @@ public class ProvisioningTests
     }
 
     [Fact]
+    public async Task Approvers_see_the_azure_role_and_a_later_change_needs_new_approvals_before_any_assignment()
+    {
+        var app = App();
+        await AzureRole(app);
+        app.Directory.AddUser("sample.e2008@sample.invalid");
+        var id = await Approved(app, Finance("sample.e2008"));
+        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.ApprovalRequested
+            && n.Body.Contains($"Azure role: {FakeRoleWriter.Reader} at {Scope}", StringComparison.Ordinal) && n.Body.Contains("only after both approvals", StringComparison.Ordinal));
+
+        // PMO points the row at another Azure role after both approvals: nothing is assigned until it is approved again.
+        await AzureRole(app, roleId: "b24988ac-6180-42a0-ab88-20f7382dd24c"); // Contributor
+        await app.RunWorker();
+        await app.RunWorker();
+        var r = await app.Request(id);
+        Assert.Equal(RequestStatus.AwaitingOwner, r.Flow!.Status);
+        Assert.All(r.Flow.Approvals, a => Assert.True(a.Superseded));
+        Assert.Empty(app.RoleWriter.Calls);
+        Assert.Equal("b24988ac-6180-42a0-ab88-20f7382dd24c", r.Flow.Scope!.AzureRoleDefinitionId);
+    }
+
+    [Fact]
     public async Task Provisioning_off_keeps_the_v2_manual_flow()
     {
         var app = TestApp.Create();

@@ -66,8 +66,14 @@ public static class Messages
         $"Approval needed ({stage}): request {Short(r)}",
         $"{(stage == ApprovalStage.Owner ? "As the named Owner, approve or reject the business need." : "As Security, approve or reject the risk and access level.")}\n\n" +
         $"AI review summary:\n{scope.Summary}\n" +
+        AzureRoleLine(scope, s) +
         (owner is null ? "" : $"\nOwner approval: {owner.ByName} on {Time(owner.At)}{(owner.Remarks is null ? "" : $" — {owner.Remarks}")}\n") +
         $"\nRespond in the app (the only channel that counts): {Link(s, r)}");
+
+    /// <summary>What the approvers approve when the row names an Azure role (and who assigns it).</summary>
+    public static string AzureRoleLine(ReviewedScope scope, WorkflowSettings s) => scope.AzureRoleDefinitionId is null ? "" :
+        $"Azure role: {scope.AzureRoleDefinitionId} at {scope.AzureScope} on group {scope.EntraGroup} — " +
+        (s.AgentRoleAssignment ? "assigned by the AI agent only after both approvals.\n" : "assigned by the role assignment team.\n");
 
     public static (string, string) Reminder(AccessRequest r, string waitingFor, TimeSpan pending, WorkflowSettings s) => (
         $"Reminder: {waitingFor} pending for request {Short(r)}",

@@ -238,6 +238,8 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         var result = run.Result!;
         var m = result.Mapping;
+        // The Azure role on the reviewed row is part of what is approved (a later change re-reviews: fingerprint).
+        var reviewedRow = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == m.RowId);
         var scope = new ReviewedScope
         {
             ReviewRunId = run.Id,
@@ -246,6 +248,8 @@ public sealed partial class WorkflowAgent(
             EntraGroup = m.EntraGroup!,
             Role = m.Role!,
             RoleScope = m.RoleScope,
+            AzureRoleDefinitionId = reviewedRow?.AzureRoleDefinitionId,
+            AzureScope = reviewedRow?.AzureScope,
             GroupState = m.GroupState ?? GroupState.Exists,
             GroupExistsInEntra = m.GroupExistsInEntra,
             SheetFingerprint = run.SheetFingerprint!,

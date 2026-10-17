@@ -69,6 +69,9 @@ export interface ReviewedScope {
   entraGroup: string;
   role: string;
   roleScope: string | null;
+  /** The Azure role the approvers approve (v2.1: the only role the agent may assign). */
+  azureRoleDefinitionId: string | null;
+  azureScope: string | null;
   groupState: GroupState;
   groupExistsInEntra: boolean | null;
   riskFlags: string[];

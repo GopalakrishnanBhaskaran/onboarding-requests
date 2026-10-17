@@ -219,13 +219,14 @@ public sealed partial class WorkflowAgent
         var project = await ProjectAsync(r, ct);
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var work = task.Agent ?? new AgentWork { At = now };
-        var roleId = row?.AzureRoleDefinitionId;
-        var azureScope = row?.AzureScope;
+        // Exactly the Azure role the Owner and Security saw: taken from the approved scope, never from the live row.
+        var roleId = scope.AzureRoleDefinitionId;
+        var azureScope = scope.AzureScope;
 
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
             : row is null ? $"mapping row {scope.MappingRowId} not found"
             : row.Privileged ? $"mapping row {scope.MappingRowId} is privileged access"
-            : roleId is null || azureScope is null ? "the mapping row has no Azure role and scope for the agent (e.g. a Databricks role)"
+            : roleId is null || azureScope is null ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)"
             : !settings.RoleAssignAllowedRoleIds.Contains(roleId, StringComparer.OrdinalIgnoreCase) ? $"Azure role {roleId} is not on the agent's allow-list"
             : !settings.RoleAssignScopes.Any(s => InScope(azureScope, s)) ? $"scope {azureScope} is not on the agent's allow-list"
             : null;

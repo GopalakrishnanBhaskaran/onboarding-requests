@@ -55,6 +55,9 @@ public sealed record ReviewedScope
     public required string EntraGroup { get; init; }
     public required string Role { get; init; }
     public string? RoleScope { get; init; }
+    /// <summary>The Azure role (definition GUID) and scope the approvers saw; the only role the agent may assign (v2.1).</summary>
+    public string? AzureRoleDefinitionId { get; init; }
+    public string? AzureScope { get; init; }
     public GroupState GroupState { get; init; }
     /// <summary>Entra cross-check: the group already exists (reuse it), even if the sheet says "to be created".</summary>
     public bool? GroupExistsInEntra { get; init; }
@@ -63,10 +66,13 @@ public sealed record ReviewedScope
     /// <summary>AI summary carried with every approval request: what, why, group, role, risk flags, review results.</summary>
     public required string Summary { get; init; }
 
+    /// <summary>Same group and role, incl. the Azure role: any difference needs new approvals.</summary>
     public bool SameAccess(ReviewedScope other) =>
         string.Equals(EntraGroup, other.EntraGroup, StringComparison.OrdinalIgnoreCase)
         && string.Equals(Role, other.Role, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(RoleScope ?? "", other.RoleScope ?? "", StringComparison.OrdinalIgnoreCase);
+        && string.Equals(RoleScope ?? "", other.RoleScope ?? "", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(AzureRoleDefinitionId ?? "", other.AzureRoleDefinitionId ?? "", StringComparison.OrdinalIgnoreCase)
+        && string.Equals((AzureScope ?? "").TrimEnd('/'), (other.AzureScope ?? "").TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Temporary Access Pass metadata. The pass itself never reaches this app, its logs, ADO, mail or prompts.</summary>

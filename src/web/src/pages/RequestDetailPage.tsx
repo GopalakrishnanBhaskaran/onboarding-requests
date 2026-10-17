@@ -5,7 +5,7 @@ import {
 import { ArrowClockwise20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { api } from '../lib/api';
 import { href } from '../lib/router';
-import type { CheckResult, Item, ProjectSummary, RequestView, ReviewRun } from '../lib/types';
+import type { CheckResult, Item, ProjectSummary, RequestView, ReviewedScope, ReviewRun } from '../lib/types';
 import { checkColor, checkLabel, dateTime, fieldLabel, statusColor } from '../lib/format';
 import { FLOW_OVERVIEW } from '../lib/flow';
 import { ApprovalPanel } from '../components/ApprovalPanel';
@@ -194,7 +194,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
         <Tab value="trail">Audit trail{view.issues.length ? ` · ${view.issues.length} issue(s)` : ''}</Tab>
       </TabList>
 
-      {tab === 'review' && (latest ? <ReviewView run={latest} runs={runs} /> : <Empty>No review yet.</Empty>)}
+      {tab === 'review' && (latest ? <ReviewView run={latest} runs={runs} scope={f?.scope} /> : <Empty>No review yet.</Empty>)}
       {tab === 'notifications' && <Notifications view={view} />}
       {tab === 'trail' && (
         <section className={s.section} aria-labelledby="trail-h">
@@ -239,7 +239,7 @@ function Checks({ checks, label }: { checks: CheckResult[]; label: string }) {
   );
 }
 
-function ReviewView({ run, runs }: { run: ReviewRun; runs: Item<ReviewRun>[] }) {
+function ReviewView({ run, runs, scope }: { run: ReviewRun; runs: Item<ReviewRun>[]; scope?: ReviewedScope | null }) {
   const s = useStyles();
   const result = run.result;
   return (
@@ -255,6 +255,9 @@ function ReviewView({ run, runs }: { run: ReviewRun; runs: Item<ReviewRun>[] }) 
           <section className={s.section} aria-labelledby="summary-h">
             <Subtitle2 as="h2" id="summary-h">AI summary for the approvers</Subtitle2>
             <Body1 className={s.pre}>{result.summary}</Body1>
+            {scope?.azureRoleDefinitionId && (
+              <Body1>Azure role in this approval: {scope.azureRoleDefinitionId} at {scope.azureScope} on group {scope.entraGroup}.</Body1>
+            )}
             {result.riskFlags.length > 0 && (
               <div className={s.row}>{result.riskFlags.map((flag) => <Badge key={flag} color="warning">{flag}</Badge>)}</div>
             )}
