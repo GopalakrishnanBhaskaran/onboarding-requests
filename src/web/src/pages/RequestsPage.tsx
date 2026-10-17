@@ -41,6 +41,11 @@ export function RequestsPage({ project }: { project: ProjectSummary }) {
         )}
         <Button icon={<ArrowClockwise20Regular />} onClick={() => void load()}>Refresh</Button>
       </div>
+      {!canSubmit && (
+        <Caption1>
+          New requests need the Requester role. Your roles in this project: {project.roles.join(', ') || 'none'}. Ask the pilot owner to add Requester.
+        </Caption1>
+      )}
       <ErrorBar error={error} />
       {items === null && !error ? (
         <Loading />
