@@ -166,6 +166,11 @@ public class ReportsTests
         Assert.Contains("0123456789abcdef0123456789abcdef", masked);
         Assert.Contains(hash, masked);
         Assert.Contains("TAP: ******", masked);
+
+        // 17 Oct 2026 live: the request links in notifications came out as #/******.
+        var link = "https://sample.invalid/#/requests/0123456789abcdef0123456789abcdef/edit";
+        Assert.Equal($"Track it: {link}", SecretMasker.Apply($"Track it: {link}"));
+        Assert.Equal("key ******", SecretMasker.Apply("key AbC1/dEf2+GhI3/jKl4MnO5pQr6StU7vWx8YzA9bCd0Ef=="));
     }
 
     [Fact]
