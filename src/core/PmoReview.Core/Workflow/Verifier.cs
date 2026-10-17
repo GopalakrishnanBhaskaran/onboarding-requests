@@ -124,7 +124,7 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
                 : new CheckResult(VerifyCodes.Tap, G, CheckStatus.NotApplicable, "No Temporary Access Pass recorded (existing account with its own sign-in method).");
         var security = flow.CurrentApproval(ApprovalStage.Security);
         var problems = new List<string>();
-        if (security is null || security.Decision != ApprovalDecision.Approved || tap.IssuedAt < security.At)
+        if (security is null || security.Decision != ApprovalDecision.Approved || tap.IssuedAt < Minute(security.At))
             problems.Add("The TAP was issued before all approvals were complete.");
         if (!report.AddedToGroup) problems.Add("The TAP must be issued only after the group membership.");
         if (!tap.OneTime) problems.Add("The TAP must be one-time use.");
@@ -134,6 +134,9 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
             ? new CheckResult(VerifyCodes.Tap, G, CheckStatus.Pass, $"TAP metadata recorded: issued {Messages.Time(tap.IssuedAt)}, expires {Messages.Time(tap.ExpiresAt)}, one-time, by {tap.IssuedBy}.")
             : new CheckResult(VerifyCodes.Tap, G, CheckStatus.Fail, string.Join(" ", problems));
     }
+
+    /// <summary>TAP times are recorded to the minute (datetime-local), so comparisons with approval times use minute precision.</summary>
+    internal static DateTimeOffset Minute(DateTimeOffset t) => new(t.Ticks - t.Ticks % TimeSpan.TicksPerMinute, t.Offset);
 
     private CheckResult EntraTap(TapMethod? tap)
     {

@@ -230,7 +230,7 @@ public sealed partial class WorkflowService(
             if ((expires - issued).TotalMinutes > settings.TapMaxLifetimeMinutes)
                 throw AppException.Invalid($"Use the shortest lifetime: at most {settings.TapMaxLifetimeMinutes} minutes.");
             var security = flow.CurrentApproval(ApprovalStage.Security);
-            if (security is null || issued < security.At) throw AppException.Invalid("The Temporary Access Pass was issued before all approvals were complete.");
+            if (security is null || issued < Verifier.Minute(security.At)) throw AppException.Invalid("The Temporary Access Pass was issued before all approvals were complete.");
             if (!added) throw AppException.Invalid("Issue the Temporary Access Pass only after the user is added to the group.");
             var by = SecretMasker.Apply(RequestService.Text(t.IssuedBy, "tap.issuedBy", 200)) ?? caller.DisplayName;
             tap = new TapRecord(issued, expires, true, by, now);

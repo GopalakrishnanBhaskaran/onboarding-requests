@@ -11,10 +11,10 @@ import { RequestsPage } from './pages/RequestsPage';
 import { RequestFormPage } from './pages/RequestFormPage';
 import { RequestDetailPage } from './pages/RequestDetailPage';
 import { QueuePage } from './pages/QueuePage';
-import { ReferencePage } from './pages/ReferencePage';
+import { MappingSheetPage } from './pages/MappingSheetPage';
 import { OperatorPage } from './pages/OperatorPage';
+import { BANNER } from './lib/flow';
 
-export const BANNER = 'This checks request readiness. A ready review is not an access decision.';
 const PROJECT_KEY = 'pmo-review.project';
 
 const useStyles = makeStyles({
@@ -92,13 +92,12 @@ function Shell() {
     storeProject(id);
   };
 
-  const anyRole = (role: string) => me?.projects.some((p) => p.roles.includes(role as never)) ?? false;
 
   return (
     <div className={s.app}>
       <a className={s.skip} href="#main">Skip to content</a>
       <header className={s.header}>
-        <Title3 as="p">PMO Request Review</Title3>
+        <Title3 as="p">Onboarding requests</Title3>
         <Caption1>Pilot</Caption1>
         <div className={s.grow} />
         {me && me.projects.length > 0 && project && (
@@ -126,12 +125,12 @@ function Shell() {
 
       {me && project && (
         <nav className={s.nav} aria-label="Main">
-          <Link href={href({ page: 'requests' })}>My requests</Link>
-          {anyRole('Reviewer') && <Link href={href({ page: 'queue' })}>Review queue</Link>}
-          {(project.roles.includes('Maintainer') || project.roles.includes('PMO') || project.roles.includes('Reviewer')) && (
-            <Link href={href({ page: 'reference' })}>Reference data</Link>
+          <Link href={href({ page: 'requests' })}>Requests</Link>
+          <Link href={href({ page: 'queue' })}>My actions</Link>
+          <Link href={href({ page: 'sheet' })}>Mapping sheet</Link>
+          {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (
+            <Link href={href({ page: 'operator' })}>Issues and reports</Link>
           )}
-          {project.roles.includes('Operator') && <Link href={href({ page: 'operator' })}>Operator</Link>}
         </nav>
       )}
 
@@ -161,8 +160,8 @@ function Page({ route, project, onOpenProject }: { route: Route; project: Projec
       return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
     case 'queue':
       return <QueuePage onOpen={onOpenProject} />;
-    case 'reference':
-      return <ReferencePage key={project.projectId} project={project} />;
+    case 'sheet':
+      return <MappingSheetPage key={project.projectId} project={project} />;
     case 'operator':
       return <OperatorPage project={project} />;
     default:

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 
-/** Minimal hash router: #/requests, #/requests/new, #/requests/:id, #/requests/:id/edit, #/queue, #/reference, #/operator. */
+/** Minimal hash router: #/requests, #/requests/new, #/requests/:id, #/requests/:id/edit, #/queue, #/sheet, #/operator. */
 export type Route =
   | { page: 'requests' }
   | { page: 'new' }
   | { page: 'request'; requestId: string }
   | { page: 'edit'; requestId: string }
   | { page: 'queue' }
-  | { page: 'reference' }
+  | { page: 'sheet' }
   | { page: 'operator' };
 
 export function parse(hash: string): Route {
@@ -15,8 +15,8 @@ export function parse(hash: string): Route {
   switch (parts[0]) {
     case 'queue':
       return { page: 'queue' };
-    case 'reference':
-      return { page: 'reference' };
+    case 'sheet':
+      return { page: 'sheet' };
     case 'operator':
       return { page: 'operator' };
     case 'requests':

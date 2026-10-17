@@ -35,6 +35,25 @@ public class TeamTaskTests
     }
 
     [Fact]
+    public async Task Tap_recorded_to_the_minute_of_the_security_approval_counts_as_after_it()
+    {
+        var app = TestApp.Create();
+        var id = await app.To(RequestStatus.AwaitingSecurity);
+        app.Clock.Advance(TimeSpan.FromSeconds(42));
+        var approve = await app.Approve(id, TestApp.Sam);
+        Assert.Equal(200, approve.Status);
+        var approvedAt = (await app.Request(id)).Flow!.CurrentApproval(ApprovalStage.Security)!.At;
+        Assert.NotEqual(0, approvedAt.Second);
+        app.Directory.AddUser(TestApp.DefaultUser);
+        app.Directory.AddMember(TestApp.DefaultGroup, TestApp.DefaultUser);
+        var issued = new DateTimeOffset(approvedAt.Year, approvedAt.Month, approvedAt.Day, approvedAt.Hour, approvedAt.Minute, 0, approvedAt.Offset);
+
+        var r = await app.ReportIdTeam(id, app.IdReport(tap: new { issuedAt = issued, expiresAt = issued.AddMinutes(60), oneTime = true, issuedBy = "sample.idteam@sample.invalid" }));
+
+        Assert.True(r.Status == 200, r.Body);
+    }
+
+    [Fact]
     public async Task New_account_needs_a_one_time_tap_recorded()
     {
         var (app, id) = await AtIdTeam();

@@ -1,52 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Badge, Body1, Button, Caption1, Field, Link, Radio, RadioGroup, Subtitle2, Tab, TabList,
-  Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Textarea,
+  Badge, Body1, Button, Caption1, Link, Subtitle2, Tab, TabList, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
-import { ArrowClockwise20Regular, Copy20Regular, Edit20Regular, Search20Regular } from '@fluentui/react-icons';
-import { api, newNonce, type HandoffList } from '../lib/api';
+import { ArrowClockwise20Regular, Edit20Regular } from '@fluentui/react-icons';
+import { api } from '../lib/api';
 import { href } from '../lib/router';
-import type { AccessRequest, DecisionOutcome, EntraHandoff, Item, JoinerPassSummary, ProjectSummary, ReviewDecision, ReviewRun, TemporaryAccessPass } from '../lib/types';
-import { dateTime, fieldLabel, handoffColor, handoffLabel, inProgress, readinessColor, readinessLabel, severityColor } from '../lib/format';
+import type { CheckResult, Item, ProjectSummary, RequestView, ReviewRun } from '../lib/types';
+import { checkColor, checkLabel, dateTime, fieldLabel, statusColor } from '../lib/format';
+import { FLOW_OVERVIEW } from '../lib/flow';
+import { ApprovalPanel } from '../components/ApprovalPanel';
+import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPanel';
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
-const POLL_MS = 3000;
-const POLL_LIMIT_MS = 60000;
+const POLL_MS = 15000;
+const POLL_LIMIT_MS = 5 * 60000;
 
 export function RequestDetailPage({ project, requestId }: { project: ProjectSummary; requestId: string }) {
   const s = useStyles();
-  const isPmo = project.roles.includes('PMO');
-  const isReviewer = project.roles.includes('Reviewer');
-
-  const [request, setRequest] = useState<Item<AccessRequest> | null>(null);
+  const [view, setView] = useState<RequestView | null>(null);
   const [runs, setRuns] = useState<Item<ReviewRun>[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<'results' | 'history'>('results');
+  const [tab, setTab] = useState<'review' | 'notifications' | 'trail'>('review');
+  const [trail, setTrail] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [handoffs, setHandoffs] = useState<HandoffList>({ enabled: false, items: [] });
-  const pollStarted = useRef<number>(0);
-  const nonce = useRef<string>(newNonce());
+  const pollStarted = useRef(0);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [req, list, hand] = await Promise.all([
-        api.getRequest(project.projectId, requestId),
-        api.listRuns(project.projectId, requestId),
-        api.listHandoffs(project.projectId, requestId),
-      ]);
-      setRequest(req);
-      setRuns(list.items);
-      setHandoffs(hand);
-      setSelected((cur) => cur ?? list.items[0]?.value.id ?? null);
+      const [v, r] = await Promise.all([api.getRequest(project.projectId, requestId), api.listRuns(project.projectId, requestId)]);
+      setView(v);
+      setRuns(r.items);
       setLastUpdated(new Date());
-      return list.items;
     } catch (e) {
       setError(e);
-      return [];
     }
   }, [project.projectId, requestId]);
 
@@ -54,283 +41,175 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
     void load();
   }, [load]);
 
-  const current = runs.find((r) => r.value.id === selected)?.value ?? runs[0]?.value ?? null;
-
-  // Poll every 3 s for up to 60 s while the selected run is Queued/Running.
+  // While the AI agent has the next step, refresh every 15 s for up to 5 minutes (the worker runs every 5 minutes).
   useEffect(() => {
-    if (!current || !inProgress(current.processingStatus)) return;
-    if (!pollStarted.current) pollStarted.current = Date.now();
-    if (Date.now() - pollStarted.current > POLL_LIMIT_MS) {
-      setStatus('Still processing. Use Refresh to check again.');
+    if (view?.status.waitingOn !== 'Agent') {
+      pollStarted.current = 0;
       return;
     }
+    if (!pollStarted.current) pollStarted.current = Date.now();
+    if (Date.now() - pollStarted.current > POLL_LIMIT_MS) return;
     const t = window.setTimeout(() => void load(), POLL_MS);
     return () => window.clearTimeout(t);
-  }, [current, load]);
+  }, [view, load]);
 
-  async function start(kind: 'analyze' | 'retry', runId?: string) {
-    setBusy(true);
-    setError(null);
-    setStatus(kind === 'analyze' ? 'Analysis requested…' : 'Retry requested…');
-    try {
-      const res = kind === 'analyze'
-        ? await api.analyze(project.projectId, requestId, nonce.current)
-        : await api.retry(project.projectId, runId!, nonce.current);
-      nonce.current = newNonce(); // one nonce per deliberate click; double-clicks reuse it
-      pollStarted.current = Date.now();
-      setSelected(res.runId);
-      setTab('results');
-      setStatus(res.duplicate ? `A review for this revision already exists (${res.processingStatus}).` : `Review ${res.processingStatus.toLowerCase()}.`);
-      await load();
-    } catch (e) {
-      setError(e);
-      setStatus('');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const done = (v: RequestView) => {
+    setView(v);
+    setLastUpdated(new Date());
+    void api.listRuns(project.projectId, requestId).then((r) => setRuns(r.items)).catch(() => undefined);
+  };
 
-  if (!request && !error) return <Loading />;
-  if (!request) return <ErrorBar error={error} />;
-  const r = request.value;
+  if (!view && !error) return <Loading />;
+  if (!view) return <ErrorBar error={error} />;
+  const r = view.request.value;
+  const f = r.flow;
+  const st = view.status;
+  const latest = runs.find((x) => x.value.id === f?.reviewRunId)?.value ?? runs[0]?.value ?? null;
+  const isOperator = project.roles.includes('Operator');
 
   return (
     <div className={s.stack}>
-      <PageTitle>{`Request ${r.id.slice(0, 8)} · revision ${r.revision}`}</PageTitle>
+      <PageTitle>{`Request ${r.id.slice(0, 8)}`}</PageTitle>
       <ErrorBar error={error} />
 
-      <section className={s.section} aria-labelledby="req-heading">
-        <Subtitle2 as="h2" id="req-heading">Request</Subtitle2>
+      <section className={s.section} aria-labelledby="status-h">
+        <div className={s.row}>
+          <Subtitle2 as="h2" id="status-h">Status</Subtitle2>
+          <Badge appearance="filled" color={statusColor[st.status]}>{st.currentStage}</Badge>
+          <Caption1 className={s.muted}>waiting on {st.waitingOnLabel} · {st.timeInStage} in this stage</Caption1>
+        </div>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
-          {(['requestType', 'role', 'environment', 'joinerUpn', 'manager', 'startDate', 'endDate', 'justification'] as const).map((k) => (
+          <dt><Caption1>Requester</Caption1></dt><dd style={{ margin: 0 }}><Body1>{st.requester}</Body1></dd>
+          <dt><Caption1>Done</Caption1></dt><dd style={{ margin: 0 }}><Body1>{st.done.join(' · ') || '—'}</Body1></dd>
+          <dt><Caption1>Next</Caption1></dt><dd style={{ margin: 0 }}><Body1>{st.next}</Body1></dd>
+          <dt><Caption1>ADO work item</Caption1></dt>
+          <dd style={{ margin: 0 }}><Body1>{st.adoLink ? <Link href={st.adoLink} target="_blank" rel="noopener noreferrer">Open</Link> : 'Not linked'}</Body1></dd>
+        </dl>
+        <ol aria-label="Flow progress" style={{ margin: 0, paddingLeft: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {FLOW_OVERVIEW.map((step, i) => (
+            <li key={step} style={{ listStyle: 'none' }}>
+              <Badge appearance={i < st.done.length ? 'filled' : 'outline'} color={i < st.done.length ? 'success' : 'informative'}>{step}</Badge>
+            </li>
+          ))}
+        </ol>
+        {f?.lastReason && (st.status === 'Returned' || st.status === 'Rejected' || st.status === 'FailedNeedsDev') && (
+          <Body1 className={s.pre}><b>Reason:</b> {f.lastReason}</Body1>
+        )}
+        <div className={s.row}>
+          {view.actions.includes('Resubmit') && (
+            <Button appearance="primary" icon={<Edit20Regular />} as="a" href={href({ page: 'edit', requestId: r.id })}>Correct and resubmit</Button>
+          )}
+          {isOperator && <Button onClick={() => void api.advance(project.projectId, r.id).then(done).catch(setError)}>Run agent step now</Button>}
+          <Button icon={<ArrowClockwise20Regular />} onClick={() => void load()}>Refresh</Button>
+          <Caption1 className={s.muted}>Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</Caption1>
+        </div>
+      </section>
+
+      <section className={s.section} aria-labelledby="req-h">
+        <Subtitle2 as="h2" id="req-h">Request · revision {r.revision}</Subtitle2>
+        <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
+          {(['enterpriseId', 'firstName', 'lastName', 'domainId', 'resource', 'accessLevel', 'owner', 'justification'] as const).map((k) => (
             <div key={k} style={{ display: 'contents' }}>
               <dt><Caption1>{fieldLabel[k]}</Caption1></dt>
               <dd style={{ margin: 0 }} className={s.pre}><Body1>{r[k] || '—'}</Body1></dd>
             </div>
           ))}
+          <dt><Caption1>{fieldLabel.guest}</Caption1></dt><dd style={{ margin: 0 }}><Body1>{r.guest ? 'Yes' : 'No'}</Body1></dd>
         </dl>
-        <div className={s.row}>
-          {isPmo && (
-            <>
-              <Button appearance="primary" icon={<Search20Regular />} disabled={busy} onClick={() => void start('analyze')}>
-                {busy ? 'Analyzing…' : 'Analyze request'}
-              </Button>
-              <Button icon={<Edit20Regular />} as="a" href={href({ page: 'edit', requestId: r.id })}>Edit</Button>
-            </>
-          )}
-          <Button icon={<ArrowClockwise20Regular />} onClick={() => void load()}>Refresh</Button>
-          <Caption1 className={s.muted}>Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</Caption1>
-        </div>
-        <div aria-live="polite" role="status"><Caption1>{status}</Caption1></div>
       </section>
 
-      {handoffs.enabled && (
-        <HandoffPanel items={handoffs.items} currentRevision={r.revision} autoAssign={handoffs.autoAssign === true}
-          passes={handoffs.passes ?? []} projectId={project.projectId}
-          canReveal={project.roles.includes('PMO') || project.roles.includes('Reviewer')} onChanged={() => void load()} />
-      )}
+      {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" onDone={done} />}
+      {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" onDone={done} />}
 
-      <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as 'results' | 'history')} aria-label="Review views">
-        <Tab value="results">Review results</Tab>
-        <Tab value="history">Review history ({runs.length})</Tab>
-      </TabList>
+      {f?.approvals.length ? (
+        <section className={s.section} aria-labelledby="decisions-h">
+          <Subtitle2 as="h2" id="decisions-h">Decisions</Subtitle2>
+          {f.approvals.map((a, i) => (
+            <Body1 key={i}>
+              {a.stage}: {a.decision} by {a.byName} · {dateTime(a.at)} · via {a.channel}{a.superseded ? ' (superseded: the reviewed group or role changed)' : ''}{a.remarks ? ` — ${a.remarks}` : ''}
+            </Body1>
+          ))}
+        </section>
+      ) : null}
 
-      {tab === 'results' ? (
-        current ? (
-          <RunView
-            run={current}
-            project={project}
-            currentRevision={r.revision}
-            canRetry={isPmo}
-            canReview={isReviewer}
-            onRetry={(id) => void start('retry', id)}
-            onFeedback={() => void load()}
-            autoAssign={handoffs.enabled && handoffs.autoAssign === true}
-          />
-        ) : (
-          <Empty>No review yet.{isPmo ? ' Select “Analyze request”.' : ''}</Empty>
-        )
-      ) : (
-        <History runs={runs} onSelect={(id) => { setSelected(id); setTab('results'); }} />
-      )}
-    </div>
-  );
-}
-
-function RunStatus({ run }: { run: ReviewRun }) {
-  return (
-    <>
-      <Badge appearance="outline" color={run.processingStatus === 'Failed' ? 'danger' : run.processingStatus === 'Superseded' ? 'subtle' : 'brand'}>
-        {run.processingStatus === 'Superseded' ? `Superseded by revision ${run.supersededByRevision}` : run.processingStatus}
-      </Badge>
-      {run.readiness && run.processingStatus !== 'Failed' && (
-        <Badge appearance="filled" color={readinessColor[run.readiness]}>{readinessLabel[run.readiness]}</Badge>
-      )}
-    </>
-  );
-}
-
-function RunView(props: {
-  run: ReviewRun;
-  project: ProjectSummary;
-  currentRevision: number;
-  canRetry: boolean;
-  canReview: boolean;
-  onRetry: (runId: string) => void;
-  onFeedback: () => void;
-  autoAssign: boolean;
-}) {
-  const { run, project, currentRevision, canRetry, canReview, onRetry, onFeedback, autoAssign } = props;
-  const s = useStyles();
-  const result = run.result;
-  const [copied, setCopied] = useState(false);
-
-  async function copyQuestions() {
-    if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.clarificationQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n'));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <div className={s.stack}>
-      <div className={s.row}>
-        <RunStatus run={run} />
-        <Caption1 className={s.muted}>
-          Run {run.id} · revision {run.requestRevision}{run.requestRevision !== currentRevision ? ' (older revision)' : ''} · reviewer {run.reviewerProvider} {run.reviewerVersion} · {dateTime(run.completedAt ?? run.queuedAt)}
-        </Caption1>
-      </div>
-
-      {inProgress(run.processingStatus) && <Body1>Review is {run.processingStatus.toLowerCase()}…</Body1>}
-
-      {run.processingStatus === 'Failed' && (
-        <section className={s.section}>
-          <Body1>The review could not complete ({run.errorCategory ?? 'unknown'}). No result was produced.</Body1>
-          {canRetry && <div><Button onClick={() => onRetry(run.id)}>Retry review</Button></div>}
+      {f?.idTeamTask && (
+        <section className={s.section} aria-labelledby="idteam-h">
+          <span id="idteam-h" hidden>ID team</span>
+          <TaskSummary task={f.idTeamTask} title="ID team" />
+          {view.actions.includes('IdTeamTask') && <IdTeamForm request={r} onDone={done} />}
         </section>
       )}
+      {f?.roleTeamTask && (
+        <section className={s.section} aria-labelledby="roleteam-h">
+          <span id="roleteam-h" hidden>Role assignment team</span>
+          <TaskSummary task={f.roleTeamTask} title="Role assignment team" />
+          {view.actions.includes('RoleTeamTask') && <RoleTeamForm request={r} onDone={done} />}
+        </section>
+      )}
+      {f?.finalChecks.length ? (
+        <section className={s.section} aria-labelledby="final-h">
+          <Subtitle2 as="h2" id="final-h">Final verification</Subtitle2>
+          <Checks checks={f.finalChecks} label="Final verification" />
+        </section>
+      ) : null}
 
-      {result && (
-        <>
-          <section className={s.section} aria-labelledby="summary-h">
-            <Subtitle2 as="h2" id="summary-h">Summary</Subtitle2>
-            <Body1 className={s.pre}>{result.summary}</Body1>
-          </section>
+      <section className={s.section} aria-labelledby="time-h">
+        <Subtitle2 as="h2" id="time-h">Time per stage · total {view.timings.total.text}</Subtitle2>
+        <div className={s.row} style={{ alignItems: 'flex-start', gap: 32 }}>
+          <div>
+            <Caption1>By stage</Caption1>
+            {view.timings.perStage.map((t) => <Body1 key={t.name} block>{t.name}: {t.text}</Body1>)}
+          </div>
+          <div>
+            <Caption1>Wait time per team</Caption1>
+            {view.timings.perTeam.map((t) => <Body1 key={t.name} block>{t.name}: {t.text}</Body1>)}
+          </div>
+        </div>
+      </section>
 
-          <section className={s.section} aria-labelledby="findings-h">
-            <Subtitle2 as="h2" id="findings-h">Findings ({result.findings.length})</Subtitle2>
-            {result.findings.length === 0 ? (
-              <Empty>No findings.</Empty>
-            ) : (
-              <div className={s.tableWrap}>
-                <Table aria-label="Findings" size="small">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHeaderCell>Severity</TableHeaderCell>
-                      <TableHeaderCell>Field</TableHeaderCell>
-                      <TableHeaderCell>Finding</TableHeaderCell>
-                      <TableHeaderCell>Evidence</TableHeaderCell>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {result.findings.map((f, i) => (
-                      <TableRow key={`${f.code}-${i}`}>
-                        <TableCell><Badge color={severityColor[f.severity]}>{f.severity}</Badge></TableCell>
-                        <TableCell>{f.field ? fieldLabel[f.field] ?? f.field : '—'}</TableCell>
-                        <TableCell><span className={s.pre}>{f.message}</span> <Caption1 className={s.muted}>({f.code})</Caption1></TableCell>
-                        <TableCell>{f.ruleId ? `${f.ruleId} v${f.ruleVersion} · ${f.sourceReference ?? ''}` : '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </section>
+      <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)} aria-label="Request details">
+        <Tab value="review">AI review ({runs.length})</Tab>
+        <Tab value="notifications">Notifications ({view.notifications.length})</Tab>
+        <Tab value="trail">Audit trail{view.issues.length ? ` · ${view.issues.length} issue(s)` : ''}</Tab>
+      </TabList>
 
-          <section className={s.section} aria-labelledby="mapping-h">
-            <Subtitle2 as="h2" id="mapping-h">Role mapping assessment</Subtitle2>
-            <div className={s.row}>
-              <Badge appearance="outline">{result.mappingAssessment.status}</Badge>
-              {result.mappingAssessment.mappingId && (
-                <Caption1>{result.mappingAssessment.mappingId} v{result.mappingAssessment.mappingVersion}</Caption1>
-              )}
-            </div>
-            <Body1 className={s.pre}>{result.mappingAssessment.explanation}</Body1>
-          </section>
-
-          <section className={s.section} aria-labelledby="questions-h">
-            <div className={s.row}>
-              <Subtitle2 as="h2" id="questions-h">Clarification questions</Subtitle2>
-              {result.clarificationQuestions.length > 0 && (
-                <Button size="small" icon={<Copy20Regular />} onClick={() => void copyQuestions()}>
-                  {copied ? 'Copied' : 'Copy'}
-                </Button>
-              )}
-            </div>
-            {result.clarificationQuestions.length === 0 ? (
-              <Empty>None.</Empty>
-            ) : (
-              <ol style={{ margin: 0 }}>
-                {result.clarificationQuestions.map((q, i) => <li key={i}><Body1>{q}</Body1></li>)}
-              </ol>
-            )}
-          </section>
-
-          <section className={s.section} aria-labelledby="limits-h">
-            <Subtitle2 as="h2" id="limits-h">Limitations and evidence versions</Subtitle2>
-            <ul style={{ margin: 0 }}>
-              {result.limitations.map((l, i) => <li key={i}><Caption1>{l}</Caption1></li>)}
-            </ul>
-            <Caption1 className={s.muted}>
-              Rules: {run.ruleVersions.map((v) => `${v.id} v${v.version}`).join(', ') || '—'} · Mappings: {run.mappingVersions.map((v) => `${v.id} v${v.version}`).join(', ') || '—'} · Snapshot {run.snapshotHash.slice(0, 12)}…
-            </Caption1>
-          </section>
-
-          {canReview && (run.processingStatus === 'Completed' || run.processingStatus === 'Superseded') && (
-            <Feedback projectId={project.projectId} runId={run.id} onSaved={onFeedback} autoAssign={autoAssign} />
-          )}
-        </>
+      {tab === 'review' && (latest ? <ReviewView run={latest} runs={runs} /> : <Empty>No review yet.</Empty>)}
+      {tab === 'notifications' && <Notifications view={view} />}
+      {tab === 'trail' && (
+        <section className={s.section} aria-labelledby="trail-h">
+          <Subtitle2 as="h2" id="trail-h">Audit trail</Subtitle2>
+          {view.issues.map((i) => (
+            <Body1 key={i.id}><Badge color={i.severity === 'High' ? 'danger' : i.severity === 'Warning' ? 'warning' : 'informative'}>{i.kind}</Badge> {i.status} · ×{i.occurrences} · {i.summary}</Body1>
+          ))}
+          {trail === null
+            ? <div><Button onClick={() => void api.trail(project.projectId, r.id).then((t) => setTrail(t.text)).catch(setError)}>Show full trail</Button></div>
+            : <pre className={s.pre} style={{ margin: 0, fontSize: 12 }}>{trail}</pre>}
+        </section>
       )}
     </div>
   );
 }
 
-function History({ runs, onSelect }: { runs: Item<ReviewRun>[]; onSelect: (id: string) => void }) {
+function Checks({ checks, label }: { checks: CheckResult[]; label: string }) {
   const s = useStyles();
-  if (runs.length === 0) return <Empty>No reviews yet.</Empty>;
   return (
     <div className={s.tableWrap}>
-      <Table aria-label="Review history" size="small">
+      <Table aria-label={label} size="small">
         <TableHeader>
           <TableRow>
-            <TableHeaderCell>Run</TableHeaderCell>
-            <TableHeaderCell>Revision</TableHeaderCell>
-            <TableHeaderCell>Status</TableHeaderCell>
-            <TableHeaderCell>Rule / mapping versions</TableHeaderCell>
-            <TableHeaderCell>Reviewer</TableHeaderCell>
-            <TableHeaderCell>Queued</TableHeaderCell>
+            <TableHeaderCell>Group</TableHeaderCell>
+            <TableHeaderCell>Check</TableHeaderCell>
+            <TableHeaderCell>Result</TableHeaderCell>
+            <TableHeaderCell>Detail</TableHeaderCell>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {runs.map(({ value: run }) => (
-            <TableRow key={run.id}>
-              <TableCell>
-                <Link as="button" onClick={() => onSelect(run.id)}>{run.id.split('.').slice(1).join('.') || run.id}</Link>
-                {run.retryOfRunId && <Caption1 className={s.muted}> retry</Caption1>}
-              </TableCell>
-              <TableCell>{run.requestRevision}</TableCell>
-              <TableCell><div className={s.row}><RunStatus run={run} /></div></TableCell>
-              <TableCell>
-                <Caption1>
-                  {run.ruleVersions.length} rules · {run.mappingVersions.map((v) => `${v.id} v${v.version}`).join(', ') || 'no mapping'}
-                </Caption1>
-              </TableCell>
-              <TableCell>{run.reviewerProvider}</TableCell>
-              <TableCell>{dateTime(run.queuedAt)}</TableCell>
+          {checks.map((c) => (
+            <TableRow key={c.code}>
+              <TableCell><Caption1>{c.group}</Caption1></TableCell>
+              <TableCell><Caption1>{c.code}</Caption1></TableCell>
+              <TableCell><Badge color={checkColor[c.status]}>{checkLabel[c.status]}</Badge></TableCell>
+              <TableCell><span className={s.pre}>{c.detail}</span></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -339,208 +218,65 @@ function History({ runs, onSelect }: { runs: Item<ReviewRun>[]; onSelect: (id: s
   );
 }
 
-/**
- * Entra hand-off for the latest accepted review. Link mode: the new joiner requests the access package in My Access
- * and Entra's approver decides. Auto-assign mode: a second Reviewer's acceptance is the decision and the worker files
- * the Entra request. Either way Entra adds the access and removes it on the end date.
- */
-function HandoffPanel(props: {
-  items: Item<EntraHandoff>[];
-  currentRevision: number;
-  autoAssign: boolean;
-  passes: JoinerPassSummary[];
-  projectId: string;
-  canReveal: boolean;
-  onChanged: () => void;
-}) {
-  const { items, currentRevision, autoAssign, passes, projectId, canReveal, onChanged } = props;
+function ReviewView({ run, runs }: { run: ReviewRun; runs: Item<ReviewRun>[] }) {
   const s = useStyles();
-  const [copied, setCopied] = useState(false);
-  const h = items[0]?.value;
-
-  async function copyLink(link: string) {
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }
-
+  const result = run.result;
   return (
-    <section className={s.section} aria-labelledby="handoff-h">
-      <Subtitle2 as="h2" id="handoff-h">Access in Microsoft Entra</Subtitle2>
-      {!h ? (
-        <Caption1 className={s.muted}>
-          {autoAssign
-            ? 'Not handed off yet. When a second Reviewer accepts a review that is ready for human review, the app requests the access package in Microsoft Entra for the reviewed period.'
-            : 'Not handed off yet. A Reviewer accepts a review that is ready for human review; the new joiner then requests the access package in My Access.'}
-        </Caption1>
-      ) : (
+    <div className={s.stack}>
+      <div className={s.row}>
+        <Badge appearance="outline">{run.processingStatus}</Badge>
+        {run.outcome && <Badge appearance="filled" color={run.outcome === 'Pass' ? 'success' : run.outcome === 'Fail' ? 'danger' : 'informative'}>Review {run.outcome}</Badge>}
+        <Caption1 className={s.muted}>Run {run.id} · {run.trigger ?? 'review'} · reviewer {run.reviewerProvider} {run.reviewerVersion} · {dateTime(run.completedAt ?? run.queuedAt)}</Caption1>
+      </div>
+      {run.processingStatus === 'Failed' && <Body1>The review could not complete ({run.errorCategory ?? 'unknown'}). The agent retries it at most 3 times.</Body1>}
+      {result && (
         <>
-          <div className={s.row}>
-            <Badge appearance="filled" color={handoffColor[h.status]}>{handoffLabel[h.status] ?? h.status}</Badge>
-            <Caption1 className={s.muted}>
-              Revision {h.requestRevision}{h.requestRevision !== currentRevision ? ' (the request has changed since)' : ''} · accepted by {h.acceptedBy} · last checked {dateTime(h.lastCheckedAt)}
-            </Caption1>
-          </div>
-          {h.status === 'NotEligible' && <Body1>{h.reason}</Body1>}
-          {h.myAccessLink && h.status !== 'NotEligible' && h.entraRequestType !== 'adminAdd' && h.status !== 'Queued' && (
-            <div className={s.row}>
-              <Body1>Send this link to {h.joinerUpn}:</Body1>
-              <Link href={h.myAccessLink} target="_blank" rel="noopener noreferrer">Request access in My Access</Link>
-              <Button size="small" icon={<Copy20Regular />} onClick={() => void copyLink(h.myAccessLink!)}>{copied ? 'Copied' : 'Copy link'}</Button>
-            </div>
+          <section className={s.section} aria-labelledby="summary-h">
+            <Subtitle2 as="h2" id="summary-h">AI summary for the approvers</Subtitle2>
+            <Body1 className={s.pre}>{result.summary}</Body1>
+            {result.riskFlags.length > 0 && (
+              <div className={s.row}>{result.riskFlags.map((flag) => <Badge key={flag} color="warning">{flag}</Badge>)}</div>
+            )}
+          </section>
+          {result.returnReasons.length > 0 && (
+            <section className={s.section} aria-labelledby="reasons-h">
+              <Subtitle2 as="h2" id="reasons-h">Why it was returned</Subtitle2>
+              <ul style={{ margin: 0 }}>{result.returnReasons.map((x, i) => <li key={i}><Body1>{x}</Body1></li>)}</ul>
+            </section>
           )}
-          {h.status !== 'NotEligible' && (
-            <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
-              <dt><Caption1>Access package</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.mappingId} v{h.mappingVersion} · {h.accessPackageId}</Body1></dd>
-              <dt><Caption1>Requested period</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.requestedStart ?? '—'} → {h.requestedEnd ?? '—'}</Body1></dd>
-              <dt><Caption1>Entra request</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.entraRequestState ? `${h.entraRequestState} (${h.entraRequestType})` : '—'}</Body1></dd>
-              <dt><Caption1>Access in Entra</Caption1></dt><dd style={{ margin: 0 }}><Body1>{h.entraAssignmentState ? `${h.entraAssignmentState}: ${dateTime(h.accessStart)} → ${h.accessEnd ? dateTime(h.accessEnd) : 'no end date'}` : '—'}</Body1></dd>
-            </dl>
-          )}
-          {h.endDateExceedsRequest && (
-            <Body1><Badge color="warning">Check</Badge> Entra's end date is later than the reviewed end date (or has none). Ask the Entra administrator to correct the assignment.</Body1>
-          )}
-          {h.preExistingAssignment && <Body1><Badge color="informative">Note</Badge> The new joiner already held this access package before the hand-off.</Body1>}
-          {h.joinerObjectId && (
-            <Body1>
-              Joiner account: {h.joinerAccountCreatedByApp ? 'created by the app' : 'already existed (not changed)'}
-              {h.joinerAccountCreatedByApp && h.joinerLicensedAt ? ' · Entra ID P2 licence assigned' : ''}
-            </Body1>
-          )}
-          {passes.filter((p) => p.handoffId === h.id).map((p) => (
-            <PassBox key={p.handoffId} pass={p} projectId={projectId} canReveal={canReveal} onChanged={onChanged} />
-          ))}
-          {h.lastSyncError && <Caption1>Last status check failed ({h.lastSyncError}); the previous status is shown.</Caption1>}
-          {h.history.length > 0 && (
-            <ol style={{ margin: 0 }} aria-label="Hand-off timeline">
-              {h.history.map((e, i) => <li key={i}><Caption1>{dateTime(e.at)} · {handoffLabel[e.status] ?? e.status} — {e.note}</Caption1></li>)}
-            </ol>
-          )}
-          <Caption1 className={s.muted}>
-            {autoAssign
-              ? 'Every 5 minutes the app files queued Entra requests and reads their status. Entra adds the access and removes it on the end date.'
-              : 'Status is read from Microsoft Entra every 5 minutes. This app does not approve or grant access.'}
-          </Caption1>
+          <section className={s.section} aria-labelledby="checks-h">
+            <Subtitle2 as="h2" id="checks-h">Checks ({result.checks.filter((c) => c.status === 'Pass').length} passed)</Subtitle2>
+            <Checks checks={result.checks} label="Review checks" />
+          </section>
+          <section className={s.section} aria-labelledby="limits-h">
+            <Subtitle2 as="h2" id="limits-h">Mapping and limitations</Subtitle2>
+            <Body1>{result.mapping.status}{result.mapping.rowId ? `: row ${result.mapping.rowId} v${result.mapping.rowVersion} → ${result.mapping.entraGroup} / ${result.mapping.role}` : ''}</Body1>
+            <ul style={{ margin: 0 }}>{result.limitations.map((l, i) => <li key={i}><Caption1>{l}</Caption1></li>)}</ul>
+            <Caption1 className={s.muted}>Snapshot {run.snapshotHash.slice(0, 12)}… · sheet fingerprint {run.sheetFingerprint?.slice(0, 12) ?? '—'}…</Caption1>
+          </section>
         </>
       )}
-    </section>
-  );
-}
-
-/**
- * The joiner's Temporary Access Pass (accounts the app created). The server returns it once and then deletes it,
- * so it is shown here once and kept only in this page's memory.
- */
-function PassBox({ pass, projectId, canReveal, onChanged }: { pass: JoinerPassSummary; projectId: string; canReveal: boolean; onChanged: () => void }) {
-  const s = useStyles();
-  const [shown, setShown] = useState<TemporaryAccessPass | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [copied, setCopied] = useState(false);
-
-  async function reveal() {
-    if (!window.confirm('The Temporary Access Pass is shown only once. Give it to the new joiner securely (not by email). Show it now?')) return;
-    setError(null);
-    try {
-      setShown(await api.revealPass(projectId, pass.handoffId));
-    } catch (e) {
-      setError(e);
-    } finally {
-      onChanged();
-    }
-  }
-
-  async function copy(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <div className={s.stack} aria-label="Temporary Access Pass">
-      <ErrorBar error={error} />
-      {shown ? (
-        <div className={s.row}>
-          <Body1>Temporary Access Pass:</Body1>
-          <code style={{ fontSize: 16, padding: '2px 6px', border: '1px solid currentColor', borderRadius: 4 }}>{shown.secret}</code>
-          <Button size="small" icon={<Copy20Regular />} onClick={() => void copy(shown.secret)}>{copied ? 'Copied' : 'Copy'}</Button>
-          <Caption1>Valid {dateTime(shown.validFrom)} → {dateTime(shown.expiresAt)}. It will not be shown again.</Caption1>
-        </div>
-      ) : pass.available ? (
-        <div className={s.row}>
-          <Body1>A Temporary Access Pass is ready for the joiner's first sign-in (valid {dateTime(pass.validFrom)} → {dateTime(pass.expiresAt)}).</Body1>
-          {canReveal && <Button size="small" onClick={() => void reveal()}>Show pass (once)</Button>}
-        </div>
-      ) : pass.revealedAt ? (
-        <Caption1>Temporary Access Pass shown to {pass.revealedBy} on {dateTime(pass.revealedAt)}. It is not stored any more.</Caption1>
-      ) : (
-        <Caption1>The Temporary Access Pass has expired. Issue a new one in Entra if needed.</Caption1>
+      {runs.length > 1 && (
+        <Caption1 className={s.muted}>
+          History: {runs.map((x) => `${x.value.id.split('.').slice(1).join('.')} ${x.value.processingStatus}${x.value.outcome ? `/${x.value.outcome}` : ''}`).join(' · ')}
+        </Caption1>
       )}
     </div>
   );
 }
 
-/** Reviewer feedback on review QUALITY. It is not an access decision. */
-function Feedback({ projectId, runId, onSaved, autoAssign }: { projectId: string; runId: string; onSaved: () => void; autoAssign: boolean }) {
+function Notifications({ view }: { view: RequestView }) {
   const s = useStyles();
-  const [decisions, setDecisions] = useState<Item<ReviewDecision>[] | null>(null);
-  const [outcome, setOutcome] = useState<DecisionOutcome>('Accepted');
-  const [comment, setComment] = useState('');
-  const [error, setError] = useState<unknown>(null);
-  const [saving, setSaving] = useState(false);
-
-  const load = useCallback(() => {
-    api.listDecisions(projectId, runId).then((d) => setDecisions(d.items)).catch(setError);
-  }, [projectId, runId]);
-  useEffect(load, [load]);
-
-  const needsComment = outcome !== 'Accepted' && comment.trim() === '';
-
-  async function submit() {
-    setSaving(true);
-    setError(null);
-    try {
-      await api.recordDecision(projectId, runId, outcome, comment.trim());
-      setComment('');
-      load();
-      onSaved();
-    } catch (e) {
-      setError(e);
-    } finally {
-      setSaving(false);
-    }
-  }
-
+  if (view.notifications.length === 0) return <Empty>No notifications yet.</Empty>;
   return (
-    <section className={s.section} aria-labelledby="feedback-h">
-      <Subtitle2 as="h2" id="feedback-h">Reviewer feedback on this review</Subtitle2>
-      <Caption1 className={s.muted}>
-        {autoAssign
-          ? 'Automatic Entra assignment is on: “Accepted” by a second Reviewer (not the person who created or analysed the request) on a review that is ready for human review is the access decision. The app then requests the access package in Microsoft Entra for the reviewed period.'
-          : 'Rates the quality of the automated review. It does not approve the request. When the hand-off is on, “Accepted” on a review that is ready for human review issues the new joiner\'s My Access link; Entra still approves.'}
-      </Caption1>
-      <ErrorBar error={error} />
-      {decisions?.map(({ value: d }) => (
-        <Body1 key={d.id}>{d.outcome} by {d.reviewer} · {dateTime(d.timestamp)}{d.comment ? ` — ${d.comment}` : ''}</Body1>
+    <div className={s.stack}>
+      <Caption1 className={s.muted}>In the pilot, notifications are kept here (status Recorded); none is mailed.</Caption1>
+      {view.notifications.map((n) => (
+        <details key={n.id} className={s.section}>
+          <summary><Body1>{dateTime(n.createdAt)} · <b>{n.kind}</b> · to {n.to.join(', ') || '—'} · {n.status} — {n.subject}</Body1></summary>
+          <pre className={s.pre} style={{ margin: 0, fontSize: 12 }}>{n.body}</pre>
+        </details>
       ))}
-      <RadioGroup layout="horizontal" value={outcome} onChange={(_, d) => setOutcome(d.value as DecisionOutcome)} aria-label="Feedback outcome">
-        <Radio value="Accepted" label="Accepted" />
-        <Radio value="Corrected" label="Corrected" />
-        <Radio value="Escalated" label="Escalated" />
-      </RadioGroup>
-      <Field label="Comment" hint={outcome === 'Accepted' ? 'Optional.' : 'Required for Corrected or Escalated.'}>
-        <Textarea value={comment} onChange={(_, d) => setComment(d.value)} maxLength={1000} />
-      </Field>
-      <div>
-        <Button onClick={() => void submit()} disabled={saving || needsComment}>Save feedback</Button>
-      </div>
-    </section>
+    </div>
   );
 }

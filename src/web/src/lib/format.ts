@@ -1,64 +1,77 @@
-import type { ProcessingStatus, Readiness, Severity } from './types';
+import type { CheckStatus, RequestStatus, TeamTaskState } from './types';
 
-export const readinessLabel: Record<Readiness, string> = {
-  NeedsInformation: 'Needs information',
-  ReadyForHumanReview: 'Ready for human review',
-  ManualReviewRequired: 'Manual review required',
+export const statusLabel: Record<RequestStatus, string> = {
+  Submitted: 'Submitted',
+  AiReview: 'AI Review',
+  Returned: 'Returned',
+  AwaitingOwner: 'Awaiting Owner',
+  AwaitingSecurity: 'Awaiting Security',
+  Rejected: 'Rejected',
+  WithIdTeam: 'With ID Team',
+  WithRoleTeam: 'With Role Team',
+  Verifying: 'Verifying',
+  Completed: 'Completed',
+  FailedNeedsDev: 'Failed-Needs-Dev',
 };
 
-export const readinessColor: Record<Readiness, 'warning' | 'success' | 'danger'> = {
-  NeedsInformation: 'warning',
-  ReadyForHumanReview: 'success',
-  ManualReviewRequired: 'danger',
+export const statusColor: Record<RequestStatus, 'informative' | 'warning' | 'success' | 'danger' | 'subtle' | 'brand'> = {
+  Submitted: 'informative',
+  AiReview: 'informative',
+  Returned: 'warning',
+  AwaitingOwner: 'brand',
+  AwaitingSecurity: 'brand',
+  Rejected: 'subtle',
+  WithIdTeam: 'brand',
+  WithRoleTeam: 'brand',
+  Verifying: 'informative',
+  Completed: 'success',
+  FailedNeedsDev: 'danger',
 };
 
-export const severityColor: Record<Severity, 'informative' | 'warning' | 'danger'> = {
-  Info: 'informative',
-  Warning: 'warning',
-  Blocking: 'danger',
+export const checkColor: Record<CheckStatus, 'success' | 'danger' | 'informative' | 'subtle' | 'warning'> = {
+  Pass: 'success',
+  Fail: 'danger',
+  Pending: 'informative',
+  NotApplicable: 'subtle',
+  Flagged: 'warning',
+};
+
+export const checkLabel: Record<CheckStatus, string> = {
+  Pass: 'Pass',
+  Fail: 'Fail',
+  Pending: 'Pending',
+  NotApplicable: 'Not checked',
+  Flagged: 'Risk flag',
+};
+
+export const taskLabel: Record<TeamTaskState, string> = {
+  Open: 'Open',
+  Reported: 'Reported — AI verifying',
+  Returned: 'Returned with differences',
+  Verified: 'Verified',
+  Cancelled: 'Cancelled',
 };
 
 export const fieldLabel: Record<string, string> = {
-  requestType: 'Request type',
-  role: 'Business role',
-  environment: 'Environment',
-  manager: 'Line manager',
+  enterpriseId: 'Enterprise ID',
+  firstName: 'First name',
+  lastName: 'Last name',
+  domainId: 'Domain-specific ID',
+  resource: 'Resource',
+  accessLevel: 'Access level',
   justification: 'Justification',
-  startDate: 'Start date',
-  endDate: 'End date',
-  joinerUpn: 'New joiner sign-in name',
+  owner: 'Owner',
+  guest: 'Guest user',
 };
-
-export const handoffLabel: Record<string, string> = {
-  NotEligible: 'Cannot hand off',
-  Queued: 'Accepted, Entra request queued',
-  AwaitingJoinerRequest: 'Waiting for the new joiner to request',
-  PendingApproval: 'Waiting for Entra approval',
-  Delivering: 'Approved, access being added',
-  Delivered: 'Access delivered by Entra',
-  Denied: 'Denied in Entra',
-  Cancelled: 'Cancelled in Entra',
-  Failed: 'Entra could not deliver',
-  Expired: 'Access ended (expired)',
-};
-
-export const handoffColor: Record<string, 'informative' | 'warning' | 'success' | 'danger' | 'subtle'> = {
-  NotEligible: 'danger',
-  Queued: 'informative',
-  AwaitingJoinerRequest: 'informative',
-  PendingApproval: 'warning',
-  Delivering: 'informative',
-  Delivered: 'success',
-  Denied: 'danger',
-  Cancelled: 'subtle',
-  Failed: 'danger',
-  Expired: 'subtle',
-};
-
-export const inProgress = (s: ProcessingStatus) => s === 'Queued' || s === 'Running';
 
 export function dateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/** yyyy-MM-ddTHH:mm in local time, for datetime-local inputs. */
+export function localInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
