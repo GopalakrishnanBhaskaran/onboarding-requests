@@ -11,7 +11,7 @@ Branch `claude/charming-goldberg-2f0ejk` (v2). The previous branch `claude/optim
 - App roles now: Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator (Reviewer/Maintainer grant nothing → re-register users).
 - Operator **Resume after fix** for Failed-Needs-Dev (back to the failed stage; a failed review starts a new review).
 - Optional, off: Azure OpenAI reviewer/assistant, Graph `sendMail`, ADO work items, ARM role read.
-- Evidence (local): 237 .NET tests, `docs/PILOT_REPORT.md` 27/27 acceptance (12/12 gates), 6/6 Playwright E2E through the SWA emulator (full flow to Completed, Returned, Owner reject, isolation, mapping sheet, signed-out page), 6 SPA guardrail tests.
+- Evidence (local): 240 .NET tests, `docs/PILOT_REPORT.md` 27/27 acceptance (12/12 gates), 6/6 Playwright E2E through the SWA emulator (full flow to Completed, Returned, Owner reject, isolation, mapping sheet, signed-out page), 6 SPA guardrail tests.
 
 ## The 17 Oct handoff tasks
 1. Show-TAP button — **superseded**: the app never holds a pass in v2; the ID team gives it to the user directly.
@@ -26,7 +26,7 @@ Full steps: `workflows/09-onboarding-flow-v2.md`.
 4. `grant-graph` (4 read roles) — **approval**. Then `revoke-graph-writes` dry run → **approval** → `--approved-by`.
 5. Seed `--domain-suffix @<tenant>.onmicrosoft.com`; register testers with v2 roles (separate people for Owner and Security).
 6. `bash tools/workflow_diag.sh <sub>`; live E2E per workflow 09; log results.
-Facts F44–F55 were checked on Microsoft Learn on 17 Oct (`docs/VERIFIED_FACTS.md`). Two differ from the plan: **F49** — Graph lists application permissions for `GET /users/{id}/manager` as *Not supported*, so Owner escalations will go to the project contact (`ownerManagerFallback`; keep it filled in; tested); **F53** — Learn now shows Azure OpenAI on the `/openai/v1/` endpoint with audience `https://ai.azure.com/.default` while the code uses the deployments endpoint + `cognitiveservices.azure.com` — confirm on the first live call before enabling (Azure OpenAI is off). Also: sign-in log checks need Entra ID **P1/P2** (F48); SAMPLE groups must not use hidden membership (F46).
+Facts F44–F55 were checked on Microsoft Learn on 17 Oct (`docs/VERIFIED_FACTS.md`). Two differ from the plan: **F49** — Graph lists application permissions for `GET /users/{id}/manager` as *Not supported*, so Owner escalations will go to the project contact (`ownerManagerFallback`; keep it filled in; tested); **F53** — Learn now shows Azure OpenAI on the GA `/openai/v1/` endpoint with audience `https://ai.azure.com/.default`; the code was aligned (default `AZURE_OPENAI_API_VERSION=v1`, tested). A live SAMPLE call remains for when Azure OpenAI is approved (it is off). Also: sign-in log checks need Entra ID **P1/P2** (F48); SAMPLE groups must not use hidden membership (F46).
 **Bicep compiled** with Bicep CLI 0.48.1 (exit 0; 2 pre-existing `defaultTtl` warnings; F55). Parameter files match the template. Incremental deployment does **not** delete the worker's old Cosmos role assignments on `handoffs`, `joinerPasses`, `roleMappings`: list them after apply (`workflow_diag.sh` prints them) and remove only with approval.
 
 ## Decisions for Gokul

@@ -123,6 +123,50 @@ public class AzureOpenAIModelTests
         }
     }
 
+    [Theory]
+    [InlineData("v1", "https://sample-aoai.invalid/openai/v1/chat/completions", true, "https://ai.azure.com/.default")]
+    [InlineData("2024-10-21", "https://sample-aoai.invalid/openai/deployments/sample-deployment/chat/completions?api-version=2024-10-21", false, "https://cognitiveservices.azure.com/.default")]
+    public async Task Endpoint_style_and_token_audience_follow_the_api_version(string apiVersion, string url, bool modelInBody, string scope)
+    {
+        // Learn (17 Oct 2026, F53): the GA v1 API takes the deployment as "model" and the https://ai.azure.com audience.
+        var handler = new ScriptedHandler(() => ScriptedHandler.Final("""{"analysis":"ok"}"""));
+        var credential = new RecordingCredential();
+        var options = new AzureOpenAIOptions { Endpoint = new Uri("https://sample-aoai.invalid/"), Deployment = "sample-deployment", ApiVersion = apiVersion };
+        var chat = AzureOpenAIChat.WithManagedIdentity(new HttpClient(handler), options, credential);
+
+        await new AzureOpenAIAssistant(chat).AnalyseAsync("daily-summary", "facts", CancellationToken.None);
+
+        var (request, body) = handler.Requests.Single();
+        Assert.Equal(url, request.RequestUri!.AbsoluteUri);
+        Assert.Equal(modelInBody, JsonDocument.Parse(body).RootElement.TryGetProperty("model", out var model) && model.GetString() == "sample-deployment");
+        Assert.Equal([scope], credential.Scopes);
+    }
+
+    [Fact]
+    public void Factory_defaults_to_the_v1_api()
+    {
+        var chat = ReviewModelFactory.Chat(new PmoReview.Adapters.PilotSettings
+        {
+            AllowPaidServices = true, ReviewModelProvider = AzureOpenAIReviewModel.ProviderName,
+            AzureOpenAIEndpoint = new Uri("https://sample-aoai.invalid/"), AzureOpenAIDeployment = "sample-deployment",
+        });
+        Assert.True(chat.Options.UsesV1);
+    }
+
+    private sealed class RecordingCredential : Azure.Core.TokenCredential
+    {
+        public List<string> Scopes { get; } = [];
+
+        public override Azure.Core.AccessToken GetToken(Azure.Core.TokenRequestContext context, CancellationToken ct)
+        {
+            Scopes.AddRange(context.Scopes);
+            return new Azure.Core.AccessToken("sample-token", DateTimeOffset.UtcNow.AddHours(1));
+        }
+
+        public override ValueTask<Azure.Core.AccessToken> GetTokenAsync(Azure.Core.TokenRequestContext context, CancellationToken ct) =>
+            ValueTask.FromResult(GetToken(context, ct));
+    }
+
     [Fact]
     public void System_prompt_never_approves_creates_or_assigns()
     {

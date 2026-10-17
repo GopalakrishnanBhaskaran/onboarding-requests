@@ -6,7 +6,7 @@
   "REVIEW_MODEL_PROVIDER": "AzureOpenAI",
   "AZURE_OPENAI_ENDPOINT": "https://<aoai-resource>.openai.azure.com/",
   "AZURE_OPENAI_DEPLOYMENT": "<structured-output-capable-deployment>",
-  "AZURE_OPENAI_API_VERSION": "<verified-api-version-supporting-json_schema>",
+  "AZURE_OPENAI_API_VERSION": "v1",
   "REVIEW_DISPATCHER": "Queue",
   "REVIEW_QUEUE_NAME": "<queue-name>",
   "ALLOW_PAID_SERVICES": "true",

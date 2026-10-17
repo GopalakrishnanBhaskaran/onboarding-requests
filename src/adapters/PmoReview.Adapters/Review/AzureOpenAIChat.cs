@@ -18,8 +18,23 @@ public sealed record AzureOpenAIOptions
     /// <summary>Azure OpenAI resource inside our tenant.</summary>
     public required Uri Endpoint { get; init; }
     public required string Deployment { get; init; }
-    /// <summary>Must support structured outputs (json_schema). Verify before promotion.</summary>
-    public string ApiVersion { get; init; } = "2024-10-21";
+    /// <summary>
+    /// "v1" (default): the GA v1 API, <c>/openai/v1/chat/completions</c> with the deployment as <c>model</c> and token
+    /// audience <c>https://ai.azure.com</c> (Learn, 17 Oct 2026; VERIFIED_FACTS F53). A dated version (2024-08-01-preview
+    /// or later supports structured outputs) uses <c>/openai/deployments/{d}/chat/completions?api-version=</c> with
+    /// audience <c>https://cognitiveservices.azure.com</c>.
+    /// </summary>
+    public string ApiVersion { get; init; } = V1;
+
+    public const string V1 = "v1";
+
+    public bool UsesV1 => string.Equals(ApiVersion, V1, StringComparison.OrdinalIgnoreCase);
+
+    public string TokenScope => UsesV1 ? "https://ai.azure.com/.default" : "https://cognitiveservices.azure.com/.default";
+
+    public Uri ChatCompletionsUrl => UsesV1
+        ? new Uri(Endpoint, "openai/v1/chat/completions")
+        : new Uri(Endpoint, $"openai/deployments/{Uri.EscapeDataString(Deployment)}/chat/completions?api-version={Uri.EscapeDataString(ApiVersion)}");
 }
 
 /// <summary>
@@ -33,11 +48,11 @@ public sealed class AzureOpenAIChat(HttpClient http, AzureOpenAIOptions options,
 
     public AzureOpenAIOptions Options => options;
 
-    /// <summary>Managed identity (Cognitive Services OpenAI User role). No keys.</summary>
+    /// <summary>Managed identity (Cognitive Services OpenAI User role on the resource; custom subdomain endpoint). No keys.</summary>
     public static AzureOpenAIChat WithManagedIdentity(HttpClient http, AzureOpenAIOptions options, TokenCredential? credential = null, ILogger? logger = null)
     {
         var cred = credential ?? new DefaultAzureCredential();
-        var context = new TokenRequestContext(["https://cognitiveservices.azure.com/.default"]);
+        var context = new TokenRequestContext([options.TokenScope]);
         return new AzureOpenAIChat(http, options, async ct => (await cred.GetTokenAsync(context, ct)).Token, logger);
     }
 
@@ -55,8 +70,8 @@ public sealed class AzureOpenAIChat(HttpClient http, AzureOpenAIOptions options,
             ["response_format"] = responseFormat.DeepClone(),
             ["max_completion_tokens"] = maxOutputTokens,
         };
-        var url = new Uri(options.Endpoint,
-            $"openai/deployments/{Uri.EscapeDataString(options.Deployment)}/chat/completions?api-version={Uri.EscapeDataString(options.ApiVersion)}");
+        if (options.UsesV1) body["model"] = options.Deployment;
+        var url = options.ChatCompletionsUrl;
 
         for (var attempt = 0; ; attempt++)
         {

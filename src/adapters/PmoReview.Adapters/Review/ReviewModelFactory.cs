@@ -27,7 +27,7 @@ public static class ReviewModelFactory
             {
                 Endpoint = settings.AzureOpenAIEndpoint,
                 Deployment = settings.AzureOpenAIDeployment,
-                ApiVersion = settings.AzureOpenAIApiVersion ?? "2024-10-21",
+                ApiVersion = string.IsNullOrWhiteSpace(settings.AzureOpenAIApiVersion) ? AzureOpenAIOptions.V1 : settings.AzureOpenAIApiVersion,
             },
             logger: logger);
     }
