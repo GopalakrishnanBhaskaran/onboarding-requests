@@ -1,12 +1,12 @@
 # Pilot Report — PMO onboarding flow (v2)
 
-Generated 2026-10-17 07:21 UTC from commit `2064832` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
+Generated 2026-10-17 07:25 UTC from commit `2a82fa3` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
 
 ## Verdict
 
 - Acceptance cases: **27/27 passed**.
 - Critical gates: **12/12 passed**.
-- Unit, contract and security tests: **207/207 passed** (0 failed, 0 skipped).
+- Unit, contract and security tests: **210/210 passed** (0 failed, 0 skipped).
 - Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **6 passed, 0 failed**.
 
 ## Critical gates
@@ -49,7 +49,7 @@ Generated 2026-10-17 07:21 UTC from commit `2064832` by `tools/run_acceptance.sh
 | AC17 | Role mismatch returned to the role team | Task Returned (missing/extra role); RoleMismatch issue | Returned | - Reported and recorded: missing SAMPLE Workspace User at SAMPLE dbw-alpha-dev; extra SAMPLE Workspace Admin at SAMPLE dbw-alpha-dev. Correct the assignment or revoke the extra role. | **PASS** |
 | AC18 | Mapping change after review re-runs the review **(gate)** | mapping-changed event, new review, continues only if group and role are unchanged | AwaitingSecurity; events mapping-changed > review-start > review-pass | — | **PASS** |
 | AC19 | Final verification and notifications | Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified | Completed; checks FINAL_LOGIN=Pass, FINAL_ACCESS=Pass, FINAL_PERMANENT_METHOD=Pass, FINAL_TAP_DELETED=Pass | notifications: FlowOverview, ApprovalRequested, TeamTask, AccessReady, CompletionSummary, PmoInformed, Closure | **PASS** |
-| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-ea92746f00aa48b89ffba3b8b046c116 | Onboarding ea92746f: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
+| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-fcba68a14a0f48d3a34345ef434089be | Onboarding fcba68a1: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
 | AC21 | Status line and time per stage | Request ID \| Requester \| stage \| waiting on \| done \| next \| time in stage \| ADO link; wait per team | Awaiting Owner \| waiting Owner \| 5h 0m | Owner=5h 0m; AI agent=0m | **PASS** |
 | AC22 | Auto-fix limit then Failed-Needs-Dev | At most 3 retries per step; Failed-Needs-Dev with developer report | FailedNeedsDev; attempts r1=3 | — | **PASS** |
 | AC23 | Agent never approves, creates or assigns **(gate)** | No grant/assign/provision route; no Entra write call in source | 24 routes, none grant/assign/provision; Entra write calls in source: 0 | — | **PASS** |
