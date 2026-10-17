@@ -59,5 +59,7 @@ public sealed record ReviewRun : IDocument
     /// <summary>Why the run was started (submit, resubmit, mapping-changed, retry, operator).</summary>
     public string? Trigger { get; init; }
     public int SchemaVersion { get; init; } = 2;
+    /// <summary>v1 runs (schemaVersion 1) are still in the live container with a v1 result the v2 shape cannot read.</summary>
+    public static int MinReadableSchemaVersion => 2;
     [JsonIgnore] public string PartitionKey => ProjectId;
 }

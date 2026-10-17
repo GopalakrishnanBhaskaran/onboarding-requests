@@ -10,6 +10,12 @@ public interface IDocument
 
     [JsonIgnore]
     string PartitionKey { get; }
+
+    /// <summary>
+    /// Oldest stored <c>schemaVersion</c> this code reads. Older (v1) documents stay in Cosmos untouched and every
+    /// read skips them. 0 = read all (v1 requests still list as read-only legacy rows).
+    /// </summary>
+    static virtual int MinReadableSchemaVersion => 0;
 }
 
 /// <summary>Where notifications for a project go. Addresses only (mailboxes or mail-enabled groups); SAMPLE in the pilot.</summary>

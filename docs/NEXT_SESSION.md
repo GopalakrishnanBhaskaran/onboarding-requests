@@ -11,7 +11,7 @@ Branch `claude/charming-goldberg-2f0ejk` (v2). The previous branch `claude/optim
 - App roles now: Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator (Reviewer/Maintainer grant nothing → re-register users).
 - Operator **Resume after fix** for Failed-Needs-Dev (back to the failed stage; a failed review starts a new review).
 - Optional, off: Azure OpenAI reviewer/assistant, Graph `sendMail`, ADO work items, ARM role read.
-- Evidence (local): 240 .NET tests, `docs/PILOT_REPORT.md` 27/27 acceptance (12/12 gates), 6/6 Playwright E2E through the SWA emulator (full flow to Completed, Returned, Owner reject, isolation, mapping sheet, signed-out page), 6 SPA guardrail tests.
+- Evidence (local): 242 .NET tests (+ opt-in `CosmosEmulatorTests`: full flow on the Cosmos emulator next to v1 documents), `docs/PILOT_REPORT.md` 27/27 acceptance (12/12 gates), 6/6 Playwright E2E through the SWA emulator (full flow to Completed, Returned, Owner reject, isolation, mapping sheet, signed-out page), 6 SPA guardrail tests.
 
 ## The 17 Oct handoff tasks
 1. Show-TAP button — **superseded**: the app never holds a pass in v2; the ID team gives it to the user directly.
@@ -19,7 +19,7 @@ Branch `claude/charming-goldberg-2f0ejk` (v2). The previous branch `claude/optim
 3. Sign-out — **done** in code: `/logout` → `/.auth/logout?post_logout_redirect_uri=/signed-out.html` (public page with "sign in again" and Microsoft sign-out links). Confirm live after the `app` redeploy (F54).
 
 ## Deploy v2 — DONE 17 Oct 07:39 UTC (approved by Gokul; evidence in DEPLOYMENT_LOG)
-Applied; worker on v2 with only the 4 read Graph roles; write roles revoked. Live check A passed; live check B found the Gmail tester has no v2 Requester role yet (no New request button) — run the `--register-user` lines first. **Still to do:** (a) open the app → New request shows Enterprise ID + 7-step flow; (b) re-seed with `--domain-suffix @gopalakrishnanbaskarangmail.onmicrosoft.com` so domain IDs match tenant UPNs; (c) register testers with v2 roles (Gmail: Requester, Owner, IdTeam, RoleTeam, PMO, Operator; pilot.admin: Security); (d) live E2E with `SAMPLE Finance Reports` / `Viewer` (group to be created by the ID team) per workflow 09.
+Applied; worker on v2 with only the 4 read Graph roles; write roles revoked. Live check A passed; live check B (no New request button) was the missing v2 Requester role — fixed by `--register-user`. Live check C: submit returned 500 because v1 review runs in `reviewRuns` could not be read — **fixed in code** (v1 documents are skipped); needs `tools/deploy_free.sh app` **and** `worker` (code only), then the stuck Submitted request advances on the next sweep. **Still to do:** (a) open the app → New request shows Enterprise ID + 7-step flow; (b) re-seed with `--domain-suffix @gopalakrishnanbaskarangmail.onmicrosoft.com` so domain IDs match tenant UPNs; (c) register testers with v2 roles (Gmail: Requester, Owner, IdTeam, RoleTeam, PMO, Operator; pilot.admin: Security); (d) live E2E with `SAMPLE Finance Reports` / `Viewer` (group to be created by the ID team) per workflow 09.
 
 Steps as run:
 Full steps: `workflows/09-onboarding-flow-v2.md`.

@@ -46,6 +46,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | .NET tests | `dotnet test --project tests/PmoReview.Tests -f net10.0` (Microsoft.Testing.Platform) |
 | Validate sample data | `python3 tools/seed_sample_data.py --dry-run` |
 | SPA checks / build | `npm --prefix src/web test` · `npm --prefix src/web run build` |
+| Cosmos emulator contract test (opt-in) | `docker run -d -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview`, then `PMO_COSMOS_EMULATOR='<emulator connection string>' dotnet test --project tests/PmoReview.Tests -f net10.0 -- --filter-class '*CosmosEmulatorTests'` |
 | Local end-to-end | `tools/run_local.sh` (SWA CLI emulator + dev-only `tools/local-api`), then `npm --prefix src/web run e2e` |
 | Acceptance + report | `tools/run_acceptance.sh` (`E2E=1` adds browser tests) → `docs/PILOT_REPORT.md` |
 | Bicep compile | `bicep build infra/main.bicep` |

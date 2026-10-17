@@ -4,6 +4,8 @@
 
 Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Core Tools v4 (to run the real Functions host), Docker (Cosmos emulator).
 
+**Cosmos contract test.** The in-memory store cannot show Cosmos-only behaviour (17 Oct 2026: v1 review runs broke the live submit). Before a release that touches stored documents: `docker run -d -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview`, set `PMO_COSMOS_EMULATOR` to the emulator connection string (well-known emulator key from Microsoft Learn; never a real account), run `dotnet test --project tests/PmoReview.Tests -f net10.0 -- --filter-class '*CosmosEmulatorTests'`. It runs the whole flow to Completed next to v1 documents; without the variable it is skipped.
+
 | Task | Command |
 |---|---|
 | Build everything | `dotnet build PmoReview.slnx` |

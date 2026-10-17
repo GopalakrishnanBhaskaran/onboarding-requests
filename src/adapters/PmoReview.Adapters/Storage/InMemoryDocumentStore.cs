@@ -1,3 +1,4 @@
+using System.Text.Json;
 using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Storage;
@@ -17,7 +18,7 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
     {
         lock (_gate)
         {
-            return Task.FromResult(_docs.TryGetValue((partitionKey, id), out var e) ? Read(e) : null);
+            return Task.FromResult(_docs.TryGetValue((partitionKey, id), out var e) && Readable(e) ? Read(e) : null);
         }
     }
 
@@ -25,7 +26,7 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
     {
         lock (_gate)
         {
-            IReadOnlyList<Versioned<T>> items = _docs.Where(d => d.Key.Pk == partitionKey).Select(d => Read(d.Value)).ToList();
+            IReadOnlyList<Versioned<T>> items = _docs.Where(d => d.Key.Pk == partitionKey && Readable(d.Value)).Select(d => Read(d.Value)).ToList();
             return Task.FromResult(items);
         }
     }
@@ -34,7 +35,7 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
     {
         lock (_gate)
         {
-            IReadOnlyList<Versioned<T>> items = _docs.Values.Select(Read).ToList();
+            IReadOnlyList<Versioned<T>> items = _docs.Values.Where(Readable).Select(Read).ToList();
             return Task.FromResult(items);
         }
     }
@@ -72,14 +73,27 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
         {
             var value = keyOf(document);
             var clash = _docs
-                .Where(d => d.Key.Pk == document.PartitionKey && d.Key.Id != except)
+                .Where(d => d.Key.Pk == document.PartitionKey && d.Key.Id != except && Readable(d.Value))
                 .Select(d => AppJson.Deserialize<T>(d.Value.Json)!)
                 .Any(other => keyOf(other) == value);
             if (clash) throw new DocumentConflictException("unique key exists");
         }
     }
 
+    /// <summary>Tests: stores a document exactly as Cosmos holds it (e.g. a v1 shape this code cannot deserialize).</summary>
+    public void PutRaw(string partitionKey, string id, string json)
+    {
+        lock (_gate) _docs[(partitionKey, id)] = (json, NewEtag());
+    }
+
     private static Versioned<T> Read((string Json, string ETag) e) => new(AppJson.Deserialize<T>(e.Json)!, e.ETag);
+
+    private static bool Readable((string Json, string ETag) e)
+    {
+        if (T.MinReadableSchemaVersion == 0) return true;
+        using var doc = JsonDocument.Parse(e.Json);
+        return StoredSchema.Readable<T>(doc.RootElement);
+    }
 
     private static string NewEtag() => $"\"{Guid.NewGuid():n}\"";
 }

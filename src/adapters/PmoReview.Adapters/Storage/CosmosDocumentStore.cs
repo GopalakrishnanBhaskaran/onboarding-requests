@@ -13,15 +13,11 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
 {
     public async Task<Versioned<T>?> GetAsync(string partitionKey, string id, CancellationToken ct = default)
     {
-        try
-        {
-            var r = await container.ReadItemAsync<T>(id, new PartitionKey(partitionKey), cancellationToken: ct);
-            return new Versioned<T>(r.Resource, r.ETag);
-        }
-        catch (CosmosException e) when (e.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
+        using var r = await container.ReadItemStreamAsync(id, new PartitionKey(partitionKey), cancellationToken: ct);
+        if (r.StatusCode == HttpStatusCode.NotFound) return null;
+        r.EnsureSuccessStatusCode();
+        using var doc = await JsonDocument.ParseAsync(r.Content, cancellationToken: ct);
+        return StoredSchema.Readable<T>(doc.RootElement) ? new Versioned<T>(doc.RootElement.Deserialize<T>(CoreJson.Options)!, r.Headers.ETag) : null;
     }
 
     public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default) =>
@@ -41,6 +37,7 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
             using var doc = await JsonDocument.ParseAsync(page.Content, cancellationToken: ct);
             foreach (var el in doc.RootElement.GetProperty("Documents").EnumerateArray())
             {
+                if (!StoredSchema.Readable<T>(el)) continue;
                 var etag = el.GetProperty("_etag").GetString() ?? "";
                 results.Add(new Versioned<T>(el.Deserialize<T>(CoreJson.Options)!, etag));
             }
@@ -78,6 +75,15 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
             throw new DocumentConflictException("unique key exists");
         }
     }
+}
+
+/// <summary>Skips stored documents older than the type's <see cref="IDocument.MinReadableSchemaVersion"/> (v1, left in place).</summary>
+internal static class StoredSchema
+{
+    public static bool Readable<T>(JsonElement doc) where T : IDocument =>
+        T.MinReadableSchemaVersion == 0
+        || (doc.TryGetProperty("schemaVersion", out var v) && v.ValueKind == JsonValueKind.Number
+            && v.TryGetInt32(out var n) && n >= T.MinReadableSchemaVersion);
 }
 
 /// <summary>
