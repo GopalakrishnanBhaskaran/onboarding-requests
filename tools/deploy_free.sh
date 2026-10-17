@@ -79,6 +79,7 @@ deploy_worker() {
   for i in 1 2 3 4; do
     if az functionapp deployment source config-zip -g "$RG_DEFAULT" -n "$name" --src "$ROOT/.local/worker.zip" -o none; then
       echo "Worker deployed: $name (commit $(git -C "$ROOT" rev-parse --short HEAD)). It runs every 5 minutes."
+      echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-worker-deploy"
       return 0
     fi
     [[ $i -lt 4 ]] && { echo "Worker upload failed (attempt $i/4), likely role propagation. Retrying in 90 s..."; sleep 90; }
@@ -237,6 +238,7 @@ case "$CMD" in
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
     unset CS
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
+    echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     echo "Next: each test user signs in once, reads userId from /.auth/me, then:"
     echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles Requester,Owner"
     if worker_enabled; then
@@ -316,6 +318,7 @@ PY
     COSMOS_CONNECTION_STRING="$CS" python3 "$ROOT/tools/seed_sample_data.py"
     unset CS
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
+    echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
   *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes ..."; exit 1 ;;

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Domain;
+using PmoReview.Core.Storage;
 using PmoReview.Core.Workflow;
 
 namespace PmoReview.Tests.Support;
@@ -149,4 +150,19 @@ public sealed class FakeTracker : IWorkItemTracker
         if (!_ids.TryGetValue(draft.Tag, out var id)) _ids[draft.Tag] = id = 1000 + _ids.Count;
         return Task.FromResult(new AdoLink { WorkItemId = id, Url = $"https://dev.azure.invalid/sample/_workitems/edit/{id}" });
     }
+}
+
+/// <summary>A store whose writes and reads fail on demand: an error the agent cannot classify (e.g. a document it cannot read).</summary>
+public sealed class FaultyStore<T>(IDocumentStore<T> inner) : IDocumentStore<T> where T : class, IDocument
+{
+    public bool FailWrites { get; set; }
+    public bool FailLists { get; set; }
+
+    public Task<Versioned<T>?> GetAsync(string partitionKey, string id, CancellationToken ct = default) => inner.GetAsync(partitionKey, id, ct);
+    public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default) =>
+        FailLists ? throw new InvalidOperationException("SAMPLE fault: list") : inner.ListAsync(partitionKey, ct);
+    public Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default) => inner.ListAllAsync(ct);
+    public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default) =>
+        FailWrites ? throw new InvalidOperationException("SAMPLE fault: write") : inner.CreateAsync(document, ct);
+    public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default) => inner.ReplaceAsync(document, ifMatchETag, ct);
 }

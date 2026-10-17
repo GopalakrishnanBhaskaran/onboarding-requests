@@ -5,7 +5,8 @@ The connection string is read ONLY from the COSMOS_CONNECTION_STRING environment
 variable (never a CLI argument, so it stays out of shell history and logs).
 
 Projects and sample users are upserted. Mapping-sheet rows and response-document records are only CREATED when
-missing: a redeploy never overwrites what PMO, the ID team or the role team changed in the app.
+missing: a redeploy never overwrites what PMO, the ID team or the role team changed in the app. Without --domain-suffix
+a project keeps the tenant domain already stored in Cosmos (so `deploy_free.sh app` does not reset it to @sample.invalid).
 
 Examples:
   # Validate the sample file without touching Cosmos
@@ -94,6 +95,13 @@ def apply_domain_suffix(data: dict, suffix: str | None) -> dict:
     return data
 
 
+def keep_live_domain(doc: dict, live: dict | None) -> dict:
+    """Pure: without --domain-suffix, a project keeps the tenant domain already stored live."""
+    if live and live.get("domainIdSuffix"):
+        return {**doc, "domainIdSuffix": live["domainIdSuffix"]}
+    return doc
+
+
 def connect(database: str):
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
@@ -139,7 +147,7 @@ def main() -> int:
         print("dry-run OK:", json.dumps(counts))
         return 0
 
-    from azure.cosmos.exceptions import CosmosResourceExistsError
+    from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
     db = connect(args.database)
     created = {}
     for section, container in CONTAINERS.items():
@@ -153,6 +161,13 @@ def main() -> int:
                 except CosmosResourceExistsError:
                     pass  # changed in the app since; keep it
             else:
+                if section == "projects" and not args.domain_suffix:
+                    try:
+                        live = client.read_item(doc["id"], partition_key=doc["projectId"])
+                    except CosmosResourceNotFoundError:
+                        live = None
+                    doc = keep_live_domain(doc, live)
+                    print(f"  {doc['projectId']}: domain {doc['domainIdSuffix']}")
                 client.upsert_item(doc)
                 created[section] += 1
     print("seeded:", json.dumps(created))

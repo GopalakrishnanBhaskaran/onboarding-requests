@@ -224,6 +224,36 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task Agent_errors_go_on_the_issues_list_and_a_saved_submission_is_not_a_500()
+    {
+        // 17 Oct 2026 live: agent errors were only in the host log (no App Insights), so a stuck request showed nothing,
+        // and the requester saw "Something went wrong" for a request that was already saved.
+        var inner = PmoReview.Adapters.Storage.InMemoryDataStores.Create();
+        var runs = new FaultyStore<ReviewRun>(inner.Runs);
+        var app = TestApp.On(inner with { Runs = runs });
+        runs.FailWrites = true;
+
+        var submit = await app.Submit();
+        Assert.Equal(201, submit.Status); // saved: no duplicate submission, the worker retries
+        var id = submit.Request.GetProperty("id").GetString()!;
+        Assert.Equal(RequestStatus.Submitted, await app.Status(id));
+        await app.RunWorker();
+        var issue = Assert.Single(await app.Issues(id), i => i.Kind == IssueKind.NeedsDeveloper);
+        Assert.Equal((IssueSeverity.High, IssueStatus.Open, 2), (issue.Severity, issue.Status, issue.Occurrences));
+        Assert.Contains("InvalidOperationException", issue.Summary);
+        Assert.Contains("SAMPLE fault: write", issue.Detail);
+        Assert.Equal(RequestStatus.Submitted, await app.Status(id)); // unchanged
+
+        runs.FailLists = true; // a project-wide read failure (stuck-run recovery) does not stop the sweep or stay silent
+        await app.RunWorker();
+        Assert.Contains(await app.Issues(), i => i.RequestId is null && i.Step.StartsWith("agent-error:stuck-run recovery", StringComparison.Ordinal));
+
+        runs.FailWrites = runs.FailLists = false; // fixed and redeployed: the next run carries on
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.AwaitingOwner, await app.Status(id));
+    }
+
+    [Fact]
     public async Task Repeated_worker_runs_are_idempotent()
     {
         var app = TestApp.Create();

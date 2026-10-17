@@ -75,15 +75,31 @@ public sealed partial class WorkflowService(
     public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct)
     {
         var created = await requests.CreateAsync(caller, projectId, input, ct);
-        await agent.AdvanceAsync(projectId, created.Value.Id, cid, ct);
+        await AdvanceSavedAsync(created.Value, cid, ct);
         return await ViewAsync(caller, projectId, created.Value.Id, ct);
     }
 
     public async Task<RequestView> ResubmitAsync(CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, string cid, CancellationToken ct)
     {
-        await requests.ResubmitAsync(caller, projectId, requestId, input, ifMatch, ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        var saved = await requests.ResubmitAsync(caller, projectId, requestId, input, ifMatch, ct);
+        await AdvanceSavedAsync(saved.Value, cid, ct);
         return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    /// <summary>
+    /// The request is already saved: an agent error here goes on the issues list and the worker retries, instead of a
+    /// 500 that makes the requester submit the same request again.
+    /// </summary>
+    private async Task AdvanceSavedAsync(AccessRequest saved, string cid, CancellationToken ct)
+    {
+        try
+        {
+            await agent.AdvanceAsync(saved.ProjectId, saved.Id, cid, ct);
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or AppException))
+        {
+            await agent.RecordErrorAsync(saved, e, ct);
+        }
     }
 
     // ---- Stage 3: approvals -------------------------------------------------------------------------------------

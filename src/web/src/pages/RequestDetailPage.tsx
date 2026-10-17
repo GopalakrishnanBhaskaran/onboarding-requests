@@ -13,7 +13,7 @@ import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPan
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
 const POLL_MS = 15000;
-const POLL_LIMIT_MS = 5 * 60000;
+const POLL_LIMIT_MS = 12 * 60000;
 
 export function RequestDetailPage({ project, requestId }: { project: ProjectSummary; requestId: string }) {
   const s = useStyles();
@@ -23,6 +23,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
   const [trail, setTrail] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const pollStarted = useRef(0);
 
   const load = useCallback(async () => {
@@ -41,7 +42,7 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
     void load();
   }, [load]);
 
-  // While the AI agent has the next step, refresh every 15 s for up to 5 minutes (the worker runs every 5 minutes).
+  // While the AI agent has the next step, refresh every 15 s for up to 12 minutes (covers two 5-minute worker runs).
   useEffect(() => {
     if (view?.status.waitingOn !== 'Agent') {
       pollStarted.current = 0;
@@ -66,6 +67,15 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
   const st = view.status;
   const latest = runs.find((x) => x.value.id === f?.reviewRunId)?.value ?? runs[0]?.value ?? null;
   const isOperator = project.roles.includes('Operator');
+  // The website's API cannot read Entra: a review with the Entra check pending waits for the worker's 5-minute run.
+  const waitsForWorker = st.status === 'AiReview' && st.waitingOn === 'Agent' && latest?.outcome === 'Pending';
+  const runStep = () =>
+    void api.advance(project.projectId, r.id).then((v) => {
+      done(v);
+      setNote(v.request.value.flow?.events.length === f?.events.length
+        ? 'No step to run from the website now. The Entra checks run in the AI agent worker every 5 minutes.'
+        : null);
+    }).catch(setError);
 
   return (
     <div className={s.stack}>
@@ -85,13 +95,20 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
           <dt><Caption1>ADO work item</Caption1></dt>
           <dd style={{ margin: 0 }}><Body1>{st.adoLink ? <Link href={st.adoLink} target="_blank" rel="noopener noreferrer">Open</Link> : 'Not linked'}</Body1></dd>
         </dl>
-        <ol aria-label="Flow progress" style={{ margin: 0, paddingLeft: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <ul aria-label="Flow progress" style={{ margin: 0, paddingLeft: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {FLOW_OVERVIEW.map((step, i) => (
             <li key={step} style={{ listStyle: 'none' }}>
               <Badge appearance={i < st.done.length ? 'filled' : 'outline'} color={i < st.done.length ? 'success' : 'informative'}>{step}</Badge>
             </li>
           ))}
-        </ol>
+        </ul>
+        {waitsForWorker && (
+          <Body1>
+            The website has run the rule checks. The read-only Entra check runs in the AI agent worker every 5 minutes
+            (at :00, :05, :10 … past each hour), then the request moves to Owner approval or back to you. This page refreshes itself.
+            If it is still here after 10 minutes, an Operator checks Issues and reports.
+          </Body1>
+        )}
         {f?.lastReason && (st.status === 'Returned' || st.status === 'Rejected' || st.status === 'FailedNeedsDev') && (
           <Body1 className={s.pre}><b>Reason:</b> {f.lastReason}</Body1>
         )}
@@ -102,10 +119,11 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
           {isOperator && st.status === 'FailedNeedsDev' && (
             <Button appearance="primary" onClick={() => void api.resume(project.projectId, r.id).then(done).catch(setError)}>Resume after fix</Button>
           )}
-          {isOperator && <Button onClick={() => void api.advance(project.projectId, r.id).then(done).catch(setError)}>Run agent step now</Button>}
+          {isOperator && <Button onClick={runStep}>Run agent step now</Button>}
           <Button icon={<ArrowClockwise20Regular />} onClick={() => void load()}>Refresh</Button>
           <Caption1 className={s.muted}>Last updated {lastUpdated ? lastUpdated.toLocaleTimeString() : '—'}</Caption1>
         </div>
+        {note && <Caption1 role="status">{note}</Caption1>}
       </section>
 
       <section className={s.section} aria-labelledby="req-h">

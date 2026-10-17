@@ -2,7 +2,7 @@
 
 **Purpose:** Run the v2 flow: the AI agent reviews, routes, tracks, verifies and reports; the named Owner and Security approve; the ID team and the role assignment team make the changes. The agent never approves, creates or assigns.
 
-**Supersedes:** `08-entra-handoff.md` (Phase 2/2b/2c: Entra access packages, auto-assign, joiner provisioning, show-once TAP). Built 17 Oct 2026 on branch `claude/charming-goldberg-2f0ejk`; **not deployed yet**.
+**Supersedes:** `08-entra-handoff.md` (Phase 2/2b/2c: Entra access packages, auto-assign, joiner provisioning, show-once TAP). Built 17 Oct 2026 on branch `claude/charming-goldberg-2f0ejk`; deployed 17 Oct 07:39 UTC (live results in `docs/DEPLOYMENT_LOG.md`).
 
 ## Flow (stated to every requester upfront)
 1. Requester submits the request
@@ -32,7 +32,7 @@ v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 r
 3. `tools/deploy_free.sh apply <sub> .local/params.json --approved-by "Gokul <date>"` (deploys app + worker, seeds SAMPLE data).
 4. `tools/deploy_free.sh grant-graph <sub>` — Graph **read** roles: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All (Global Administrator or Privileged Role Administrator). **Security change: approval.**
 5. `tools/deploy_free.sh revoke-graph-writes <sub>` (dry run lists the 7 Phase 2b/2c roles) → after approval `… --approved-by "Gokul <date>"`. **Security change: approval.**
-6. Seed with the tenant domain so domain-specific IDs match real UPNs: `COSMOS_CONNECTION_STRING=… python3 tools/seed_sample_data.py --domain-suffix @<tenant>.onmicrosoft.com`.
+6. Seed with the tenant domain so domain-specific IDs match real UPNs: `COSMOS_CONNECTION_STRING=… python3 tools/seed_sample_data.py --domain-suffix @<tenant>.onmicrosoft.com`. Later seeds without the flag (e.g. `deploy_free.sh app`) keep it; `workflow_diag.sh` prints it. A request keeps the domain ID it was submitted with.
 7. Each tester signs in once, reads `userId` from `/.auth/me`, then `python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles <roles>`. Use separate people (or InPrivate windows) for Requester, Owner, Security, IdTeam, RoleTeam: the same person cannot be Owner approver and Security approver of one request.
 8. `bash tools/workflow_diag.sh <sub>` — worker running, settings, Graph roles (read-only), containers.
 
@@ -53,7 +53,8 @@ v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 r
 ## Failure handling
 | Symptom | Action |
 |---|---|
-| Stuck in AI Review > 10 min | `workflow_diag.sh`; worker log line `workflow-agent done`, Operator → *Run agent step now*; Entra read failure → issue `DependencyFailure`. |
+| AI Review, waiting on AI agent | Normal for up to 5 min: the website runs the rule checks, the worker runs the Entra check (every 5 min). *Run agent step now* cannot run the Entra check. |
+| Stuck in AI Review > 10 min | Issues and reports (or `workflow_diag.sh`): a **Needs developer** issue `agent-error:…` names the error the worker hit; Entra read failure → `DependencyFailure`. No issue at all → the worker is not running the current code: `workflow_diag.sh` shows the last worker deploy; `tools/deploy_free.sh worker <sub>`. |
 | Failed-Needs-Dev | Issues and reports → developer issue report (`NeedsDeveloper` issue); fix (redeploy if code), then Operator → *Resume after fix* on the request. |
 | Unauthorized approval issue | Security reviews who tried; nothing changed in the request. |
 | Task past SLA | Reminder, then escalation to the team manager (project contacts). |

@@ -76,7 +76,14 @@ public sealed class WorkflowAgent(
         var advanced = 0;
         foreach (var project in await stores.Projects.ListAllAsync(ct))
         {
-            await runs.RecoverStuckAsync(project.Value.ProjectId, ct);
+            try
+            {
+                await runs.RecoverStuckAsync(project.Value.ProjectId, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                await RecordErrorAsync(project.Value.ProjectId, null, "stuck-run recovery", e, ct); // the requests still get their turn
+            }
             foreach (var r in await stores.Requests.ListAsync(project.Value.ProjectId, ct))
             {
                 if (r.Value.Flow is not { IsOpen: true }) continue;
@@ -88,11 +95,36 @@ public sealed class WorkflowAgent(
                 }
                 catch (Exception e) when (e is not OperationCanceledException)
                 {
-                    logger.LogError("agent: request {RequestId} failed {ExceptionType}", r.Value.Id, e.GetType().Name);
+                    await RecordErrorAsync(r.Value, e, ct);
                 }
             }
         }
         return advanced;
+    }
+
+    /// <summary>
+    /// An error the agent cannot classify. Never silent: logged and put on the issues list (Issues and reports) with the
+    /// error type, counted per request + stage + type. The request is unchanged and the next agent run retries it.
+    /// </summary>
+    public Task RecordErrorAsync(AccessRequest r, Exception e, CancellationToken ct) =>
+        RecordErrorAsync(r.ProjectId, r.Id, StatusText.Label(r.Flow?.Status ?? RequestStatus.Submitted), e, ct);
+
+    private async Task RecordErrorAsync(string projectId, string? requestId, string where, Exception e, CancellationToken ct)
+    {
+        var type = e.GetType().Name;
+        logger.LogError("agent: {Where} failed {ExceptionType} request={RequestId}", where, type, requestId);
+        try
+        {
+            var message = e.Message.Length > 300 ? e.Message[..300] + "…" : e.Message;
+            var what = requestId is null ? $"{where} for this project" : $"this request at {where}";
+            await issues.RecordAsync(projectId, requestId, $"agent-error:{where}:{type}", IssueKind.NeedsDeveloper, IssueSeverity.High,
+                $"The AI agent could not process {what} ({type}). Nothing was changed and every agent run retries; a developer is needed while this recurs (see last seen).",
+                $"{e.GetType().FullName}: {message}", ct);
+        }
+        catch (Exception inner) when (inner is not OperationCanceledException)
+        {
+            logger.LogError("agent: could not record the error ({ExceptionType})", inner.GetType().Name);
+        }
     }
 
     private async Task<Step?> NextAsync(AccessRequest r, string cid, CancellationToken ct)

@@ -73,9 +73,9 @@ export function RequestFormPage({ project, requestId }: { project: ProjectSummar
 
       <section className={s.section} aria-labelledby="flow-h">
         <Subtitle2 as="h2" id="flow-h">How this works</Subtitle2>
-        <ol style={{ margin: 0, paddingLeft: 20 }}>
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
           {FLOW_OVERVIEW.map((step) => <li key={step} style={{ listStyle: 'none' }}><Body1>{step}</Body1></li>)}
-        </ol>
+        </ul>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '2px 12px', margin: 0 }}>
           {WHO_DOES_WHAT.map(([who, what]) => (
             <div key={who} style={{ display: 'contents' }}>

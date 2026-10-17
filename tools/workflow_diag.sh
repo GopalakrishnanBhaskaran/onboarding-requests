@@ -8,10 +8,16 @@ RG=rg-pmo-review-pilot
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 az account set --subscription "$SUB"
 
+echo "== Code: this checkout $(git -C "$ROOT" rev-parse --short HEAD) =="
+for k in app worker; do
+  f="$ROOT/.local/last-$k-deploy"
+  if [[ -f "$f" ]]; then echo "  last $k deploy from this Cloud Shell: $(cat "$f")"; else echo "  last $k deploy from this Cloud Shell: unknown"; fi
+done
+
 W=$(az functionapp list -g "$RG" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv)
 echo "== Worker: ${W:-NOT FOUND} =="
 if [[ -n "$W" ]]; then
-  az functionapp show -g "$RG" -n "$W" --query "{state:state, runtime:properties.functionAppConfig.runtime}" -o json
+  az functionapp show -g "$RG" -n "$W" --query "{state:state, runtime:properties.functionAppConfig.runtime, lastModifiedUtc:lastModifiedTimeUtc}" -o json
   echo "-- functions deployed (expect workflow-agent):"
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
   echo "-- settings:"
@@ -45,11 +51,20 @@ def q(container, sql):
     except Exception as e:  # container missing before the v2 apply
         print(f"  {container}: not readable ({type(e).__name__})")
         return []
-reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.flow.status, c.flow.waitingOn, c.updatedAt FROM c ORDER BY c.updatedAt DESC")
+for p in q("projects", "SELECT c.projectId, c.domainIdSuffix FROM c"):
+    print(f"  project {p['projectId']}: domain-specific IDs end with {p.get('domainIdSuffix')}")
+reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt FROM c ORDER BY c.updatedAt DESC")
 for r in reqs:
-    print(f"  {r['id'][:8]} {r.get('projectId')} {r.get('status') or 'legacy-v1'} waiting={r.get('waitingOn')} {r.get('domainId')} '{r.get('accessLevel')}' on '{r.get('resource')}' updated={r.get('updatedAt')}")
-issues = q("issues", "SELECT c.kind, c.status, c.severity FROM c")
+    print(f"  {r['id'][:8]} {r.get('projectId')} {r.get('status') or 'legacy-v1'} waiting={r.get('waitingOn')} r{r.get('revision')} {r.get('domainId')} '{r.get('accessLevel')}' on '{r.get('resource')}' updated={r.get('updatedAt')}")
+    if r.get("events"):
+        last = r["events"][-1]
+        print(f"      last step: {last.get('step')} by {last.get('actor')} at {last.get('at')}")
+issues = q("issues", "SELECT c.requestId, c.kind, c.status, c.severity, c.step, c.detail, c.occurrences, c.lastSeenAt FROM c")
 print("  open issues:", dict(Counter((i["kind"], i["severity"]) for i in issues if i.get("status") == "Open")) or "none")
+for i in issues:
+    if i.get("status") == "Open" and i.get("kind") == "NeedsDeveloper":
+        print(f"  NEEDS DEVELOPER request={str(i.get('requestId'))[:8]} step={i.get('step')} x{i.get('occurrences')} last={i.get('lastSeenAt')}")
+        print(f"      {i.get('detail')}")
 notes = q("notifications", "SELECT c.status FROM c")
 print("  notifications by status:", dict(Counter(n["status"] for n in notes)) or "none")
 PY
