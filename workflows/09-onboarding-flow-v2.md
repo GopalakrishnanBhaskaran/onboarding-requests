@@ -57,7 +57,7 @@ Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings 
 
 | Agent leaves it to the team when | Issue |
 |---|---|
-| Guest user, privileged row, row without an Azure role | none (normal) |
+| Guest user, privileged row, row without an Azure role, domain ID outside the project's current domain (e.g. submitted before the tenant domain was set) | none (normal) |
 | Two groups with the name, not a security group, sheet says "exists" but missing | High, Needs developer |
 | Write refused (permission): retried every run for 24 h (new permissions reach the worker late, F61) | Warning while waiting; resolved when it works |
 | Write still refused after 24 h, 3 failed attempts, role/scope not on the allow-list | High, Needs developer |

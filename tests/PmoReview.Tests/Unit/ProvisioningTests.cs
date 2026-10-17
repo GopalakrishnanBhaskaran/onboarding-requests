@@ -312,6 +312,23 @@ public class ProvisioningTests
     }
 
     [Fact]
+    public async Task An_account_outside_the_projects_current_domain_is_never_created()
+    {
+        // Live case: a request submitted before the project's domain was set to the tenant domain.
+        var app = App();
+        var id = await Approved(app, Finance("sample.e2009"));
+        var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
+        await app.Stores.Projects.ReplaceAsync(p.Value with { DomainIdSuffix = "@sample-tenant.invalid" }, p.ETag);
+
+        await app.RunWorker();
+        var r = (await app.Request(id)).Flow!;
+        Assert.Empty(app.Writer.Calls);
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Status, r.WaitingOn));
+        Assert.Contains("not in the project's domain @sample-tenant.invalid", r.IdTeamTask!.Agent!.Manual);
+        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.TeamTask);
+    }
+
+    [Fact]
     public async Task Provisioning_off_keeps_the_v2_manual_flow()
     {
         var app = TestApp.Create();

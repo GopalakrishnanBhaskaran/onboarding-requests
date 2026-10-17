@@ -50,6 +50,13 @@ public sealed partial class WorkflowAgent
         try
         {
             var user = await directory!.FindUserAsync(r.DomainId!, ct);
+            var domain = project?.DomainIdSuffix?.Trim();
+            if (user is null && !string.IsNullOrEmpty(domain) && !r.DomainId!.EndsWith(domain, StringComparison.OrdinalIgnoreCase))
+            {
+                // E.g. submitted before the project's domain was set: the agent creates accounts only in the project's domain.
+                return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is not in the project's domain {domain}, so the agent does not create it (the requester can resubmit)" },
+                    project, now, IssueSeverity.Info);
+            }
             if (user is null)
             {
                 user = await writer!.CreateUserAsync(new NewUser(r.DomainId!.ToLowerInvariant(), $"{r.FirstName} {r.LastName}".Trim(),
