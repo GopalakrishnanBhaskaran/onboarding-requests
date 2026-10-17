@@ -5,7 +5,7 @@ param budgetEmail string
 param budgetAmount int
 param budgetStartDate string
 param tags object
-@description('Phase 2: also allow the hand-off worker types (Function App, Flex plan, its storage account).')
+@description('Stage A for the AI agent worker (historical name): also allow the worker types (Function App, Flex plan, its storage account).')
 param enableHandoff bool = false
 
 var suffix = uniqueString(resourceGroup().id)
@@ -28,7 +28,7 @@ var allowedResourceTypes = [
   'Microsoft.Consumption/budgets'
 ]
 
-// Phase 2 only (Gokul approved 16 Oct 2026, paid from Azure credits). Still no App Insights, Key Vault, OpenAI, VNets.
+// Worker types (Phase 2, approved 16 Oct 2026, paid from Azure credits). Still no App Insights, Key Vault, OpenAI, VNets.
 var handoffResourceTypes = [
   'Microsoft.Web/serverfarms'
   'Microsoft.Web/sites'
@@ -50,7 +50,7 @@ resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
   properties: {
     displayName: 'PMO pilot: allowed resource types (zero-cost guardrail)'
     description: enableHandoff
-      ? 'Only Static Web Apps, Cosmos DB and the Phase 2 hand-off worker (Flex Function App + storage) may exist in this resource group.'
+      ? 'Only Static Web Apps, Cosmos DB and the AI agent worker (Flex Function App + storage) may exist in this resource group.'
       : 'Only Static Web Apps and Cosmos DB (plus their child types) may exist in this resource group.'
     policyDefinitionId: tenantResourceId('Microsoft.Authorization/policyDefinitions', 'a08ec900-254a-4555-9bf5-e42af04b5c5c')
     enforcementMode: 'Default'
@@ -166,17 +166,22 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-11-15
   }
 }
 
-// Must match src/adapters/PmoReview.Adapters/Storage/CosmosDocumentStore.cs (CosmosSchema).
+// Must match src/adapters/PmoReview.Adapters/Storage/CosmosDocumentStore.cs (CosmosSchema.Containers + LegacyContainers).
+// Legacy v1 containers stay declared so a deployment never removes or changes them; v2 code no longer reads them.
 var containers = [
   { name: 'projects', pk: '/projectId', uniqueKeys: [] }
-  { name: 'requirementRules', pk: '/projectId', uniqueKeys: [ { paths: [ '/ruleId', '/version' ] } ] }
-  { name: 'roleMappings', pk: '/projectId', uniqueKeys: [ { paths: [ '/mappingId', '/version' ] } ] }
   { name: 'requests', pk: '/projectId', uniqueKeys: [] }
   { name: 'reviewRuns', pk: '/projectId', uniqueKeys: [ { paths: [ '/idempotencyKey' ] } ] }
-  { name: 'reviewDecisions', pk: '/projectId', uniqueKeys: [ { paths: [ '/reviewRunId', '/reviewer' ] } ] }
   { name: 'userAccess', pk: '/userId', uniqueKeys: [] }
-  { name: 'handoffs', pk: '/projectId', uniqueKeys: [] }
-  { name: 'joinerPasses', pk: '/projectId', uniqueKeys: [], defaultTtl: -1 } // per-item TTL: passes delete themselves
+  { name: 'mappingSheet', pk: '/projectId', uniqueKeys: [] } // v2: PMO-to-Entra Group Mapping Sheet (source of truth)
+  { name: 'responseDocument', pk: '/projectId', uniqueKeys: [] } // v2: role assignment records (source of truth)
+  { name: 'notifications', pk: '/projectId', uniqueKeys: [] } // v2: notification outbox
+  { name: 'issues', pk: '/projectId', uniqueKeys: [] } // v2: issues list
+  { name: 'requirementRules', pk: '/projectId', uniqueKeys: [ { paths: [ '/ruleId', '/version' ] } ] } // legacy v1
+  { name: 'roleMappings', pk: '/projectId', uniqueKeys: [ { paths: [ '/mappingId', '/version' ] } ] } // legacy v1
+  { name: 'reviewDecisions', pk: '/projectId', uniqueKeys: [ { paths: [ '/reviewRunId', '/reviewer' ] } ] } // legacy v1
+  { name: 'handoffs', pk: '/projectId', uniqueKeys: [] } // legacy v1 (Phase 2 hand-off)
+  { name: 'joinerPasses', pk: '/projectId', uniqueKeys: [], defaultTtl: -1 } // legacy v1 (Phase 2c; per-item TTL empties it)
 ]
 
 resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = [for c in containers: {

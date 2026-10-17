@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Phase 2 (paid, Azure credits): Entra hand-off status sync. Timer trigger only, no HTTP endpoints.
+  <!-- The AI agent's background worker (paid, Azure credits). Timer trigger only, no HTTP endpoints.
        Runs on a Flex Consumption Function App with a system-assigned managed identity:
-       Cosmos via data-plane RBAC (no keys) and Microsoft Graph with EntitlementManagement.Read.All only.
+       Cosmos via data-plane RBAC (no keys); Microsoft Graph and Azure RBAC READ ONLY.
        TargetFramework MUST match infra/modules/handoff.bicep workerRuntimeVersion (test: InfraConsistencyTests). -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

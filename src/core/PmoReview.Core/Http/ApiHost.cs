@@ -23,7 +23,7 @@ public sealed record ApiResponse(int Status, object? Body, IReadOnlyDictionary<s
     public string? SerializedBody => Body is null ? null : AppJson.Serialize(Body);
 }
 
-public sealed record ApiError(string Code, string Message, string CorrelationId);
+public sealed record ApiError(string Code, string Message, string CorrelationId, IReadOnlyList<string>? Details = null);
 
 public sealed record RouteContext(
     ApiRequest Request,
@@ -99,7 +99,7 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
         catch (AppException e)
         {
             logger.LogInformation("api {Method} rejected {Code} cid={CorrelationId}", request.Method, e.Code, request.CorrelationId);
-            return Error(StatusFor(e.Kind), e.Code, e.Message, request.CorrelationId);
+            return Error(StatusFor(e.Kind), e.Code, e.Message, request.CorrelationId, e.Details);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -122,8 +122,8 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
         _ => 500,
     };
 
-    private static ApiResponse Error(int status, string code, string message, string cid) =>
-        new(status, new { error = new ApiError(code, message, cid) });
+    private static ApiResponse Error(int status, string code, string message, string cid, IReadOnlyList<string>? details = null) =>
+        new(status, new { error = new ApiError(code, message, cid, details) });
 
     private static bool TryMatch(string[] template, string[] path, out Dictionary<string, string> values)
     {

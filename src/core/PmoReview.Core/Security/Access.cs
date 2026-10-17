@@ -7,26 +7,41 @@ namespace PmoReview.Core.Security;
 public enum Permission
 {
     ViewRequests,
-    EditRequests,
-    AnalyzeRequests,
+    SubmitRequests,
     ViewRuns,
-    RecordDecision,
-    ViewReferenceData,
-    ManageReferenceData,
+    /// <summary>Owner stage. Counts only when the caller is also the Owner named on the request.</summary>
+    ApproveAsOwner,
+    ApproveAsSecurity,
+    WorkIdTeamTasks,
+    WorkRoleTeamTasks,
+    ViewMappingSheet,
+    /// <summary>PMO: add and change mapping rows.</summary>
+    EditMappingSheet,
+    /// <summary>ID team: record a created group on the mapping sheet (group name / state only).</summary>
+    UpdateMappingGroup,
+    ViewResponseDocument,
+    ViewIssues,
+    ViewReports,
     RecoverRuns,
-    /// <summary>Phase 2c: show a joiner's Temporary Access Pass once.</summary>
-    RevealJoinerPass,
 }
 
-/// <summary>Role → permission table. Single place to change who can do what.</summary>
+/// <summary>Role → permission table. Single place to change who can do what. Nobody but Owner and Security approves.</summary>
 public static class AccessPolicy
 {
+    private static readonly Permission[] Read = [Permission.ViewRequests, Permission.ViewRuns, Permission.ViewMappingSheet, Permission.ViewResponseDocument];
+
     private static readonly Dictionary<AppRole, Permission[]> Table = new()
     {
-        [AppRole.PMO] = [Permission.ViewRequests, Permission.EditRequests, Permission.AnalyzeRequests, Permission.ViewRuns, Permission.ViewReferenceData, Permission.RevealJoinerPass],
-        [AppRole.Reviewer] = [Permission.ViewRequests, Permission.ViewRuns, Permission.RecordDecision, Permission.ViewReferenceData, Permission.RevealJoinerPass],
-        [AppRole.Maintainer] = [Permission.ViewReferenceData, Permission.ManageReferenceData],
-        [AppRole.Operator] = [Permission.ViewRuns, Permission.RecoverRuns],
+        [AppRole.Requester] = [.. Read, Permission.SubmitRequests],
+        [AppRole.Owner] = [.. Read, Permission.ApproveAsOwner],
+        [AppRole.Security] = [.. Read, Permission.ApproveAsSecurity, Permission.ViewIssues, Permission.ViewReports],
+        [AppRole.IdTeam] = [.. Read, Permission.WorkIdTeamTasks, Permission.UpdateMappingGroup],
+        [AppRole.RoleTeam] = [.. Read, Permission.WorkRoleTeamTasks],
+        [AppRole.PMO] = [.. Read, Permission.EditMappingSheet, Permission.ViewReports],
+        [AppRole.Operator] = [.. Read, Permission.ViewIssues, Permission.ViewReports, Permission.RecoverRuns],
+        // Legacy v1 roles grant nothing.
+        [AppRole.Reviewer] = [],
+        [AppRole.Maintainer] = [],
     };
 
     public static bool Allows(IEnumerable<AppRole> roles, Permission permission) =>
@@ -37,6 +52,7 @@ public static class AccessPolicy
 public sealed class CallerContext(string userId, string displayName, IReadOnlyDictionary<string, IReadOnlySet<AppRole>> grants)
 {
     public string UserId { get; } = userId;
+    /// <summary>Sign-in name from the platform principal (userDetails). Used to match the named Owner.</summary>
     public string DisplayName { get; } = displayName;
     public IReadOnlyDictionary<string, IReadOnlySet<AppRole>> Grants { get; } = grants;
 
@@ -52,11 +68,17 @@ public sealed class CallerContext(string userId, string displayName, IReadOnlyDi
             throw AppException.Forbidden();
     }
 
+    public bool InProject(string projectId) => Grants.ContainsKey(projectId);
+
     public bool Has(string projectId, Permission permission) =>
         Grants.TryGetValue(projectId, out var roles) && AccessPolicy.Allows(roles, permission);
 
     public IEnumerable<string> ProjectsWith(Permission permission) =>
         Grants.Where(g => AccessPolicy.Allows(g.Value, permission)).Select(g => g.Key).OrderBy(p => p, StringComparer.Ordinal);
+
+    /// <summary>The caller is the person named on the request (sign-in name, case-insensitive).</summary>
+    public bool Is(string? signInName) =>
+        !string.IsNullOrWhiteSpace(signInName) && string.Equals(DisplayName.Trim(), signInName.Trim(), StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class AccessService(DataStores stores)

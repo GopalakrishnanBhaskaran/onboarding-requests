@@ -80,7 +80,10 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
     }
 }
 
-/// <summary>Container layout. infra/main.bicep must match this exactly.</summary>
+/// <summary>
+/// Container layout. infra/main.bicep must match this exactly. v1 containers (requirementRules, roleMappings,
+/// reviewDecisions, handoffs, joinerPasses) stay in Azure untouched; v2 no longer reads them.
+/// </summary>
 public static class CosmosSchema
 {
     public const int SharedThroughput = 1000; // free-tier ceiling (VERIFIED_FACTS F13)
@@ -88,14 +91,23 @@ public static class CosmosSchema
     public static readonly (string Name, string PartitionKey, string[][] UniqueKeys)[] Containers =
     [
         (ContainerNames.Projects, "/projectId", []),
-        (ContainerNames.RequirementRules, "/projectId", [["/ruleId", "/version"]]),
-        (ContainerNames.RoleMappings, "/projectId", [["/mappingId", "/version"]]),
         (ContainerNames.Requests, "/projectId", []),
         (ContainerNames.ReviewRuns, "/projectId", [["/idempotencyKey"]]),
-        (ContainerNames.ReviewDecisions, "/projectId", [["/reviewRunId", "/reviewer"]]),
         (ContainerNames.UserAccess, "/userId", []),
-        (ContainerNames.Handoffs, "/projectId", []),
-        (ContainerNames.JoinerPasses, "/projectId", []),
+        (ContainerNames.MappingSheet, "/projectId", []),
+        (ContainerNames.ResponseDocument, "/projectId", []),
+        (ContainerNames.Notifications, "/projectId", []),
+        (ContainerNames.Issues, "/projectId", []),
+    ];
+
+    /// <summary>v1 containers: declared in Bicep so nothing is ever removed, never read or written by v2.</summary>
+    public static readonly (string Name, string PartitionKey, string[][] UniqueKeys)[] LegacyContainers =
+    [
+        ("requirementRules", "/projectId", [["/ruleId", "/version"]]),
+        ("roleMappings", "/projectId", [["/mappingId", "/version"]]),
+        ("reviewDecisions", "/projectId", [["/reviewRunId", "/reviewer"]]),
+        ("handoffs", "/projectId", []),
+        ("joinerPasses", "/projectId", []),
     ];
 }
 
@@ -134,14 +146,13 @@ public static class CosmosDataStores
         var db = client.GetDatabase(databaseName);
         return new DataStores(
             new CosmosDocumentStore<Project>(db.GetContainer(ContainerNames.Projects)),
-            new CosmosDocumentStore<RequirementRule>(db.GetContainer(ContainerNames.RequirementRules)),
-            new CosmosDocumentStore<RoleMapping>(db.GetContainer(ContainerNames.RoleMappings)),
             new CosmosDocumentStore<AccessRequest>(db.GetContainer(ContainerNames.Requests)),
             new CosmosDocumentStore<ReviewRun>(db.GetContainer(ContainerNames.ReviewRuns)),
-            new CosmosDocumentStore<ReviewDecision>(db.GetContainer(ContainerNames.ReviewDecisions)),
             new CosmosDocumentStore<UserAccess>(db.GetContainer(ContainerNames.UserAccess)),
-            new CosmosDocumentStore<Core.Handoff.EntraHandoff>(db.GetContainer(ContainerNames.Handoffs)),
-            new CosmosDocumentStore<Core.Handoff.JoinerPass>(db.GetContainer(ContainerNames.JoinerPasses)));
+            new CosmosDocumentStore<MappingRow>(db.GetContainer(ContainerNames.MappingSheet)),
+            new CosmosDocumentStore<ResponseRecord>(db.GetContainer(ContainerNames.ResponseDocument)),
+            new CosmosDocumentStore<Core.Workflow.Notification>(db.GetContainer(ContainerNames.Notifications)),
+            new CosmosDocumentStore<Core.Workflow.Issue>(db.GetContainer(ContainerNames.Issues)));
     }
 
     /// <summary>

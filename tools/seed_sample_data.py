@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Seed SAMPLE reference data and register test users in Cosmos DB.
+"""Seed SAMPLE projects, mapping sheet, response document and test users in Cosmos DB (v2 onboarding flow).
 
 The connection string is read ONLY from the COSMOS_CONNECTION_STRING environment
 variable (never a CLI argument, so it stays out of shell history and logs).
+
+Projects and sample users are upserted. Mapping-sheet rows and response-document records are only CREATED when
+missing: a redeploy never overwrites what PMO, the ID team or the role team changed in the app.
 
 Examples:
   # Validate the sample file without touching Cosmos
   python3 tools/seed_sample_data.py --dry-run
 
-  # Seed projects, rules, mappings and sample users
-  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py
+  # Seed (optionally with the tenant domain used for domain-specific IDs)
+  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --domain-suffix @contoso.onmicrosoft.com
 
   # Register a real test account after its first sign-in (userId from /.auth/me)
   COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py \
-      --register-user <swa-user-id> --project SAMPLE-ALPHA --roles PMO
+      --register-user <swa-user-id> --project SAMPLE-ALPHA --roles Requester,Owner
 """
 from __future__ import annotations
 
@@ -27,13 +30,16 @@ from pathlib import Path
 DEFAULT_DATA = Path(__file__).resolve().parent / "sample_data" / "sample-data.json"
 CONTAINERS = {
     "projects": "projects",
-    "requirementRules": "requirementRules",
-    "roleMappings": "roleMappings",
+    "mappingSheet": "mappingSheet",
+    "responseDocument": "responseDocument",
     "userAccess": "userAccess",
 }
-PARTITION_FIELD = {"projects": "projectId", "requirementRules": "projectId", "roleMappings": "projectId", "userAccess": "userId"}
-ROLES = {"PMO", "Reviewer", "Maintainer", "Operator"}
+PARTITION_FIELD = {"projects": "projectId", "mappingSheet": "projectId", "responseDocument": "projectId", "userAccess": "userId"}
+# Created only when missing (live edits win); the others are upserted.
+CREATE_ONLY = {"mappingSheet", "responseDocument"}
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
+DOMAIN_SUFFIX = re.compile(r"^@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 
 
 def validate(data: dict) -> list[str]:
@@ -51,6 +57,12 @@ def validate(data: dict) -> list[str]:
             project = doc.get("projectId", "")
             if project and not project.startswith("SAMPLE-"):
                 problems.append(f"{where}: projectId must start with SAMPLE-")
+            if section == "mappingSheet":
+                for field in ("resource", "accessLevel", "entraGroup", "role", "sourceReference"):
+                    if not doc.get(field):
+                        problems.append(f"{where}: {field} is required")
+                if not str(doc.get("resource", "")).startswith("SAMPLE "):
+                    problems.append(f"{where}: resource must start with 'SAMPLE '")
             if section == "userAccess":
                 bad = set(doc.get("roles", [])) - ROLES
                 if bad or not doc.get("roles"):
@@ -71,45 +83,15 @@ def user_access_doc(user_id: str, project: str, roles: list[str]) -> dict:
     return {"id": f"{user_id}:{project}", "userId": user_id, "projectId": project, "roles": roles, "isSample": True, "schemaVersion": 1}
 
 
-MY_ACCESS = re.compile(r"^https://myaccess\.microsoft\.com/(@[A-Za-z0-9.-]+)?#/access-packages/(?P<id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$")
-
-
-def next_mapping_version(versions: list[dict], link: str) -> dict | None:
-    """Pure: the new version to publish, or None if the latest published version already carries the link."""
-    m = MY_ACCESS.match(link)
-    if not m:
-        raise SystemExit("not a My Access access package link")
-    if not versions:
-        raise SystemExit("mapping not found; create it in the app first")
-    latest = max(versions, key=lambda v: v["version"])
-    published = [v for v in versions if v.get("publicationStatus") == "Published"]
-    if published and max(published, key=lambda v: v["version"]) is latest and latest.get("myAccessLink") == link:
-        return None
-    base = max(published or versions, key=lambda v: v["version"])
-    version = latest["version"] + 1
-    doc = {k: v for k, v in base.items() if not k.startswith("_")}
-    doc.update({"id": f"{base['mappingId']}:v{version}", "version": version, "myAccessLink": link,
-                "accessPackageId": m.group("id").lower(), "publicationStatus": "Published", "owner": "setup-script"})
-    return doc
-
-
-def publish_mapping_link(db, project: str, mapping_id: str, link: str, dry_run: bool = False) -> int:
-    if not project.startswith("SAMPLE-"):
-        raise SystemExit("Pilot only changes SAMPLE- projects")
-    container = db.get_container_client("roleMappings")
-    versions = list(container.query_items(
-        "SELECT * FROM c WHERE c.projectId = @p AND c.mappingId = @m",
-        parameters=[{"name": "@p", "value": project}, {"name": "@m", "value": mapping_id}], partition_key=project))
-    doc = next_mapping_version(versions, link)
-    if doc is None:
-        print(f"mapping {mapping_id}: latest published version already has this link (no change)")
-        return 0
-    if dry_run:
-        print(json.dumps(doc, indent=2))
-        return 0
-    container.create_item(doc)
-    print(f"published {doc['id']} with the access package link")
-    return 0
+def apply_domain_suffix(data: dict, suffix: str | None) -> dict:
+    """Pure: the projects use this tenant domain for domain-specific IDs (e.g. @contoso.onmicrosoft.com)."""
+    if not suffix:
+        return data
+    if not DOMAIN_SUFFIX.match(suffix):
+        raise SystemExit("--domain-suffix must look like @contoso.onmicrosoft.com")
+    for p in data.get("projects", []):
+        p["domainIdSuffix"] = suffix.lower()
+    return data
 
 
 def connect(database: str):
@@ -118,6 +100,7 @@ def connect(database: str):
         raise SystemExit("COSMOS_CONNECTION_STRING is not set")
     try:
         from azure.cosmos import CosmosClient  # imported lazily so --dry-run needs no packages
+        from azure.cosmos.exceptions import CosmosResourceExistsError  # noqa: F401
     except ImportError:
         raise SystemExit("pip install -r tools/requirements.txt")
     return CosmosClient.from_connection_string(cs).get_database_client(database)
@@ -128,11 +111,10 @@ def main() -> int:
     ap.add_argument("--data", type=Path, default=DEFAULT_DATA)
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
     ap.add_argument("--dry-run", action="store_true", help="validate and print counts only")
+    ap.add_argument("--domain-suffix", help="tenant domain for domain-specific IDs, e.g. @contoso.onmicrosoft.com")
     ap.add_argument("--register-user", metavar="USER_ID", help="SWA client principal userId of a test account")
     ap.add_argument("--project", help="SAMPLE- project for --register-user")
     ap.add_argument("--roles", help="comma-separated roles for --register-user")
-    ap.add_argument("--publish-mapping-link", nargs=2, metavar=("MAPPING_ID", "MY_ACCESS_LINK"),
-                    help="admin setup: publish the next version of a SAMPLE mapping with this Entra My Access link (no-op if the latest published version has it)")
     args = ap.parse_args()
 
     if args.register_user:
@@ -146,12 +128,7 @@ def main() -> int:
         print(f"registered {doc['id']} roles={doc['roles']}")
         return 0
 
-    if args.publish_mapping_link:
-        if not args.project:
-            ap.error("--publish-mapping-link needs --project")
-        return publish_mapping_link(connect(args.database), args.project, *args.publish_mapping_link, dry_run=args.dry_run)
-
-    data = json.loads(args.data.read_text(encoding="utf-8"))
+    data = apply_domain_suffix(json.loads(args.data.read_text(encoding="utf-8")), args.domain_suffix)
     problems = validate(data)
     if problems:
         print("Refusing to seed:", *problems, sep="\n  ", file=sys.stderr)
@@ -162,12 +139,23 @@ def main() -> int:
         print("dry-run OK:", json.dumps(counts))
         return 0
 
+    from azure.cosmos.exceptions import CosmosResourceExistsError
     db = connect(args.database)
+    created = {}
     for section, container in CONTAINERS.items():
         client = db.get_container_client(container)
+        created[section] = 0
         for doc in data.get(section, []):
-            client.upsert_item(doc)
-    print("seeded:", json.dumps(counts))
+            if section in CREATE_ONLY:
+                try:
+                    client.create_item(doc)
+                    created[section] += 1
+                except CosmosResourceExistsError:
+                    pass  # changed in the app since; keep it
+            else:
+                client.upsert_item(doc)
+                created[section] += 1
+    print("seeded:", json.dumps(created))
     return 0
 
 

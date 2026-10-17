@@ -1,39 +1,517 @@
 {
-  "_comment": "SAMPLE data only. No real people, projects or groups. Used by tests and tools/seed_sample_data.py.",
+  "_comment": "SAMPLE data only. No real people, projects or groups. Used by tests, local dev and tools/seed_sample_data.py (v2 onboarding flow).",
   "projects": [
-    { "id": "SAMPLE-ALPHA", "projectId": "SAMPLE-ALPHA", "name": "SAMPLE Project Alpha", "supportedEnvironments": ["Dev", "Test", "Prod"], "supportedRequestTypes": ["NewJoiner", "RoleChange"], "isSample": true },
-    { "id": "SAMPLE-BETA", "projectId": "SAMPLE-BETA", "name": "SAMPLE Project Beta", "supportedEnvironments": ["Dev", "Test"], "supportedRequestTypes": ["NewJoiner"], "isSample": true }
+    {
+      "id": "SAMPLE-ALPHA",
+      "projectId": "SAMPLE-ALPHA",
+      "name": "SAMPLE Project Alpha",
+      "domainIdSuffix": "@sample.invalid",
+      "groupNamePattern": "^SAMPLE-GRP-[A-Z0-9]+(-[A-Z0-9]+)+$",
+      "contacts": {
+        "pmo": [
+          "sample.pmo.alpha@sample.invalid"
+        ],
+        "security": [
+          "sample.security.alpha@sample.invalid"
+        ],
+        "idTeam": [
+          "sample.idteam.alpha@sample.invalid"
+        ],
+        "roleTeam": [
+          "sample.roleteam.alpha@sample.invalid"
+        ],
+        "operators": [
+          "sample.operator.alpha@sample.invalid"
+        ],
+        "securityManager": "sample.security.lead.alpha@sample.invalid",
+        "idTeamManager": "sample.idteam.lead.alpha@sample.invalid",
+        "roleTeamManager": "sample.roleteam.lead.alpha@sample.invalid",
+        "ownerManagerFallback": "sample.owner.manager.alpha@sample.invalid"
+      },
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "SAMPLE-BETA",
+      "projectId": "SAMPLE-BETA",
+      "name": "SAMPLE Project Beta",
+      "domainIdSuffix": "@sample.invalid",
+      "groupNamePattern": "^SAMPLE-GRP-[A-Z0-9]+(-[A-Z0-9]+)+$",
+      "contacts": {
+        "pmo": [
+          "sample.pmo.beta@sample.invalid"
+        ],
+        "security": [
+          "sample.security.beta@sample.invalid"
+        ],
+        "idTeam": [
+          "sample.idteam.beta@sample.invalid"
+        ],
+        "roleTeam": [
+          "sample.roleteam.beta@sample.invalid"
+        ],
+        "operators": [
+          "sample.operator.beta@sample.invalid"
+        ],
+        "securityManager": "sample.security.lead.beta@sample.invalid",
+        "idTeamManager": "sample.idteam.lead.beta@sample.invalid",
+        "roleTeamManager": "sample.roleteam.lead.beta@sample.invalid",
+        "ownerManagerFallback": "sample.owner.manager.beta@sample.invalid"
+      },
+      "isSample": true,
+      "schemaVersion": 2
+    }
   ],
-  "requirementRules": [
-    { "id": "A-REQ-ROLE:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-ROLE", "version": 1, "requestType": "NewJoiner", "field": "role", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: A business role is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.1", "isSample": true },
-    { "id": "A-REQ-ENV:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-ENV", "version": 1, "requestType": "NewJoiner", "field": "environment", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Target environment is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.2", "isSample": true },
-    { "id": "A-REQ-MGR:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-MGR", "version": 1, "requestType": "NewJoiner", "field": "manager", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Line manager is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.3", "isSample": true },
-    { "id": "A-REQ-JUST:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-JUST", "version": 1, "requestType": "NewJoiner", "field": "justification", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Business justification is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.4", "isSample": true },
-    { "id": "A-REQ-START:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-START", "version": 1, "requestType": "NewJoiner", "field": "startDate", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Start date is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.5", "isSample": true },
-    { "id": "A-REQ-END:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-REQ-END", "version": 1, "requestType": "NewJoiner", "field": "endDate", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: End date is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.6", "isSample": true },
-    { "id": "A-JUST-LEN:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-JUST-LEN", "version": 1, "requestType": "NewJoiner", "field": "justification", "rule": "MinLength", "parameter": "20", "requirementText": "SAMPLE: Justification must be at least 20 characters.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s3.1", "isSample": true },
-    { "id": "A-DURATION:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-DURATION", "version": 1, "requestType": "NewJoiner", "field": "endDate", "rule": "MaxDurationDays", "parameter": "180", "requirementText": "SAMPLE: Access period is at most 180 days.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s3.2", "isSample": true },
-    { "id": "A-ENV-ALLOWED:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-ENV-ALLOWED", "version": 1, "requestType": "NewJoiner", "field": "environment", "rule": "AllowedValues", "parameter": "Dev|Test|Prod", "requirementText": "SAMPLE: Environment must be Dev, Test or Prod.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-01 s3.3", "isSample": true },
-    { "id": "A-RC-OLD:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-RC-OLD", "version": 1, "requestType": "RoleChange", "field": "role", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: (expired) Role change needs a role.", "effectiveFrom": "2025-01-01", "effectiveTo": "2025-12-31", "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-ALPHA-00 s1", "isSample": true },
-    { "id": "A-RC-NEW:v1", "projectId": "SAMPLE-ALPHA", "ruleId": "A-RC-NEW", "version": 1, "requestType": "RoleChange", "field": "role", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: (draft) Role change needs a role.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Draft", "sourceReference": "SAMPLE-POLICY-ALPHA-02 s1", "isSample": true },
-    { "id": "B-REQ-ROLE:v1", "projectId": "SAMPLE-BETA", "ruleId": "B-REQ-ROLE", "version": 1, "requestType": "NewJoiner", "field": "role", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: A business role is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-bella", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-BETA-01 s1", "isSample": true },
-    { "id": "B-REQ-ENV:v1", "projectId": "SAMPLE-BETA", "ruleId": "B-REQ-ENV", "version": 1, "requestType": "NewJoiner", "field": "environment", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Target environment is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-bella", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-BETA-01 s2", "isSample": true },
-    { "id": "B-REQ-START:v1", "projectId": "SAMPLE-BETA", "ruleId": "B-REQ-START", "version": 1, "requestType": "NewJoiner", "field": "startDate", "rule": "Required", "parameter": null, "requirementText": "SAMPLE: Start date is required.", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-bella", "publicationStatus": "Published", "sourceReference": "SAMPLE-POLICY-BETA-01 s3", "isSample": true }
+  "mappingSheet": [
+    {
+      "id": "A-DBW-ENG-USER",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-DBW-ENG-USER",
+      "resource": "SAMPLE Databricks Engineering",
+      "accessLevel": "User",
+      "entraGroup": "SAMPLE-GRP-ALPHA-DBW-ENG-USER",
+      "role": "SAMPLE Workspace User",
+      "roleScope": "SAMPLE dbw-alpha-dev",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 2",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-DBW-ENG-ADMIN",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-DBW-ENG-ADMIN",
+      "resource": "SAMPLE Databricks Engineering",
+      "accessLevel": "Admin",
+      "entraGroup": "SAMPLE-GRP-ALPHA-DBW-ENG-ADMIN",
+      "role": "SAMPLE Workspace Admin",
+      "roleScope": "SAMPLE dbw-alpha-dev",
+      "privileged": true,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 3",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-SALES-READ",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-SALES-READ",
+      "resource": "SAMPLE Sales Lakehouse",
+      "accessLevel": "Read",
+      "entraGroup": "SAMPLE-GRP-ALPHA-SALES-READ",
+      "role": "Storage Blob Data Reader",
+      "roleScope": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-sales/providers/Microsoft.Storage/storageAccounts/stsamplesales",
+      "privileged": false,
+      "sensitiveResource": true,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 4",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-SALES-WRITE",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-SALES-WRITE",
+      "resource": "SAMPLE Sales Lakehouse",
+      "accessLevel": "Write",
+      "entraGroup": "SAMPLE-GRP-ALPHA-SALES-WRITE",
+      "role": "Storage Blob Data Contributor",
+      "roleScope": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-sales/providers/Microsoft.Storage/storageAccounts/stsamplesales",
+      "privileged": true,
+      "sensitiveResource": true,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 5",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-FIN-VIEW",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-FIN-VIEW",
+      "resource": "SAMPLE Finance Reports",
+      "accessLevel": "Viewer",
+      "entraGroup": "SAMPLE-GRP-ALPHA-FIN-VIEW",
+      "role": "SAMPLE Report Viewer",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "ToBeCreated",
+      "sourceReference": "SAMPLE-PMO-SHEET row 6",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-LEGACY-USER",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-LEGACY-USER",
+      "resource": "SAMPLE Legacy Tool",
+      "accessLevel": "User",
+      "entraGroup": "SAMPLE-GRP-ALPHA-LEGACY-USER",
+      "role": "SAMPLE Legacy User",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": true,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 7 (deprecated)",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-DRIVE-EDIT-1",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-DRIVE-EDIT-1",
+      "resource": "SAMPLE Shared Drive",
+      "accessLevel": "Edit",
+      "entraGroup": "SAMPLE-GRP-ALPHA-DRIVE-EDIT",
+      "role": "SAMPLE Drive Editor",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 8",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-DRIVE-EDIT-2",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-DRIVE-EDIT-2",
+      "resource": "SAMPLE Shared Drive",
+      "accessLevel": "Edit",
+      "entraGroup": "SAMPLE-GRP-ALPHA-DRIVE-EDIT-ALT",
+      "role": "SAMPLE Drive Owner",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 9 (conflict)",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-WIKI-EDIT",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-WIKI-EDIT",
+      "resource": "SAMPLE Team Wiki",
+      "accessLevel": "Edit",
+      "entraGroup": "sample_wiki_editors",
+      "role": "SAMPLE Wiki Editor",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 10 (bad group name)",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "A-BILLING-ADMIN",
+      "projectId": "SAMPLE-ALPHA",
+      "rowId": "A-BILLING-ADMIN",
+      "resource": "SAMPLE Billing",
+      "accessLevel": "Admin",
+      "entraGroup": "SAMPLE-GRP-ALPHA-BILLING-ADMIN",
+      "role": "Owner",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET row 11 (privileged, not flagged)",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "B-TEST-USER",
+      "projectId": "SAMPLE-BETA",
+      "rowId": "B-TEST-USER",
+      "resource": "SAMPLE Test Portal",
+      "accessLevel": "User",
+      "entraGroup": "SAMPLE-GRP-BETA-TEST-USER",
+      "role": "SAMPLE Tester",
+      "roleScope": null,
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE-PMO-SHEET-BETA row 2",
+      "version": 1,
+      "updatedBy": "sample-user-paul",
+      "updatedAt": "2026-10-01T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    }
   ],
-  "roleMappings": [
-    { "id": "A-MAP-ENG-DEV:v1", "projectId": "SAMPLE-ALPHA", "mappingId": "A-MAP-ENG-DEV", "version": 1, "businessRole": "SAMPLE Data Engineer", "environment": "Dev", "groupReference": "SAMPLE-GRP-ALPHA-DEV-ENG", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-ALPHA row 4", "isSample": true },
-    { "id": "A-MAP-ENG-TEST:v1", "projectId": "SAMPLE-ALPHA", "mappingId": "A-MAP-ENG-TEST", "version": 1, "businessRole": "SAMPLE Data Engineer", "environment": "Test", "groupReference": "SAMPLE-GRP-ALPHA-TEST-ENG", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-ALPHA row 5", "isSample": true },
-    { "id": "A-MAP-ENG-PROD-1:v1", "projectId": "SAMPLE-ALPHA", "mappingId": "A-MAP-ENG-PROD-1", "version": 1, "businessRole": "SAMPLE Data Engineer", "environment": "Prod", "groupReference": "SAMPLE-GRP-ALPHA-PROD-ENG", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-ALPHA row 6", "isSample": true },
-    { "id": "A-MAP-ENG-PROD-2:v1", "projectId": "SAMPLE-ALPHA", "mappingId": "A-MAP-ENG-PROD-2", "version": 1, "businessRole": "SAMPLE Data Engineer", "environment": "Prod", "groupReference": "SAMPLE-GRP-ALPHA-PROD-ENG-ALT", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-ALPHA row 7 (conflict)", "isSample": true },
-    { "id": "A-MAP-ANALYST-DEV:v1", "projectId": "SAMPLE-ALPHA", "mappingId": "A-MAP-ANALYST-DEV", "version": 1, "businessRole": "SAMPLE Analyst", "environment": "Dev", "groupReference": "SAMPLE-GRP-ALPHA-DEV-ANL", "effectiveFrom": "2026-01-01", "effectiveTo": "2026-03-31", "owner": "sample-user-mark", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-ALPHA row 8 (expired)", "isSample": true },
-    { "id": "B-MAP-TESTER-DEV:v1", "projectId": "SAMPLE-BETA", "mappingId": "B-MAP-TESTER-DEV", "version": 1, "businessRole": "SAMPLE Tester", "environment": "Dev", "groupReference": "SAMPLE-GRP-BETA-DEV-TST", "effectiveFrom": "2026-01-01", "effectiveTo": null, "owner": "sample-user-bella", "publicationStatus": "Published", "sourceReference": "SAMPLE-RBAC-BETA row 1", "isSample": true }
+  "responseDocument": [
+    {
+      "id": "sample-req-old-1",
+      "projectId": "SAMPLE-ALPHA",
+      "requestId": "sample-req-old-1",
+      "userId": "sample.e2001@sample.invalid",
+      "resource": "SAMPLE Sales Lakehouse",
+      "accessLevel": "Read",
+      "entraGroup": "SAMPLE-GRP-ALPHA-SALES-READ",
+      "role": "Storage Blob Data Reader",
+      "roleScope": null,
+      "privileged": false,
+      "state": "Assigned",
+      "justification": "SAMPLE: existing access granted earlier.",
+      "ownerApprovedBy": "sample-user-olivia@sample.invalid",
+      "ownerApprovedAt": "2026-09-01T09:00:00+00:00",
+      "securityApprovedBy": "sample-user-sam@sample.invalid",
+      "securityApprovedAt": "2026-09-01T10:00:00+00:00",
+      "assignedRoles": [
+        {
+          "role": "Storage Blob Data Reader",
+          "scope": null
+        }
+      ],
+      "assignedBy": "sample-user-rose@sample.invalid",
+      "assignedAt": "2026-09-02T09:00:00+00:00",
+      "updatedBy": "sample-user-rose",
+      "updatedAt": "2026-09-02T09:00:00+00:00",
+      "version": 1,
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "sample-req-old-2",
+      "projectId": "SAMPLE-ALPHA",
+      "requestId": "sample-req-old-2",
+      "userId": "sample.e3001@sample.invalid",
+      "resource": "SAMPLE Finance Reports",
+      "accessLevel": "Viewer",
+      "entraGroup": "SAMPLE-GRP-ALPHA-FIN-VIEW",
+      "role": "SAMPLE Report Viewer",
+      "roleScope": null,
+      "privileged": false,
+      "state": "Assigned",
+      "justification": "SAMPLE: existing access granted earlier.",
+      "ownerApprovedBy": "sample-user-olivia@sample.invalid",
+      "ownerApprovedAt": "2026-09-01T09:00:00+00:00",
+      "securityApprovedBy": "sample-user-sam@sample.invalid",
+      "securityApprovedAt": "2026-09-01T10:00:00+00:00",
+      "assignedRoles": [
+        {
+          "role": "SAMPLE Report Viewer",
+          "scope": null
+        }
+      ],
+      "assignedBy": "sample-user-rose@sample.invalid",
+      "assignedAt": "2026-09-02T09:00:00+00:00",
+      "updatedBy": "sample-user-rose",
+      "updatedAt": "2026-09-02T09:00:00+00:00",
+      "version": 1,
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "sample-req-old-3",
+      "projectId": "SAMPLE-ALPHA",
+      "requestId": "sample-req-old-3",
+      "userId": "sample.e3001@sample.invalid",
+      "resource": "SAMPLE Team Wiki",
+      "accessLevel": "Edit",
+      "entraGroup": "SAMPLE-GRP-ALPHA-WIKI-EDIT",
+      "role": "SAMPLE Wiki Editor",
+      "roleScope": null,
+      "privileged": false,
+      "state": "Assigned",
+      "justification": "SAMPLE: existing access granted earlier.",
+      "ownerApprovedBy": "sample-user-olivia@sample.invalid",
+      "ownerApprovedAt": "2026-09-01T09:00:00+00:00",
+      "securityApprovedBy": "sample-user-sam@sample.invalid",
+      "securityApprovedAt": "2026-09-01T10:00:00+00:00",
+      "assignedRoles": [
+        {
+          "role": "SAMPLE Wiki Editor",
+          "scope": null
+        }
+      ],
+      "assignedBy": "sample-user-rose@sample.invalid",
+      "assignedAt": "2026-09-02T09:00:00+00:00",
+      "updatedBy": "sample-user-rose",
+      "updatedAt": "2026-09-02T09:00:00+00:00",
+      "version": 1,
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "sample-req-old-4",
+      "projectId": "SAMPLE-ALPHA",
+      "requestId": "sample-req-old-4",
+      "userId": "sample.e3001@sample.invalid",
+      "resource": "SAMPLE Shared Drive",
+      "accessLevel": "Edit",
+      "entraGroup": "SAMPLE-GRP-ALPHA-DRIVE-EDIT",
+      "role": "SAMPLE Drive Editor",
+      "roleScope": null,
+      "privileged": false,
+      "state": "Assigned",
+      "justification": "SAMPLE: existing access granted earlier.",
+      "ownerApprovedBy": "sample-user-olivia@sample.invalid",
+      "ownerApprovedAt": "2026-09-01T09:00:00+00:00",
+      "securityApprovedBy": "sample-user-sam@sample.invalid",
+      "securityApprovedAt": "2026-09-01T10:00:00+00:00",
+      "assignedRoles": [
+        {
+          "role": "SAMPLE Drive Editor",
+          "scope": null
+        }
+      ],
+      "assignedBy": "sample-user-rose@sample.invalid",
+      "assignedAt": "2026-09-02T09:00:00+00:00",
+      "updatedBy": "sample-user-rose",
+      "updatedAt": "2026-09-02T09:00:00+00:00",
+      "version": 1,
+      "isSample": true,
+      "schemaVersion": 2
+    }
   ],
   "userAccess": [
-    { "id": "sample-user-alice:SAMPLE-ALPHA", "userId": "sample-user-alice", "projectId": "SAMPLE-ALPHA", "roles": ["PMO"], "isSample": true },
-    { "id": "sample-user-rita:SAMPLE-ALPHA", "userId": "sample-user-rita", "projectId": "SAMPLE-ALPHA", "roles": ["Reviewer"], "isSample": true },
-    { "id": "sample-user-mark:SAMPLE-ALPHA", "userId": "sample-user-mark", "projectId": "SAMPLE-ALPHA", "roles": ["Maintainer"], "isSample": true },
-    { "id": "sample-user-oscar:SAMPLE-ALPHA", "userId": "sample-user-oscar", "projectId": "SAMPLE-ALPHA", "roles": ["Operator"], "isSample": true },
-    { "id": "sample-user-bob:SAMPLE-BETA", "userId": "sample-user-bob", "projectId": "SAMPLE-BETA", "roles": ["PMO"], "isSample": true },
-    { "id": "sample-user-bella:SAMPLE-BETA", "userId": "sample-user-bella", "projectId": "SAMPLE-BETA", "roles": ["Reviewer", "Maintainer"], "isSample": true }
+    {
+      "id": "sample-user-alice:SAMPLE-ALPHA",
+      "userId": "sample-user-alice",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Requester"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-olivia:SAMPLE-ALPHA",
+      "userId": "sample-user-olivia",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Owner"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-otto:SAMPLE-ALPHA",
+      "userId": "sample-user-otto",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Owner"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-sam:SAMPLE-ALPHA",
+      "userId": "sample-user-sam",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Security"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-dual:SAMPLE-ALPHA",
+      "userId": "sample-user-dual",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Owner",
+        "Security"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-ivan:SAMPLE-ALPHA",
+      "userId": "sample-user-ivan",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "IdTeam"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-rose:SAMPLE-ALPHA",
+      "userId": "sample-user-rose",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "RoleTeam"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-paul:SAMPLE-ALPHA",
+      "userId": "sample-user-paul",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "PMO"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-oscar:SAMPLE-ALPHA",
+      "userId": "sample-user-oscar",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Operator"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-bob:SAMPLE-BETA",
+      "userId": "sample-user-bob",
+      "projectId": "SAMPLE-BETA",
+      "roles": [
+        "Requester"
+      ],
+      "isSample": true
+    },
+    {
+      "id": "sample-user-bella:SAMPLE-BETA",
+      "userId": "sample-user-bella",
+      "projectId": "SAMPLE-BETA",
+      "roles": [
+        "Owner",
+        "Security",
+        "PMO"
+      ],
+      "isSample": true
+    }
   ]
 }

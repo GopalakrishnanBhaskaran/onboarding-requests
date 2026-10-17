@@ -10,16 +10,16 @@ public static class SampleDataLoader
 {
     public sealed record SampleData(
         List<Project> Projects,
-        List<RequirementRule> RequirementRules,
-        List<RoleMapping> RoleMappings,
+        List<MappingRow> MappingSheet,
+        List<ResponseRecord> ResponseDocument,
         List<UserAccess> UserAccess);
 
     public static SampleData Read(string path)
     {
         var data = JsonSerializer.Deserialize<SampleData>(File.ReadAllText(path), AppJson.Options)
                    ?? throw new InvalidOperationException("Sample data file is empty.");
-        var notSample = data.Projects.Any(p => !p.IsSample) || data.RequirementRules.Any(r => !r.IsSample)
-                        || data.RoleMappings.Any(m => !m.IsSample) || data.UserAccess.Any(u => !u.IsSample);
+        var notSample = data.Projects.Any(p => !p.IsSample) || data.MappingSheet.Any(r => !r.IsSample)
+                        || data.ResponseDocument.Any(r => !r.IsSample) || data.UserAccess.Any(u => !u.IsSample);
         if (notSample) throw new InvalidOperationException("Sample data contains a record without isSample=true. Refusing to load.");
         return data;
     }
@@ -27,8 +27,8 @@ public static class SampleDataLoader
     public static async Task SeedAsync(DataStores stores, SampleData data, CancellationToken ct = default)
     {
         foreach (var p in data.Projects) await Upsert(stores.Projects, p, ct);
-        foreach (var r in data.RequirementRules) await Upsert(stores.Rules, r, ct);
-        foreach (var m in data.RoleMappings) await Upsert(stores.Mappings, m, ct);
+        foreach (var r in data.MappingSheet) await Upsert(stores.MappingSheet, r, ct);
+        foreach (var r in data.ResponseDocument) await Upsert(stores.ResponseDocument, r, ct);
         foreach (var u in data.UserAccess) await Upsert(stores.UserAccess, u, ct);
     }
 

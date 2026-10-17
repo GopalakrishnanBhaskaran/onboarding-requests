@@ -1,41 +1,58 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Security;
 using PmoReview.Core.Storage;
+using PmoReview.Core.Workflow;
 
 namespace PmoReview.Core.Services;
 
 /// <summary>
-/// Editable request fields. Deliberately has no projectId, createdBy, revision, status or result:
+/// Stage 1 intake fields. Deliberately has no projectId, createdBy, revision, domain ID, status or result:
 /// those come from the route, the client principal or the server, never the body.
-/// Fields may be empty; the review engine reports what is missing.
 /// </summary>
 public sealed record RequestInput
 {
-    public string? RequestType { get; init; }
-    public string? Role { get; init; }
-    public string? Environment { get; init; }
-    public string? Manager { get; init; }
+    public string? EnterpriseId { get; init; }
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+    public string? Resource { get; init; }
+    public string? AccessLevel { get; init; }
     public string? Justification { get; init; }
-    public DateOnly? StartDate { get; init; }
-    public DateOnly? EndDate { get; init; }
-    public string? JoinerUpn { get; init; }
+    public string? Owner { get; init; }
+    public bool? Guest { get; init; }
 }
 
 public static class RequestFields
 {
-    public const string RequestType = "requestType";
-    public const string Role = "role";
-    public const string Environment = "environment";
-    public const string Manager = "manager";
+    public const string EnterpriseId = "enterpriseId";
+    public const string FirstName = "firstName";
+    public const string LastName = "lastName";
+    public const string DomainId = "domainId";
+    public const string Resource = "resource";
+    public const string AccessLevel = "accessLevel";
     public const string Justification = "justification";
-    public const string StartDate = "startDate";
-    public const string EndDate = "endDate";
-    public const string JoinerUpn = "joinerUpn";
+    public const string Owner = "owner";
 
-    public static readonly IReadOnlyList<string> All = [RequestType, Role, Environment, Manager, Justification, StartDate, EndDate, JoinerUpn];
+    /// <summary>Required at intake, in form order. The domain-specific ID is derived, not typed.</summary>
+    public static readonly IReadOnlyList<string> Required = [EnterpriseId, FirstName, LastName, Resource, AccessLevel, Justification, Owner];
+
+    public static string Label(string field) => field switch
+    {
+        EnterpriseId => "Enterprise ID",
+        FirstName => "First name",
+        LastName => "Last name",
+        DomainId => "Domain-specific ID",
+        Resource => "Resource",
+        AccessLevel => "Access level",
+        Justification => "Justification",
+        Owner => "Owner",
+        _ => field,
+    };
 }
 
+/// <summary>Stage 1: intake. Incomplete requests are rejected with exactly what is missing; nothing is saved.</summary>
 public sealed partial class RequestService(DataStores stores, IClock clock)
 {
     private const int ShortMax = 200;
@@ -54,54 +71,71 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         return await LoadAsync(projectId, requestId, ct);
     }
 
+    /// <summary>Submits a new request (status Submitted). The caller then starts the AI review.</summary>
     public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.EditRequests);
-        var clean = Validate(input);
+        caller.Require(projectId, Permission.SubmitRequests);
+        var (clean, fixes) = Validate(input);
+        var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var now = clock.UtcNow;
+        var flow = WorkflowState.Start(now, caller.UserId);
+        if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
         var doc = new AccessRequest
         {
             Id = Guid.NewGuid().ToString("n"),
             ProjectId = projectId,
-            RequestType = clean.RequestType,
-            Role = clean.Role,
-            Environment = clean.Environment,
-            Manager = clean.Manager,
+            EnterpriseId = clean.EnterpriseId,
+            FirstName = clean.FirstName,
+            LastName = clean.LastName,
+            DomainId = DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix),
+            Resource = clean.Resource,
+            AccessLevel = clean.AccessLevel,
             Justification = clean.Justification,
-            StartDate = clean.StartDate,
-            EndDate = clean.EndDate,
-            JoinerUpn = clean.JoinerUpn,
+            Owner = clean.Owner,
+            Guest = clean.Guest ?? false,
             CreatedBy = caller.UserId,
+            CreatedByName = caller.DisplayName,
             CreatedAt = now,
             UpdatedBy = caller.UserId,
             UpdatedAt = now,
             Revision = 1,
+            Flow = flow,
         };
         return await stores.Requests.CreateAsync(doc, ct);
     }
 
-    public async Task<Versioned<AccessRequest>> UpdateAsync(
+    /// <summary>Edits a Returned request and submits it again (new revision, back to AI review).</summary>
+    public async Task<Versioned<AccessRequest>> ResubmitAsync(
         CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.EditRequests);
+        caller.Require(projectId, Permission.SubmitRequests);
         if (string.IsNullOrWhiteSpace(ifMatch)) throw AppException.EtagRequired();
-        var clean = Validate(input);
+        var (clean, fixes) = Validate(input);
         var current = await LoadAsync(projectId, requestId, ct);
         if (current.ETag != ifMatch) throw AppException.Stale();
+        var flow = current.Value.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request and cannot be changed. Submit a new request.");
+        if (flow.Status != RequestStatus.Returned)
+            throw AppException.Conflict("not_returned", $"Only a returned request can be changed. This one is {StatusText.Label(flow.Status)}.");
 
+        var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
+        var now = clock.UtcNow;
+        var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
+        if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
         var updated = current.Value with
         {
-            RequestType = clean.RequestType,
-            Role = clean.Role,
-            Environment = clean.Environment,
-            Manager = clean.Manager,
+            EnterpriseId = clean.EnterpriseId,
+            FirstName = clean.FirstName,
+            LastName = clean.LastName,
+            DomainId = DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix),
+            Resource = clean.Resource,
+            AccessLevel = clean.AccessLevel,
             Justification = clean.Justification,
-            StartDate = clean.StartDate,
-            EndDate = clean.EndDate,
-            JoinerUpn = clean.JoinerUpn,
+            Owner = clean.Owner,
+            Guest = clean.Guest ?? false,
             UpdatedBy = caller.UserId,
-            UpdatedAt = clock.UtcNow,
+            UpdatedAt = now,
             Revision = current.Value.Revision + 1,
+            Flow = next with { ResumeStatus = null },
         };
         try
         {
@@ -120,42 +154,96 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         return found;
     }
 
-    private static RequestInput Validate(RequestInput? input)
+    /// <summary>
+    /// Cleans the input ("fix ID/name format" auto-fix: trim, single spaces, lower-case IDs, capitalised names) and
+    /// rejects an incomplete request listing exactly what is missing.
+    /// </summary>
+    public static (RequestInput Clean, IReadOnlyList<string> Fixes) Validate(RequestInput? input)
     {
         if (input is null) throw AppException.Invalid("Request body is required.");
-        return new RequestInput
+        var fixes = new List<string>();
+        var clean = new RequestInput
         {
-            RequestType = Text(input.RequestType, RequestFields.RequestType, ShortMax),
-            Role = Text(input.Role, RequestFields.Role, ShortMax),
-            Environment = Text(input.Environment, RequestFields.Environment, ShortMax),
-            Manager = Text(input.Manager, RequestFields.Manager, ShortMax),
-            Justification = Text(input.Justification, RequestFields.Justification, JustificationMax),
-            StartDate = input.StartDate,
-            EndDate = input.EndDate,
-            JoinerUpn = Upn(input.JoinerUpn),
+            EnterpriseId = Fix(Text(input.EnterpriseId, RequestFields.EnterpriseId, 64), s => s.Replace(" ", "").ToLowerInvariant(), RequestFields.EnterpriseId, fixes),
+            FirstName = Fix(Text(input.FirstName, RequestFields.FirstName, 100), Name, RequestFields.FirstName, fixes),
+            LastName = Fix(Text(input.LastName, RequestFields.LastName, 100), Name, RequestFields.LastName, fixes),
+            Resource = Fix(Text(input.Resource, RequestFields.Resource, ShortMax), Spaces, RequestFields.Resource, fixes),
+            AccessLevel = Fix(Text(input.AccessLevel, RequestFields.AccessLevel, ShortMax), Spaces, RequestFields.AccessLevel, fixes),
+            // A secret pasted into free text is masked before it is stored or shown to anyone.
+            Justification = SecretMasker.Apply(Text(input.Justification, RequestFields.Justification, JustificationMax)),
+            Owner = Fix(Text(input.Owner, RequestFields.Owner, ShortMax), s => s.ToLowerInvariant(), RequestFields.Owner, fixes),
+            Guest = input.Guest,
         };
+
+        var missing = RequestFields.Required.Where(f => Value(clean, f) is null).Select(RequestFields.Label).ToList();
+        if (missing.Count > 0) throw AppException.Incomplete(missing);
+
+        if (!EnterpriseIdFormat().IsMatch(clean.EnterpriseId!))
+            throw AppException.Invalid("Enterprise ID may contain only letters, digits, dot, dash and underscore (2-64 characters).");
+        if (!NameFormat().IsMatch(clean.FirstName!) || !NameFormat().IsMatch(clean.LastName!))
+            throw AppException.Invalid("First and last name may contain only letters, spaces, dots, hyphens and apostrophes.");
+        if (!SignInFormat().IsMatch(clean.Owner!))
+            throw AppException.Invalid("Owner must be the Owner's sign-in name, such as owner.name@contoso.com.");
+        return (clean, fixes);
     }
 
-    /// <summary>Format check only (name@domain.tld). The app never looks the user up.</summary>
-    private static string? Upn(string? value)
+    private static string? Value(RequestInput r, string field) => field switch
     {
-        var v = Text(value, RequestFields.JoinerUpn, ShortMax);
-        if (v is null) return null;
-        if (!UpnFormat().IsMatch(v)) throw AppException.Invalid("joinerUpn must be a sign-in name such as sample.joiner@contoso.onmicrosoft.com.");
-        return v.ToLowerInvariant();
+        RequestFields.EnterpriseId => r.EnterpriseId,
+        RequestFields.FirstName => r.FirstName,
+        RequestFields.LastName => r.LastName,
+        RequestFields.Resource => r.Resource,
+        RequestFields.AccessLevel => r.AccessLevel,
+        RequestFields.Justification => r.Justification,
+        RequestFields.Owner => r.Owner,
+        _ => null,
+    };
+
+    private static string? Fix(string? value, Func<string, string> fix, string field, List<string> fixes)
+    {
+        if (value is null) return null;
+        var fixedValue = fix(value);
+        if (fixedValue != value) fixes.Add(RequestFields.Label(field));
+        return fixedValue;
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
-    private static partial System.Text.RegularExpressions.Regex UpnFormat();
+    private static string Spaces(string s) => string.Join(' ', s.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>Capitalises names typed all in lower or upper case; mixed case (McDonald, de Vries) is kept.</summary>
+    private static string Name(string s)
+    {
+        var spaced = Spaces(s);
+        if (spaced.Any(char.IsLower) && spaced.Any(char.IsUpper)) return spaced;
+        return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(spaced.ToLowerInvariant());
+    }
+
+    [GeneratedRegex("^[a-z0-9][a-z0-9._-]{1,63}$")]
+    private static partial Regex EnterpriseIdFormat();
+
+    [GeneratedRegex(@"^[\p{L}][\p{L} .'-]{0,99}$")]
+    private static partial Regex NameFormat();
+
+    [GeneratedRegex("^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
+    private static partial Regex SignInFormat();
 
     internal static string? Text(string? value, string field, int max)
     {
         if (value is null) return null;
         var trimmed = value.Trim();
         if (trimmed.Length == 0) return null;
-        if (trimmed.Length > max) throw AppException.Invalid($"{field} must be at most {max} characters.");
+        if (trimmed.Length > max) throw AppException.Invalid($"{RequestFields.Label(field)} must be at most {max} characters.");
         if (trimmed.Any(c => char.IsControl(c) && c is not '\n' and not '\r' and not '\t'))
-            throw AppException.Invalid($"{field} contains control characters.");
+            throw AppException.Invalid($"{RequestFields.Label(field)} contains control characters.");
         return trimmed;
+    }
+}
+
+public static class DomainIds
+{
+    /// <summary>Domain-specific ID = normalised Enterprise ID + the project's domain suffix (e.g. "@contoso.onmicrosoft.com").</summary>
+    public static string Derive(string enterpriseId, string? suffix)
+    {
+        var id = enterpriseId.Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(suffix) ? id : id + suffix.Trim().ToLowerInvariant();
     }
 }

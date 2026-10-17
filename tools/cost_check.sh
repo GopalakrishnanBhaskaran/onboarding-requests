@@ -6,7 +6,7 @@ set -euo pipefail
 RG="${1:-rg-pmo-review-pilot}"
 SUB=$(az account show --query id -o tsv)
 ALLOWED='^Microsoft\.(Web/staticSites|DocumentDB/databaseAccounts)$'
-# Phase 2 (approved 16 Oct 2026): exactly one Flex plan, one Function App and one storage account (the hand-off worker).
+# Phase 2 (approved 16 Oct 2026): exactly one Flex plan, one Function App and one storage account (the AI agent worker).
 PHASE2='^Microsoft\.(Web/serverFarms|Web/sites|Storage/storageAccounts)$'
 
 echo "== Resources in $RG =="

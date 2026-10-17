@@ -1,14 +1,41 @@
 {
-  "schemaVersion": "1.0",
-  "reviewRunId": "sample-run-0001",
-  "requestRevision": 2,
-  "readiness": "NeedsInformation",
-  "summary": "Needs information. 1 blocking, 0 warning finding(s). Rule-only review of revision 2: 1 item(s) need attention.",
-  "findings": [
-    { "code": "MISSING_FIELD", "field": "manager", "severity": "Blocking", "message": "Line manager is required.", "ruleId": "A-REQ-MGR", "ruleVersion": 1, "sourceReference": "SAMPLE-POLICY-ALPHA-01 s2.3" }
+  "schemaVersion": "2.0",
+  "reviewRunId": "sample-req.r1.a0",
+  "requestRevision": 1,
+  "outcome": "Pass",
+  "summary": "What: Sample Joiner (sample.e1001@sample.invalid) requests 'Read' on 'SAMPLE Sales Lakehouse'.\nReview: Pass \u2014 15/15 checks passed.",
+  "checks": [
+    {
+      "code": "MAP_ROW_EXISTS",
+      "group": "Mapping sheet",
+      "status": "Pass",
+      "detail": "Found row A-SALES-READ."
+    },
+    {
+      "code": "RISK_SENSITIVE",
+      "group": "Risk flags",
+      "status": "Flagged",
+      "detail": "Sensitive resource."
+    }
   ],
-  "mappingAssessment": { "status": "Matched", "mappingId": "A-MAP-ENG-DEV", "mappingVersion": 1, "explanation": "Matches published mapping A-MAP-ENG-DEV v1." },
-  "clarificationQuestions": ["Please provide the line manager. (Required by A-REQ-MGR v1.)"],
-  "humanReviewRequired": true,
-  "limitations": ["This is an automated readiness check. It does not approve or grant access."]
+  "riskFlags": [
+    "Sensitive resource"
+  ],
+  "mapping": {
+    "status": "Matched",
+    "rowId": "A-SALES-READ",
+    "rowVersion": 1,
+    "entraGroup": "SAMPLE-GRP-ALPHA-SALES-READ",
+    "role": "SAMPLE Lakehouse Reader",
+    "roleScope": null,
+    "groupState": "Exists",
+    "groupExistsInEntra": true,
+    "explanation": "Row A-SALES-READ v1."
+  },
+  "findings": [],
+  "returnReasons": [],
+  "humanApprovalRequired": true,
+  "limitations": [
+    "The AI agent reviews and recommends only."
+  ]
 }

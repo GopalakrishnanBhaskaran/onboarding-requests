@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate review result JSON files against src/core/schema/review-result.v1.json.
+"""Validate review result JSON files against src/core/schema/review-result.v2.json.
 
 Usage:
   python3 tools/validate_result_schema.py tests/fixtures/valid-result.json
@@ -14,7 +14,7 @@ import json
 import sys
 from pathlib import Path
 
-SCHEMA = Path(__file__).resolve().parent.parent / "src" / "core" / "schema" / "review-result.v1.json"
+SCHEMA = Path(__file__).resolve().parent.parent / "src" / "core" / "schema" / "review-result.v2.json"
 
 
 def main() -> int:

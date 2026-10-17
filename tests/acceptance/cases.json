@@ -1,29 +1,167 @@
 {
-  "_comment": "Pilot acceptance catalogue. Ids map to test methods AC01_..AC24_ in tests/acceptance/AcceptanceTests.cs. gate=true marks critical gates.",
+  "_comment": "v2 onboarding flow acceptance catalogue. Ids map to test methods AC01_..AC27_ in tests/acceptance/AcceptanceTests.cs. gate=true marks critical gates.",
   "cases": [
-    { "id": "AC01", "case": "Complete request", "expected": "Completed; ReadyForHumanReview; mapping Matched; humanReviewRequired=true", "gate": false },
-    { "id": "AC02", "case": "Missing mandatory field", "expected": "NeedsInformation; MISSING_FIELD cited to pinned rule; clarification question", "gate": false },
-    { "id": "AC03", "case": "Invalid dates", "expected": "NeedsInformation; INVALID_DATES", "gate": false },
-    { "id": "AC04", "case": "Unsupported project", "expected": "ManualReviewRequired; UNSUPPORTED_PROJECT", "gate": false },
-    { "id": "AC05", "case": "Unknown / ambiguous role", "expected": "NeedsInformation; UNKNOWN_ROLE; mapping NotFound; question asks for approved role", "gate": false },
-    { "id": "AC06", "case": "Missing / expired requirement", "expected": "ManualReviewRequired; NO_PUBLISHED_REQUIREMENT; expired and draft rules not pinned", "gate": false },
-    { "id": "AC07", "case": "Conflicting mappings", "expected": "ManualReviewRequired; mapping Ambiguous; AMBIGUOUS_ROLE", "gate": false },
-    { "id": "AC08", "case": "Prompt injection", "expected": "UNTRUSTED_INSTRUCTION finding; ManualReviewRequired; text not echoed; nothing executed", "gate": true },
-    { "id": "AC09", "case": "Forged approval", "expected": "CLAIMED_APPROVAL finding; never Ready; humanReviewRequired=true", "gate": true },
-    { "id": "AC10", "case": "Unauthorized caller", "expected": "No principal -> 401; non-Entra provider -> 401; signed-in unregistered -> 404 and no data", "gate": true },
-    { "id": "AC11", "case": "Cross-project access", "expected": "Other-project user gets 404 on read/list/update/analyze/runs/decisions; no data in body; reviewer tools cannot cross projects", "gate": true },
-    { "id": "AC12", "case": "Result tampering", "expected": "No route writes result/status (405/404); forged body fields ignored; tampered result fails schema", "gate": true },
-    { "id": "AC13", "case": "Duplicate trigger", "expected": "Same run returned; one run; one completed result", "gate": false },
-    { "id": "AC14", "case": "Concurrent analysis", "expected": "Parallel Analyze calls create exactly one run", "gate": false },
-    { "id": "AC15", "case": "Edit during processing", "expected": "Run Superseded with supersededByRevision; history kept; new revision analysable", "gate": false },
-    { "id": "AC16", "case": "Timeout", "expected": "Run Failed(Timeout) within budget; operator recovers stuck run as Failed(Timeout)", "gate": false },
-    { "id": "AC17", "case": "Malformed result", "expected": "Model output not matching schema -> run Failed(MalformedResult); no partial result", "gate": false },
-    { "id": "AC18", "case": "Unsupported citation", "expected": "Unknown/wrong-version citation removed; UNSUPPORTED_CITATION; ManualReviewRequired", "gate": true },
-    { "id": "AC19", "case": "Retry", "expected": "New run linked by retryOfRunId completes; retry of completed run refused", "gate": false },
-    { "id": "AC20", "case": "Browser closure", "expected": "Caller disconnect after accept does not lose the run; run Completed", "gate": false },
-    { "id": "AC21", "case": "Gate: zero fulfilment actions", "expected": "No API route approves/grants/assigns/provisions; RuleOnly reviewer has no network dependency; QueueDispatcher/AzureOpenAI refused without paid flag", "gate": true },
-    { "id": "AC22", "case": "Gate: all seeded missing fields detected", "expected": "Each of 7 fields, when missing, yields MISSING_FIELD and never Ready", "gate": true },
-    { "id": "AC23", "case": "Gate: every citation resolves to pinned version", "expected": "Across all scenario results, every ruleId/version and mappingId/version is in the run's pinned set", "gate": true },
-    { "id": "AC24", "case": "Gate: injection and forged approval non-executable (paid model path, mocked)", "expected": "Mocked Azure OpenAI output claiming readiness or inventing mappings cannot change host readiness or mapping", "gate": true }
+    {
+      "id": "AC01",
+      "case": "Flow overview stated upfront",
+      "expected": "Submit response and notification carry the 7-step flow and who does what",
+      "gate": false
+    },
+    {
+      "id": "AC02",
+      "case": "Incomplete request rejected",
+      "expected": "400 incomplete_request listing exactly the missing fields; nothing saved",
+      "gate": true
+    },
+    {
+      "id": "AC03",
+      "case": "Domain-specific ID derived; ID/name format fixed",
+      "expected": "domainId = normalised Enterprise ID + project domain; format fixes logged",
+      "gate": false
+    },
+    {
+      "id": "AC04",
+      "case": "Review pass goes to the Owner with the AI summary",
+      "expected": "Awaiting Owner; notification to the named Owner with what, why, group, role, risk flags, review results",
+      "gate": false
+    },
+    {
+      "id": "AC05",
+      "case": "Mapping gap returned, never sent for approval",
+      "expected": "Returned to requester and PMO with specific reasons; no approval request",
+      "gate": true
+    },
+    {
+      "id": "AC06",
+      "case": "Mapping sheet checks",
+      "expected": "Duplicate/conflicting rows, deprecated row, bad group name, unflagged privileged role each FAIL with a reason",
+      "gate": false
+    },
+    {
+      "id": "AC07",
+      "case": "Response document checks",
+      "expected": "Existing duplicate and conflicting assignment FAIL",
+      "gate": false
+    },
+    {
+      "id": "AC08",
+      "case": "Risk flags recorded",
+      "expected": "Privileged, guest, existing broad access, sensitive resource flagged; review still Pass",
+      "gate": false
+    },
+    {
+      "id": "AC09",
+      "case": "Partially reviewed request never sent for approval",
+      "expected": "Entra cross-check Pending keeps the request in AI Review; no approval request",
+      "gate": true
+    },
+    {
+      "id": "AC10",
+      "case": "Unknown approver ignored, logged, Security alerted",
+      "expected": "403 not_an_approver; no approval recorded; High issue; alert to Security",
+      "gate": true
+    },
+    {
+      "id": "AC11",
+      "case": "Owner then Security, separate people",
+      "expected": "Security before Owner refused; same person refused; separate Security moves to ID team",
+      "gate": true
+    },
+    {
+      "id": "AC12",
+      "case": "Rejection captures remarks, notifies, stops",
+      "expected": "Rejected; requester and PMO notified with remarks",
+      "gate": false
+    },
+    {
+      "id": "AC13",
+      "case": "SLA reminder then escalation, never auto-approval",
+      "expected": "One reminder, one escalation; still awaiting approval",
+      "gate": true
+    },
+    {
+      "id": "AC14",
+      "case": "ID team task and TAP rules",
+      "expected": "Task has user details, groups, approved summary; TAP not one-time / too long / before membership rejected",
+      "gate": true
+    },
+    {
+      "id": "AC15",
+      "case": "TAP never accepted or stored",
+      "expected": "Body carrying a pass refused; pass appears nowhere (request, notifications, issues)",
+      "gate": true
+    },
+    {
+      "id": "AC16",
+      "case": "Different group returned to the ID team",
+      "expected": "Task Returned with the exact difference; GroupNameMismatch issue",
+      "gate": false
+    },
+    {
+      "id": "AC17",
+      "case": "Role mismatch returned to the role team",
+      "expected": "Task Returned (missing/extra role); RoleMismatch issue",
+      "gate": false
+    },
+    {
+      "id": "AC18",
+      "case": "Mapping change after review re-runs the review",
+      "expected": "mapping-changed event, new review, continues only if group and role are unchanged",
+      "gate": true
+    },
+    {
+      "id": "AC19",
+      "case": "Final verification and notifications",
+      "expected": "Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified",
+      "gate": false
+    },
+    {
+      "id": "AC20",
+      "case": "ADO work item with full trail",
+      "expected": "Work item linked to the request id; description has review, approvals, ID team, role, justification",
+      "gate": false
+    },
+    {
+      "id": "AC21",
+      "case": "Status line and time per stage",
+      "expected": "Request ID | Requester | stage | waiting on | done | next | time in stage | ADO link; wait per team",
+      "gate": false
+    },
+    {
+      "id": "AC22",
+      "case": "Auto-fix limit then Failed-Needs-Dev",
+      "expected": "At most 3 retries per step; Failed-Needs-Dev with developer report",
+      "gate": false
+    },
+    {
+      "id": "AC23",
+      "case": "Agent never approves, creates or assigns",
+      "expected": "No grant/assign/provision route; no Entra write call in source",
+      "gate": true
+    },
+    {
+      "id": "AC24",
+      "case": "Prompt injection",
+      "expected": "REQ_TEXT_CLEAN fails; text not echoed; nothing followed",
+      "gate": true
+    },
+    {
+      "id": "AC25",
+      "case": "Cross-project isolation",
+      "expected": "Other project gets 404 for view and approval",
+      "gate": true
+    },
+    {
+      "id": "AC26",
+      "case": "Daily summary with wait time per team",
+      "expected": "Once per day to Operators, PMO, Security; includes wait time per team",
+      "gate": false
+    },
+    {
+      "id": "AC27",
+      "case": "Azure OpenAI contract (mocked)",
+      "expected": "Structured JSON, temperature 0, secrets masked, 429 backoff, token usage recorded",
+      "gate": false
+    }
   ]
 }

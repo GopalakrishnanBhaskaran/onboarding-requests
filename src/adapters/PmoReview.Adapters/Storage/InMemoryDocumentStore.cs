@@ -89,12 +89,11 @@ public static class InMemoryDataStores
     /// <summary>Unique keys mirror the Cosmos container definitions in <see cref="CosmosSchema"/>.</summary>
     public static DataStores Create() => new(
         new InMemoryDocumentStore<Project>(),
-        new InMemoryDocumentStore<RequirementRule>(r => $"{r.RuleId}|{r.Version}"),
-        new InMemoryDocumentStore<RoleMapping>(m => $"{m.MappingId}|{m.Version}"),
         new InMemoryDocumentStore<AccessRequest>(),
         new InMemoryDocumentStore<ReviewRun>(r => r.IdempotencyKey),
-        new InMemoryDocumentStore<ReviewDecision>(d => $"{d.ReviewRunId}|{d.Reviewer}"),
         new InMemoryDocumentStore<UserAccess>(),
-        new InMemoryDocumentStore<Core.Handoff.EntraHandoff>(),
-        new InMemoryDocumentStore<Core.Handoff.JoinerPass>());
+        new InMemoryDocumentStore<MappingRow>(),
+        new InMemoryDocumentStore<ResponseRecord>(),
+        new InMemoryDocumentStore<Core.Workflow.Notification>(),
+        new InMemoryDocumentStore<Core.Workflow.Issue>());
 }

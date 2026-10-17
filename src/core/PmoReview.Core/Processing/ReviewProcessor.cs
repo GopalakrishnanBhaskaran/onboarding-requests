@@ -19,7 +19,7 @@ public interface IReviewDispatcher
 }
 
 /// <summary>
-/// The only code path allowed to write snapshot results, versions or status.
+/// The only code path allowed to write review results, pinned rows or run status.
 /// Queued → (claim, ETag) Running → Completed | Failed | Superseded.
 /// </summary>
 public sealed class ReviewProcessor(DataStores stores, ReviewEngine engine, IClock clock, TimeSpan budget, ILogger<ReviewProcessor> logger)
@@ -58,13 +58,14 @@ public sealed class ReviewProcessor(DataStores stores, ReviewEngine engine, IClo
             {
                 ProcessingStatus = superseded ? ProcessingStatus.Superseded : ProcessingStatus.Completed,
                 SupersededByRevision = superseded ? currentRevision : null,
-                Readiness = outcome.Result.Readiness,
+                Outcome = outcome.Result.Outcome,
                 Result = outcome.Result,
-                RuleVersions = outcome.RuleVersions,
-                MappingVersions = outcome.MappingVersions,
+                MappingRows = outcome.MappingRows,
+                SheetFingerprint = outcome.SheetFingerprint,
                 ReviewerProvider = outcome.Reviewer.Provider,
                 ReviewerVersion = outcome.Reviewer.Version,
                 PromptVersion = outcome.Reviewer.PromptVersion,
+                Usage = outcome.Usage,
                 CompletedAt = clock.UtcNow,
             };
             await CommitAsync(running, done, correlationId);
@@ -87,7 +88,7 @@ public sealed class ReviewProcessor(DataStores stores, ReviewEngine engine, IClo
         try
         {
             await stores.Runs.ReplaceAsync(final, claimed.ETag, CancellationToken.None);
-            logger.LogInformation("run {RunId} -> {Status} {Readiness} cid={CorrelationId}", final.Id, final.ProcessingStatus, final.Readiness, correlationId);
+            logger.LogInformation("run {RunId} request={RequestId} -> {Status} {Outcome} tokens={Tokens} cid={CorrelationId}", final.Id, final.RequestId, final.ProcessingStatus, final.Outcome, (final.Usage?.PromptTokens ?? 0) + (final.Usage?.CompletionTokens ?? 0), correlationId);
         }
         catch (ConcurrencyException)
         {

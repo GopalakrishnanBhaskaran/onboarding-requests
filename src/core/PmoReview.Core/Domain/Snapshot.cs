@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,19 +11,20 @@ public static class SnapshotBuilder
         RequestId = request.Id,
         ProjectId = request.ProjectId,
         Revision = request.Revision,
-        RequestType = request.RequestType,
-        Role = request.Role,
-        Environment = request.Environment,
-        Manager = request.Manager,
+        EnterpriseId = request.EnterpriseId,
+        FirstName = request.FirstName,
+        LastName = request.LastName,
+        DomainId = request.DomainId,
+        Resource = request.Resource,
+        AccessLevel = request.AccessLevel,
         Justification = request.Justification,
-        StartDate = request.StartDate,
-        EndDate = request.EndDate,
-        JoinerUpn = request.JoinerUpn,
+        Owner = request.Owner,
+        Guest = request.Guest,
         CapturedAt = capturedAt,
     };
 
     /// <summary>
-    /// SHA-256 (lowercase hex) over canonical JSON: fixed key order, ISO dates, no whitespace.
+    /// SHA-256 (lowercase hex) over canonical JSON: fixed key order, no whitespace.
     /// <see cref="RequestSnapshot.CapturedAt"/> is excluded so equal content gives equal hashes.
     /// </summary>
     public static string Hash(RequestSnapshot s)
@@ -33,18 +33,18 @@ public static class SnapshotBuilder
         using (var w = new Utf8JsonWriter(buffer))
         {
             w.WriteStartObject();
-            w.WriteString("endDate", Date(s.EndDate));
-            w.WriteString("environment", s.Environment);
-            // Written only when set, so hashes of snapshots taken before the field existed still verify.
-            if (s.JoinerUpn is not null) w.WriteString("joinerUpn", s.JoinerUpn);
+            w.WriteString("accessLevel", s.AccessLevel);
+            w.WriteString("domainId", s.DomainId);
+            w.WriteString("enterpriseId", s.EnterpriseId);
+            w.WriteString("firstName", s.FirstName);
+            w.WriteBoolean("guest", s.Guest);
             w.WriteString("justification", s.Justification);
-            w.WriteString("manager", s.Manager);
+            w.WriteString("lastName", s.LastName);
+            w.WriteString("owner", s.Owner);
             w.WriteString("projectId", s.ProjectId);
             w.WriteString("requestId", s.RequestId);
-            w.WriteString("requestType", s.RequestType);
+            w.WriteString("resource", s.Resource);
             w.WriteNumber("revision", s.Revision);
-            w.WriteString("role", s.Role);
-            w.WriteString("startDate", Date(s.StartDate));
             w.WriteEndObject();
         }
         return Convert.ToHexStringLower(SHA256.HashData(buffer.ToArray()));
@@ -52,6 +52,4 @@ public static class SnapshotBuilder
 
     public static bool Verify(RequestSnapshot s, string hash) =>
         CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Hash(s)), Encoding.ASCII.GetBytes(hash));
-
-    private static string? Date(DateOnly? d) => d?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 }

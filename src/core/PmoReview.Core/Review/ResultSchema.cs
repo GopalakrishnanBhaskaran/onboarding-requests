@@ -5,7 +5,7 @@ using CoreJson = PmoReview.Core.Common.AppJson;
 
 namespace PmoReview.Core.Review;
 
-/// <summary>Server-side validation against <c>src/core/schema/review-result.v1.json</c>.</summary>
+/// <summary>Server-side validation against <c>src/core/schema/review-result.v2.json</c>.</summary>
 public static class ResultSchema
 {
     private static readonly Lazy<JsonSchema> Schema = new(Load);
@@ -44,7 +44,7 @@ public static class ResultSchema
 
     private static string ReadResource()
     {
-        using var stream = typeof(ResultSchema).Assembly.GetManifestResourceStream("review-result.v1.json")
+        using var stream = typeof(ResultSchema).Assembly.GetManifestResourceStream("review-result.v2.json")
                            ?? throw new InvalidOperationException("Embedded schema missing.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();

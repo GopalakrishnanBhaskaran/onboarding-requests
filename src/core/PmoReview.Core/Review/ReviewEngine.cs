@@ -1,37 +1,56 @@
+using PmoReview.Core.Common;
+using PmoReview.Core.Directory;
 using PmoReview.Core.Domain;
+using PmoReview.Core.Sources;
 using PmoReview.Core.Storage;
 
 namespace PmoReview.Core.Review;
 
 public sealed record EngineOutcome(
     ReviewResult Result,
-    IReadOnlyList<PinnedVersion> RuleVersions,
-    IReadOnlyList<PinnedVersion> MappingVersions,
-    ReviewerInfo Reviewer);
+    IReadOnlyList<PinnedVersion> MappingRows,
+    string SheetFingerprint,
+    ReviewerInfo Reviewer,
+    TokenUsage? Usage);
 
 /// <summary>
-/// Bounded review: deterministic checks → host mapping check → reviewer (RuleOnly or model) →
-/// host validation → schema validation. The reviewer never decides readiness.
+/// Stage 2, the mandatory gate before any approval request: read the mapping sheet and the response document fresh,
+/// run the host checks (with the read-only Entra cross-check when a directory reader is available), let the reviewer
+/// add concerns, then compute the outcome and validate the result against the schema.
 /// </summary>
-public sealed class ReviewEngine(DataStores stores, IReviewModel model, ReviewLimits limits)
+public sealed class ReviewEngine(DataStores stores, ISourcesOfTruth sources, IReviewModel model, ReviewLimits limits, ReviewPolicy policy,
+    IDirectoryReader? directory = null, bool skipEntraLocalDev = false)
 {
     public ReviewerInfo Reviewer => model.Info;
 
+    /// <summary>False in the SWA-managed API (no managed identity): the Entra checks stay Pending until the worker runs them.</summary>
+    public bool CanCrossCheck => directory is not null;
+
     public async Task<EngineOutcome> RunAsync(RequestSnapshot snapshot, string reviewRunId, CancellationToken ct)
     {
-        var tools = new ReviewTools(stores, snapshot.ProjectId);
-        var project = (await stores.Projects.GetAsync(snapshot.ProjectId, snapshot.ProjectId, ct))?.Value;
-        var effectiveDate = snapshot.StartDate ?? DateOnly.FromDateTime(snapshot.CapturedAt.UtcDateTime);
+        Project? project;
+        IReadOnlyList<MappingRow> sheet;
+        IReadOnlyList<ResponseRecord> responses;
+        try
+        {
+            project = (await stores.Projects.GetAsync(snapshot.ProjectId, snapshot.ProjectId, ct))?.Value;
+            sheet = await sources.ReadMappingSheetAsync(snapshot.ProjectId, ct);
+            responses = await sources.ReadResponseDocumentAsync(snapshot.ProjectId, ct);
+        }
+        catch (SourceUnavailableException e)
+        {
+            throw new ReviewFailedException(ErrorCategory.DependencyUnavailable, $"{e.SourceName} unavailable.", e);
+        }
 
-        var deterministic = await DeterministicChecks.RunAsync(snapshot, project, effectiveDate, tools, ct);
-        var (mapping, mappingFindings) = await AssessMappingAsync(snapshot, project, effectiveDate, tools, ct);
-        var hostFindings = deterministic.Findings.Concat(mappingFindings).ToList();
+        var match = ReviewChecks.Match(snapshot, sheet);
+        var entra = await CrossCheckAsync(snapshot, match.Row, ct);
+        var host = ReviewChecks.Evaluate(snapshot, project, sheet, responses, match, entra, policy, skipEntraLocalDev && directory is null);
 
         ModelReview review;
         using (var budget = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
             budget.CancelAfter(limits.TimeBudget);
-            var context = new ReviewContext(snapshot, reviewRunId, effectiveDate, hostFindings, new BoundedToolset(tools, limits.MaxToolCalls));
+            var context = new ReviewContext(snapshot, reviewRunId, host.Checks, host.RiskFlags, host.Mapping, host.UserRecords);
             try
             {
                 review = await model.ReviewAsync(context, limits, budget.Token);
@@ -44,38 +63,30 @@ public sealed class ReviewEngine(DataStores stores, IReviewModel model, ReviewLi
             {
                 throw;
             }
-            catch (ToolBudgetExceededException e)
-            {
-                throw new ReviewFailedException(ErrorCategory.MalformedResult, "Reviewer exceeded its tool budget.", e);
-            }
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 throw new ReviewFailedException(ErrorCategory.DependencyUnavailable, "Reviewer failed.", e);
             }
         }
 
-        var result = ResultAssembler.Assemble(reviewRunId, snapshot, deterministic, hostFindings, mapping, review, tools);
+        var result = ResultAssembler.Assemble(reviewRunId, snapshot, host, review);
         ResultSchema.EnsureValid(result);
-        return new EngineOutcome(result, tools.PinnedRules, tools.PinnedMappings, model.Info);
+        var pinned = match.ResourceRows.Select(r => new PinnedVersion(r.RowId, r.Version)).ToList();
+        return new EngineOutcome(result, pinned, MappingSheet.Fingerprint(sheet, snapshot.Resource), model.Info, review.Usage);
     }
 
-    /// <summary>Host-computed mapping status from pinned, published mappings only.</summary>
-    public static async Task<(MappingAssessment, IReadOnlyList<Finding>)> AssessMappingAsync(
-        RequestSnapshot s, Project? project, DateOnly effectiveDate, IReviewToolset tools, CancellationToken ct)
+    private async Task<CrossCheck?> CrossCheckAsync(RequestSnapshot s, MappingRow? row, CancellationToken ct)
     {
-        if (project is null || string.IsNullOrWhiteSpace(s.Role) || string.IsNullOrWhiteSpace(s.Environment))
+        if (directory is null || row is null) return null;
+        try
         {
-            return (new MappingAssessment { Status = MappingStatus.NotApplicable, Explanation = "Mapping not assessed: project, role or environment is missing or unsupported." }, []);
+            var groups = await directory.FindGroupsAsync(row.EntraGroup, ct);
+            var user = string.IsNullOrWhiteSpace(s.DomainId) ? null : await directory.FindUserAsync(s.DomainId, ct);
+            return new CrossCheck(groups, user, null);
         }
-
-        var matches = await tools.GetApprovedRoleMappingAsync(s.ProjectId, s.Role, s.Environment, effectiveDate, ct);
-        return matches.Count switch
+        catch (DirectoryReadException e)
         {
-            0 => (new MappingAssessment { Status = MappingStatus.NotFound, Explanation = $"No published role mapping is in effect for this business role and environment on {effectiveDate:yyyy-MM-dd}." },
-                [new Finding { Code = FindingCodes.UnknownRole, Field = "role", Severity = FindingSeverity.Blocking, Message = "Business role has no approved mapping for the requested environment." }]),
-            1 => (new MappingAssessment { Status = MappingStatus.Matched, MappingId = matches[0].MappingId, MappingVersion = matches[0].Version, Explanation = $"Matches published mapping {matches[0].MappingId} v{matches[0].Version} ({matches[0].SourceReference})." }, []),
-            _ => (new MappingAssessment { Status = MappingStatus.Ambiguous, Explanation = $"{matches.Count} published mappings match ({string.Join(", ", matches.Select(m => $"{m.MappingId} v{m.Version}"))}). A human must decide which applies." },
-                [new Finding { Code = FindingCodes.AmbiguousRole, Field = "role", Severity = FindingSeverity.Blocking, Message = "More than one published mapping matches this role and environment." }]),
-        };
+            return new CrossCheck([], null, e.Category);
+        }
     }
 }

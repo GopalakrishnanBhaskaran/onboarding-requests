@@ -6,9 +6,20 @@
     "ALLOW_PAID_SERVICES": "true",
     "COSMOS_ENDPOINT": "https://<cosmos-account>.documents.azure.com:443/",
     "COSMOS_DATABASE": "pmoreview",
-    "HANDOFF_SYNC_SCHEDULE": "0 */5 * * * *",
-    "ENTRA_AUTO_ASSIGN": "false",
-    "ENTRA_ALLOWED_CATALOG_ID": "<pmo-catalog-guid>",
-    "ENTRA_AUTO_ASSIGN_POLICY": "PMO Review auto-assign"
+    "WORKFLOW_SCHEDULE": "0 */5 * * * *",
+    "REVIEW_MODEL_PROVIDER": "RuleOnly",
+    "ROLE_READER": "None",
+    "NOTIFY_SENDER": "Outbox",
+    "NOTIFY_FROM": "",
+    "ADO_ORG_URL": "",
+    "ADO_PROJECT": "",
+    "TAP_MAX_LIFETIME_MINUTES": "60",
+    "OWNER_SLA_HOURS": "24",
+    "SECURITY_SLA_HOURS": "24",
+    "ID_TEAM_SLA_HOURS": "24",
+    "ROLE_TEAM_SLA_HOURS": "24",
+    "VERIFY_SLA_HOURS": "72",
+    "DAILY_SUMMARY_HOUR_UTC": "6",
+    "APP_URL": "https://<your-app>.azurestaticapps.net"
   }
 }

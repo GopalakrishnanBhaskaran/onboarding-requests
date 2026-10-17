@@ -2,24 +2,28 @@ using System.Text.Json.Serialization;
 
 namespace PmoReview.Core.Domain;
 
-/// <summary>Frozen copy of a request at Analyze time. Hash covers every field except <see cref="CapturedAt"/>.</summary>
+/// <summary>Frozen copy of a request at review time. Hash covers every field except <see cref="CapturedAt"/>.</summary>
 public sealed record RequestSnapshot
 {
     public required string RequestId { get; init; }
     public required string ProjectId { get; init; }
     public required int Revision { get; init; }
-    public string? RequestType { get; init; }
-    public string? Role { get; init; }
-    public string? Environment { get; init; }
-    public string? Manager { get; init; }
+    public string? EnterpriseId { get; init; }
+    public string? FirstName { get; init; }
+    public string? LastName { get; init; }
+    public string? DomainId { get; init; }
+    public string? Resource { get; init; }
+    public string? AccessLevel { get; init; }
     public string? Justification { get; init; }
-    public DateOnly? StartDate { get; init; }
-    public DateOnly? EndDate { get; init; }
-    public string? JoinerUpn { get; init; }
+    public string? Owner { get; init; }
+    public bool Guest { get; init; }
     public required DateTimeOffset CapturedAt { get; init; }
 }
 
 public sealed record PinnedVersion(string Id, int Version);
+
+/// <summary>Model token usage for one run (cost tracking). Null for the rule-only reviewer.</summary>
+public sealed record TokenUsage(int PromptTokens, int CompletionTokens, int Calls);
 
 public sealed record ReviewRun : IDocument
 {
@@ -31,13 +35,16 @@ public sealed record ReviewRun : IDocument
     public required int RequestRevision { get; init; }
     public required string InitiatedBy { get; init; }
     public required ProcessingStatus ProcessingStatus { get; init; }
-    public Readiness? Readiness { get; init; }
-    public IReadOnlyList<PinnedVersion> RuleVersions { get; init; } = [];
-    public IReadOnlyList<PinnedVersion> MappingVersions { get; init; } = [];
+    public ReviewOutcome? Outcome { get; init; }
+    /// <summary>Mapping rows (id + version) the review read for this resource.</summary>
+    public IReadOnlyList<PinnedVersion> MappingRows { get; init; } = [];
+    /// <summary>Fingerprint of the mapping-sheet rows for the requested resource at review time.</summary>
+    public string? SheetFingerprint { get; init; }
     public required string ReviewerProvider { get; init; }
     public required string ReviewerVersion { get; init; }
     /// <summary>Null for RuleOnly.</summary>
     public string? PromptVersion { get; init; }
+    public TokenUsage? Usage { get; init; }
     public Review.ReviewResult? Result { get; init; }
     public required string CorrelationId { get; init; }
     public required DateTimeOffset QueuedAt { get; init; }
@@ -49,6 +56,8 @@ public sealed record ReviewRun : IDocument
     public required string IdempotencyKey { get; init; }
     /// <summary>Request revision seen at commit time when the run was superseded.</summary>
     public int? SupersededByRevision { get; init; }
-    public int SchemaVersion { get; init; } = 1;
+    /// <summary>Why the run was started (submit, resubmit, mapping-changed, retry, operator).</summary>
+    public string? Trigger { get; init; }
+    public int SchemaVersion { get; init; } = 2;
     [JsonIgnore] public string PartitionKey => ProjectId;
 }

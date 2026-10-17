@@ -1,0 +1,452 @@
+using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using PmoReview.Core.Common;
+using PmoReview.Core.Domain;
+using PmoReview.Core.Http;
+using PmoReview.Core.Security;
+using PmoReview.Core.Services;
+using PmoReview.Core.Sources;
+using PmoReview.Core.Storage;
+
+namespace PmoReview.Core.Workflow;
+
+public sealed record ApprovalInput(ApprovalStage? Stage, ApprovalDecision? Decision, string? Remarks, string? ReviewRunId);
+
+public sealed record TapInput(DateTimeOffset? IssuedAt, DateTimeOffset? ExpiresAt, bool? OneTime, string? IssuedBy);
+
+public sealed record IdTeamReportInput
+{
+    public string? UserPrincipalName { get; init; }
+    public string? UserObjectId { get; init; }
+    public string? GroupName { get; init; }
+    public string? GroupObjectId { get; init; }
+    public bool? UserCreated { get; init; }
+    public bool? GroupCreated { get; init; }
+    public bool? AddedToGroup { get; init; }
+    public bool? MappingSheetUpdated { get; init; }
+    /// <summary>Metadata only. There is no field for the pass itself.</summary>
+    public TapInput? Tap { get; init; }
+    public string? Notes { get; init; }
+}
+
+public sealed record AssignedRoleInput(string? Role, string? Scope);
+
+public sealed record RoleTeamReportInput(IReadOnlyList<AssignedRoleInput>? AssignedRoles, string? Notes);
+
+/// <summary>What the caller can do on this request right now (computed server-side; the UI only shows it).</summary>
+public sealed record RequestView(
+    Item<AccessRequest> Request,
+    StatusLine Status,
+    Timings Timings,
+    IReadOnlyList<string> Actions,
+    IReadOnlyList<Notification> Notifications,
+    IReadOnlyList<Issue> Issues,
+    IReadOnlyList<string> FlowOverview,
+    string WhoDoesWhat);
+
+public sealed record ActionItem(StatusLine Status, string Action);
+
+public static class Actions
+{
+    public const string ApproveOwner = "ApproveOwner";
+    public const string ApproveSecurity = "ApproveSecurity";
+    public const string IdTeamTask = "IdTeamTask";
+    public const string RoleTeamTask = "RoleTeamTask";
+    public const string Resubmit = "Resubmit";
+}
+
+/// <summary>
+/// The human side of the flow: submit, Owner and Security approvals, team actions, and the status views. Every action
+/// is authorised from the platform identity, tied to the request id, and followed by an agent step.
+/// </summary>
+public sealed partial class WorkflowService(
+    DataStores stores,
+    RequestService requests,
+    WorkflowAgent agent,
+    ISourcesOfTruth sources,
+    Notifier notifier,
+    IssueLog issues,
+    WorkflowSettings settings,
+    IClock clock,
+    ILogger<WorkflowService> logger)
+{
+    // ---- Stage 1 ------------------------------------------------------------------------------------------------
+
+    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct)
+    {
+        var created = await requests.CreateAsync(caller, projectId, input, ct);
+        await agent.AdvanceAsync(projectId, created.Value.Id, cid, ct);
+        return await ViewAsync(caller, projectId, created.Value.Id, ct);
+    }
+
+    public async Task<RequestView> ResubmitAsync(CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, string cid, CancellationToken ct)
+    {
+        await requests.ResubmitAsync(caller, projectId, requestId, input, ifMatch, ct);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    // ---- Stage 3: approvals -------------------------------------------------------------------------------------
+
+    public async Task<RequestView> ApproveAsync(CallerContext caller, string projectId, string requestId, ApprovalInput input, string cid, CancellationToken ct)
+    {
+        if (!caller.InProject(projectId))
+        {
+            logger.LogWarning("approval attempt without project access request={RequestId} user={UserId}", requestId, caller.UserId);
+            throw AppException.NotFound("Project");
+        }
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var r = current.Value;
+        var flow = r.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request; it has no approval stage.");
+        var stage = flow.Status switch
+        {
+            RequestStatus.AwaitingOwner => ApprovalStage.Owner,
+            RequestStatus.AwaitingSecurity => ApprovalStage.Security,
+            _ => throw AppException.Conflict("not_awaiting_approval", $"The request is {StatusText.Label(flow.Status)}; no approval is pending."),
+        };
+        if (input.Stage is { } asked && asked != stage)
+            throw AppException.Conflict("wrong_stage", $"The request is waiting for the {stage} approval, not {asked}.");
+
+        var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
+        var authorized = stage == ApprovalStage.Owner
+            ? caller.Has(projectId, Permission.ApproveAsOwner) && caller.Is(r.Owner)
+            : caller.Has(projectId, Permission.ApproveAsSecurity);
+        if (!authorized)
+        {
+            // Nobody else approves: ignore it, log it and alert Security.
+            var step = $"unauthorized-approval:{caller.UserId}:{stage}:{flow.Scope?.ReviewRunId}";
+            await issues.RecordAsync(projectId, requestId, step, IssueKind.UnauthorizedApproval, IssueSeverity.High,
+                $"{caller.DisplayName} (not {(stage == ApprovalStage.Owner ? "the named Owner" : "a Security approver")}) tried to respond at the {stage} stage. Ignored.", null, ct);
+            var (subject, body) = Messages.SecurityAlert(r, caller.DisplayName, caller.UserId, stage, clock.UtcNow);
+            await notifier.EnqueueAsync(projectId, requestId, step, NotificationKind.SecurityAlert, Recipients.Security(project), subject, body, ct);
+            throw new AppException(ErrorKind.Forbidden, "not_an_approver",
+                $"Your response was not counted: only {(stage == ApprovalStage.Owner ? "the Owner named on the request" : "a Security approver")} can approve at this stage. Security has been alerted.");
+        }
+
+        var decision = input.Decision ?? throw AppException.Invalid("decision is required (Approved or Rejected).");
+        var remarks = SecretMasker.Apply(RequestService.Text(input.Remarks, "remarks", 1000));
+        if (decision == ApprovalDecision.Rejected && remarks is null) throw AppException.Invalid("Remarks are required when rejecting.");
+        if (flow.Scope is null || input.ReviewRunId != flow.Scope.ReviewRunId)
+            throw AppException.Conflict("stale_review", "The AI review changed since you opened this page. Refresh and read the current summary before deciding.");
+        if (stage == ApprovalStage.Security && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
+            throw AppException.Conflict("same_approver", "You gave the Owner approval. The Security approval must come from a different person.");
+
+        // Mapping sheet changed after the AI review: re-run the review before continuing.
+        var sheet = await sources.ReadMappingSheetAsync(projectId, ct);
+        if (MappingSheet.Fingerprint(sheet, r.Resource) != flow.Scope.SheetFingerprint)
+        {
+            await agent.AdvanceAsync(projectId, requestId, cid, ct);
+            throw AppException.Conflict("mapping_changed", "The mapping sheet changed after the AI review. The review is being re-run; your response was not recorded. Refresh and read the new summary.");
+        }
+
+        var now = clock.UtcNow;
+        var approval = new Approval
+        {
+            Stage = stage, Decision = decision, By = caller.UserId, ByName = caller.DisplayName, At = now, Remarks = remarks, ReviewRunId = flow.Scope.ReviewRunId,
+        };
+        var next = flow with { Approvals = [.. flow.Approvals, approval] };
+        var effects = new List<Func<CancellationToken, Task>>();
+        Func<ResponseRecord, ResponseRecord> record;
+
+        if (decision == ApprovalDecision.Rejected)
+        {
+            next = (next with { LastReason = remarks })
+                .To(RequestStatus.Rejected, WaitingOn.None, now, caller.UserId, $"{stage.ToString().ToLowerInvariant()}-rejected", $"Rejected by {stage}: {remarks}");
+            record = x => x with { State = ResponseState.Rejected };
+            var (subject, body) = Messages.Rejected(r, approval, settings);
+            effects.Add(c => notifier.EnqueueAsync(projectId, requestId, $"rejected:{stage}", NotificationKind.Rejected,
+                Recipients.Requester(r).Concat(Recipients.Pmo(project)), subject, body, c));
+        }
+        else if (stage == ApprovalStage.Owner)
+        {
+            next = next.To(RequestStatus.AwaitingSecurity, WaitingOn.Security, now, caller.UserId, "owner-approved", "Owner approved the business need. Sent to Security.");
+            record = x => x with { OwnerApprovedBy = caller.DisplayName, OwnerApprovedAt = now };
+            var withApproval = next;
+            effects.Add(c => agent.AskApprovalAsync(r, ApprovalStage.Security, flow.Scope, withApproval, project, c));
+        }
+        else
+        {
+            var task = agent.NewIdTeamTask(r, next);
+            next = (next with { IdTeamTask = task })
+                .Log(now, WorkflowState.AgentActor, "id-team-task", "ID team task created.")
+                .To(RequestStatus.WithIdTeam, WaitingOn.IdTeam, now, caller.UserId, "security-approved", "Security approved risk and access level. Sent to the ID team.");
+            record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now, State = ResponseState.Approved };
+            var (subject, body) = Messages.TeamTask(r, task, settings);
+            effects.Add(c => notifier.EnqueueAsync(projectId, requestId, task.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c));
+        }
+
+        await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
+        await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, ct);
+        foreach (var e in effects) await e(ct);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    // ---- Stages 4 and 5: team actions ---------------------------------------------------------------------------
+
+    public static AppRole TeamFromRoute(string team) => team switch
+    {
+        "id-team" => AppRole.IdTeam,
+        "role-team" => AppRole.RoleTeam,
+        _ => throw AppException.NotFound("Team"),
+    };
+
+    public async Task<RequestView> PickUpAsync(CallerContext caller, string projectId, string requestId, AppRole team, CancellationToken ct)
+    {
+        caller.Require(projectId, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var (flow, task) = OpenTask(current.Value, team);
+        if (task.PickedUpAt is null)
+        {
+            var now = clock.UtcNow;
+            var picked = task with { PickedUpAt = now, PickedUpBy = caller.DisplayName };
+            var next = (team == AppRole.IdTeam ? flow with { IdTeamTask = picked } : flow with { RoleTeamTask = picked })
+                .Log(now, caller.UserId, $"{Route(team)}-picked-up", $"{Messages.Team(team)} picked up the task ({caller.DisplayName}).");
+            await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
+        }
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    public async Task<RequestView> ReportIdTeamAsync(CallerContext caller, string projectId, string requestId, IdTeamReportInput input, string cid, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.WorkIdTeamTasks);
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var (flow, task) = OpenTask(current.Value, AppRole.IdTeam);
+        var now = clock.UtcNow;
+
+        var upn = RequestService.Text(input.UserPrincipalName, "userPrincipalName", 200) ?? throw AppException.Invalid("userPrincipalName is required.");
+        if (!SignIn().IsMatch(upn)) throw AppException.Invalid("userPrincipalName must be a sign-in name.");
+        var group = RequestService.Text(input.GroupName, "groupName", 256) ?? throw AppException.Invalid("groupName is required.");
+        var added = input.AddedToGroup ?? false;
+        TapRecord? tap = null;
+        if (input.Tap is { } t)
+        {
+            // TAP rules: after all approvals and group membership; one-time; shortest lifetime. Metadata only.
+            var issued = t.IssuedAt ?? throw AppException.Invalid("tap.issuedAt is required.");
+            var expires = t.ExpiresAt ?? throw AppException.Invalid("tap.expiresAt is required.");
+            if (issued > now.AddMinutes(5)) throw AppException.Invalid("tap.issuedAt is in the future.");
+            if (expires <= issued) throw AppException.Invalid("tap.expiresAt must be after tap.issuedAt.");
+            if (t.OneTime != true) throw AppException.Invalid("The Temporary Access Pass must be one-time use.");
+            if ((expires - issued).TotalMinutes > settings.TapMaxLifetimeMinutes)
+                throw AppException.Invalid($"Use the shortest lifetime: at most {settings.TapMaxLifetimeMinutes} minutes.");
+            var security = flow.CurrentApproval(ApprovalStage.Security);
+            if (security is null || issued < security.At) throw AppException.Invalid("The Temporary Access Pass was issued before all approvals were complete.");
+            if (!added) throw AppException.Invalid("Issue the Temporary Access Pass only after the user is added to the group.");
+            var by = SecretMasker.Apply(RequestService.Text(t.IssuedBy, "tap.issuedBy", 200)) ?? caller.DisplayName;
+            tap = new TapRecord(issued, expires, true, by, now);
+        }
+        if (input.UserCreated == true && tap is null)
+            throw AppException.Invalid("A new account needs a one-time Temporary Access Pass for the first sign-in. Record its metadata (issued, expiry, one-time, issued by) — never the pass.");
+
+        var report = new IdTeamReport
+        {
+            UserPrincipalName = upn.ToLowerInvariant(),
+            UserObjectId = Guid(input.UserObjectId, "userObjectId"),
+            GroupName = group,
+            GroupObjectId = Guid(input.GroupObjectId, "groupObjectId"),
+            UserCreated = input.UserCreated ?? false,
+            GroupCreated = input.GroupCreated ?? false,
+            AddedToGroup = added,
+            MappingSheetUpdated = input.MappingSheetUpdated ?? false,
+            Tap = tap,
+            Notes = SecretMasker.Apply(RequestService.Text(input.Notes, "notes", 1000)),
+        };
+        var reported = task with
+        {
+            State = TeamTaskState.Reported, ReportedAt = now, ReportedBy = caller.DisplayName, IdReport = report,
+            PickedUpAt = task.PickedUpAt ?? now, PickedUpBy = task.PickedUpBy ?? caller.DisplayName,
+        };
+        var next = (flow with { IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
+            .Log(now, caller.UserId, "id-team-reported", tap is null ? "ID team recorded completion." : "ID team recorded completion and TAP metadata (issued, expiry, one-time, issued-by).");
+        await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    public async Task<RequestView> ReportRoleTeamAsync(CallerContext caller, string projectId, string requestId, RoleTeamReportInput input, string cid, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.WorkRoleTeamTasks);
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var (flow, task) = OpenTask(current.Value, AppRole.RoleTeam);
+        var roles = (input.AssignedRoles ?? [])
+            .Select(a => new AssignedRole(
+                RequestService.Text(a.Role, "role", 200) ?? throw AppException.Invalid("Each assigned role needs a role name."),
+                RequestService.Text(a.Scope, "scope", 500)))
+            .ToList();
+        if (roles.Count == 0) throw AppException.Invalid("assignedRoles is required: list exactly what you assigned.");
+        var now = clock.UtcNow;
+
+        // The role assignment team updates the response document (through this form).
+        await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, x => x with
+        {
+            AssignedRoles = roles, State = ResponseState.Assigned, AssignedBy = caller.DisplayName, AssignedAt = now,
+        }, ct);
+
+        var reported = task with
+        {
+            State = TeamTaskState.Reported, ReportedAt = now, ReportedBy = caller.DisplayName,
+            RoleReport = new RoleTeamReport { AssignedRoles = roles, Notes = SecretMasker.Apply(RequestService.Text(input.Notes, "notes", 1000)) },
+            PickedUpAt = task.PickedUpAt ?? now, PickedUpBy = task.PickedUpBy ?? caller.DisplayName,
+        };
+        var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
+            .Log(now, caller.UserId, "role-team-reported", "Role assignment team recorded the assignment and updated the response document.");
+        await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    /// <summary>Operator: run the agent step for one request now (e.g. without the background worker).</summary>
+    public async Task<RequestView> AdvanceAsync(CallerContext caller, string projectId, string requestId, string cid, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.RecoverRuns);
+        await requests.LoadAsync(projectId, requestId, ct);
+        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
+    // ---- Views --------------------------------------------------------------------------------------------------
+
+    public async Task<RequestView> ViewAsync(CallerContext caller, string projectId, string requestId, CancellationToken ct)
+    {
+        var current = await requests.GetAsync(caller, projectId, requestId, ct);
+        var r = current.Value;
+        var now = clock.UtcNow;
+        var issueList = caller.Has(projectId, Permission.ViewIssues)
+            ? (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).Where(i => i.RequestId == requestId).OrderByDescending(i => i.LastSeenAt).ToList()
+            : [];
+        return new RequestView(Endpoints.ToItem(current), Reports.StatusLine(r, now), Reports.Timings(r, now), ActionsFor(caller, r),
+            await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhat);
+    }
+
+    public async Task<IReadOnlyList<StatusLine>> ListAsync(CallerContext caller, string projectId, CancellationToken ct)
+    {
+        var now = clock.UtcNow;
+        return (await requests.ListAsync(caller, projectId, ct)).Select(r => Reports.StatusLine(r.Value, now)).ToList();
+    }
+
+    /// <summary>Everything waiting on the caller across their projects.</summary>
+    public async Task<IReadOnlyList<ActionItem>> MyActionsAsync(CallerContext caller, CancellationToken ct)
+    {
+        var now = clock.UtcNow;
+        var items = new List<ActionItem>();
+        foreach (var projectId in caller.ProjectsWith(Permission.ViewRequests))
+            foreach (var r in await stores.Requests.ListAsync(projectId, ct))
+                foreach (var action in ActionsFor(caller, r.Value))
+                    items.Add(new ActionItem(Reports.StatusLine(r.Value, now), action));
+        return items.OrderBy(i => i.Status.UpdatedAt).ToList();
+    }
+
+    public async Task<string> TrailAsync(CallerContext caller, string projectId, string requestId, CancellationToken ct)
+    {
+        var r = (await requests.GetAsync(caller, projectId, requestId, ct)).Value;
+        var runs = (await stores.Runs.ListAsync(projectId, ct)).Select(x => x.Value).Where(x => x.RequestId == requestId).ToList();
+        var notes = await notifier.ForRequestAsync(projectId, requestId, ct);
+        var issueList = caller.Has(projectId, Permission.ViewIssues)
+            ? (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).Where(i => i.RequestId == requestId).ToList()
+            : [];
+        return Reports.Trail(r, runs, notes, issueList, clock.UtcNow);
+    }
+
+    public async Task<IReadOnlyList<Issue>> IssuesAsync(CallerContext caller, string projectId, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.ViewIssues);
+        return (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).OrderByDescending(i => i.LastSeenAt).ToList();
+    }
+
+    public async Task<DailySummary> DailyAsync(CallerContext caller, string projectId, DateOnly date, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.ViewReports);
+        var all = (await stores.Requests.ListAsync(projectId, ct)).Select(r => r.Value).ToList();
+        var issueList = (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).ToList();
+        return Reports.Daily(projectId, date, all, issueList, clock.UtcNow);
+    }
+
+    public async Task<DeveloperReport> DeveloperAsync(CallerContext caller, string projectId, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.ViewReports);
+        var all = (await stores.Requests.ListAsync(projectId, ct)).Select(r => r.Value).ToList();
+        var issueList = (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).ToList();
+        return Reports.Developer(projectId, all, issueList, clock.UtcNow);
+    }
+
+    public static IReadOnlyList<string> ActionsFor(CallerContext caller, AccessRequest r)
+    {
+        var f = r.Flow;
+        if (f is null) return [];
+        var p = r.ProjectId;
+        var list = new List<string>();
+        if (f.Status == RequestStatus.AwaitingOwner && caller.Has(p, Permission.ApproveAsOwner) && caller.Is(r.Owner)) list.Add(Actions.ApproveOwner);
+        if (f.Status == RequestStatus.AwaitingSecurity && caller.Has(p, Permission.ApproveAsSecurity) && f.CurrentApproval(ApprovalStage.Owner)?.By != caller.UserId)
+            list.Add(Actions.ApproveSecurity);
+        if (f.Status == RequestStatus.WithIdTeam && f.IdTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkIdTeamTasks))
+            list.Add(Actions.IdTeamTask);
+        if (f.Status == RequestStatus.WithRoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkRoleTeamTasks))
+            list.Add(Actions.RoleTeamTask);
+        if (f.Status == RequestStatus.Returned && caller.Has(p, Permission.SubmitRequests)) list.Add(Actions.Resubmit);
+        return list;
+    }
+
+    // ---- helpers ------------------------------------------------------------------------------------------------
+
+    private static (WorkflowState Flow, TeamTask Task) OpenTask(AccessRequest r, AppRole team)
+    {
+        var flow = r.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request; it has no team tasks.");
+        var expected = team == AppRole.IdTeam ? RequestStatus.WithIdTeam : RequestStatus.WithRoleTeam;
+        var task = team == AppRole.IdTeam ? flow.IdTeamTask : flow.RoleTeamTask;
+        if (flow.Status != expected || task is null)
+            throw AppException.Conflict("no_open_task", $"The request is {StatusText.Label(flow.Status)}; there is no open {Messages.Team(team)} task.");
+        if (task.State is not (TeamTaskState.Open or TeamTaskState.Returned))
+            throw AppException.Conflict("task_not_open", $"The {Messages.Team(team)} task is {task.State}{(task.State == TeamTaskState.Reported ? "; the AI agent is verifying it" : "")}.");
+        return (flow, task);
+    }
+
+    private static string Route(AppRole team) => team == AppRole.IdTeam ? "id-team" : "role-team";
+
+    private async Task SaveAsync(Versioned<AccessRequest> current, AccessRequest next, CancellationToken ct)
+    {
+        try
+        {
+            await stores.Requests.ReplaceAsync(next, current.ETag, ct);
+        }
+        catch (ConcurrencyException)
+        {
+            throw AppException.Stale();
+        }
+    }
+
+    private async Task UpdateResponseRecordAsync(string projectId, string requestId, string userId, Func<ResponseRecord, ResponseRecord> change, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var existing = await stores.ResponseDocument.GetAsync(projectId, requestId, ct);
+            if (existing is null)
+            {
+                logger.LogWarning("response record missing request={RequestId}", requestId);
+                return;
+            }
+            try
+            {
+                await stores.ResponseDocument.ReplaceAsync(change(existing.Value) with
+                {
+                    UpdatedBy = userId, UpdatedAt = clock.UtcNow, Version = existing.Value.Version + 1,
+                }, existing.ETag, ct);
+                return;
+            }
+            catch (ConcurrencyException)
+            {
+                // Changed meanwhile; re-read and apply again.
+            }
+        }
+        throw AppException.Stale();
+    }
+
+    private static string? Guid(string? value, string field)
+    {
+        var v = RequestService.Text(value, field, 64);
+        if (v is null) return null;
+        return System.Guid.TryParse(v, out var g) ? g.ToString("D") : throw AppException.Invalid($"{field} must be an Entra object id (GUID).");
+    }
+
+    [GeneratedRegex("^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
+    private static partial Regex SignIn();
+}

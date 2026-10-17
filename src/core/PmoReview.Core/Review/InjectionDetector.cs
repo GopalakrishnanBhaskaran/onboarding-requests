@@ -4,29 +4,16 @@ namespace PmoReview.Core.Review;
 
 public static class FindingCodes
 {
-    public const string MissingField = "MISSING_FIELD";
-    public const string InvalidDates = "INVALID_DATES";
-    public const string UnsupportedProject = "UNSUPPORTED_PROJECT";
-    public const string UnsupportedRequestType = "UNSUPPORTED_REQUEST_TYPE";
-    public const string UnsupportedEnvironment = "UNSUPPORTED_ENVIRONMENT";
-    public const string NoPublishedRequirement = "NO_PUBLISHED_REQUIREMENT";
-    public const string RuleNotMet = "RULE_NOT_MET";
-    public const string UnknownRole = "UNKNOWN_ROLE";
-    public const string AmbiguousRole = "AMBIGUOUS_ROLE";
     public const string UntrustedInstruction = "UNTRUSTED_INSTRUCTION";
     public const string ClaimedApproval = "CLAIMED_APPROVAL";
-    public const string UnsupportedCitation = "UNSUPPORTED_CITATION";
-    public const string ToolScopeViolation = "TOOL_SCOPE_VIOLATION";
 }
 
 /// <summary>
-/// Flags request text that tries to steer the reviewer or claims prior approval. Matches become
-/// findings only; nothing in request text is ever executed or obeyed. Messages never echo the text.
+/// Flags request text that tries to steer the reviewer or claims prior approval. Matches fail the REQ_TEXT_CLEAN
+/// check only; nothing in request text is ever executed or obeyed. Messages never echo the text.
 /// </summary>
 public static partial class InjectionDetector
 {
-    public static readonly string[] FreeTextFields = ["justification", "manager", "role", "requestType", "environment"];
-
     public static IEnumerable<(string Field, string Code)> Scan(IEnumerable<(string Field, string? Text)> fields)
     {
         foreach (var (field, text) in fields)

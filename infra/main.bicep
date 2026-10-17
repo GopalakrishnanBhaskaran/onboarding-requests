@@ -38,23 +38,23 @@ param workerLocation string = location
 @description('Worker .NET version on Flex Consumption. Must match the worker TargetFramework.')
 param workerRuntimeVersion string = '10.0'
 
-@description('Auto-assign (approved by Gokul 16 Oct 2026): the worker files the Entra assignment after a second Reviewer accepts. Needs entraCatalogId.')
-param enableAutoAssign bool = false
+@description('Notifications: Outbox (pilot, kept in the app) or GraphMail (needs notifyFrom).')
+param notifySender string = 'Outbox'
 
-@description('GUID of the Entra catalog the worker may assign from (printed by: bash tools/setup_entra.sh package ...).')
-param entraCatalogId string = ''
+@description('Shared sender mailbox for GraphMail.')
+param notifyFrom string = ''
 
-@description('Phase 2c (approved by Gokul 16 Oct 2026): create joiner accounts (P2 licence + Temporary Access Pass). Needs enableAutoAssign.')
-param enableJoinerProvisioning bool = false
+@description('Azure DevOps organisation URL for request work items. Empty = off.')
+param adoOrgUrl string = ''
 
-@description('Phase 2c: set up Entra groups, access packages and policies for published role mappings. Needs enableAutoAssign.')
-param enablePackageAutoCreate bool = false
+@description('Azure DevOps project for request work items.')
+param adoProject string = ''
 
-@description('Tenant domain, e.g. contoso.onmicrosoft.com (joiner UPNs, My Access links).')
-param entraTenantDomain string = ''
+@description('None, or Arm to verify Azure RBAC role assignments read-only (needs Reader on the verified scopes).')
+param roleReader string = 'None'
 
-@description('skuId of the Entra ID P2 licence for new joiner accounts.')
-param entraLicenseSkuId string = ''
+@description('App URL used in notification links.')
+param appUrl string = ''
 
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
@@ -85,20 +85,20 @@ module pilot 'modules/pilot.bicep' = {
   }
 }
 
-module handoff 'modules/handoff.bicep' = if (enableHandoff && deployWorker) {
-  name: 'pmo-review-handoff'
+module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
+  name: 'pmo-review-worker'
   scope: rg
   params: {
     location: workerLocation
     tags: tags
     cosmosAccountName: pilot.outputs.cosmosAccountName
     workerRuntimeVersion: workerRuntimeVersion
-    autoAssign: enableAutoAssign
-    entraCatalogId: entraCatalogId
-    provisionJoiners: enableAutoAssign && enableJoinerProvisioning
-    autoCreatePackages: enableAutoAssign && enablePackageAutoCreate
-    entraTenantDomain: entraTenantDomain
-    entraLicenseSkuId: entraLicenseSkuId
+    notifySender: notifySender
+    notifyFrom: notifyFrom
+    adoOrgUrl: adoOrgUrl
+    adoProject: adoProject
+    roleReader: roleReader
+    appUrl: appUrl
   }
 }
 
@@ -108,5 +108,5 @@ output staticWebAppHostname string = pilot.outputs.staticWebAppHostname
 output cosmosAccountName string = pilot.outputs.cosmosAccountName
 output policyAssignmentId string = pilot.outputs.policyAssignmentId
 output budgetId string = pilot.outputs.budgetId
-output workerName string = enableHandoff && deployWorker ? handoff!.outputs.workerName : ''
-output workerPrincipalId string = enableHandoff && deployWorker ? handoff!.outputs.workerPrincipalId : ''
+output workerName string = enableHandoff && deployWorker ? worker!.outputs.workerName : ''
+output workerPrincipalId string = enableHandoff && deployWorker ? worker!.outputs.workerPrincipalId : ''

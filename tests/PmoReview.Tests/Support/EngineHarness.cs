@@ -2,15 +2,17 @@ using System.Net;
 using System.Text;
 using PmoReview.Adapters.Review;
 using PmoReview.Adapters.Storage;
+using PmoReview.Core.Directory;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Review;
+using PmoReview.Core.Sources;
 using PmoReview.Core.Storage;
 
 namespace PmoReview.Tests.Support;
 
 public static class EngineHarness
 {
-    public static readonly DateTimeOffset Now = new(2026, 10, 16, 9, 0, 0, TimeSpan.Zero);
+    public static readonly DateTimeOffset Now = new(2026, 10, 17, 9, 0, 0, TimeSpan.Zero);
 
     public static DataStores Stores()
     {
@@ -19,7 +21,7 @@ public static class EngineHarness
         return stores;
     }
 
-    /// <summary>A complete, valid SAMPLE-ALPHA NewJoiner request for Dev.</summary>
+    /// <summary>A complete SAMPLE-ALPHA request that maps to row A-DBW-ENG-USER.</summary>
     public static RequestSnapshot Complete(Func<RequestSnapshot, RequestSnapshot>? change = null)
     {
         var s = new RequestSnapshot
@@ -27,21 +29,29 @@ public static class EngineHarness
             RequestId = "req-1",
             ProjectId = TestApp.Alpha,
             Revision = 1,
-            RequestType = "NewJoiner",
-            Role = "SAMPLE Data Engineer",
-            Environment = "Dev",
-            Manager = "SAMPLE Manager One",
-            Justification = "SAMPLE: joins the data platform team to build ingestion pipelines.",
-            StartDate = new DateOnly(2026, 11, 2),
-            EndDate = new DateOnly(2027, 3, 31),
+            EnterpriseId = "sample.e1001",
+            FirstName = "Sample",
+            LastName = "Joiner",
+            DomainId = TestApp.DefaultUser,
+            Resource = "SAMPLE Databricks Engineering",
+            AccessLevel = "User",
+            Justification = "SAMPLE: joins the data engineering team to build and run ingestion pipelines in the dev workspace.",
+            Owner = "sample-user-olivia@sample.invalid",
             CapturedAt = Now,
         };
         return change is null ? s : change(s);
     }
 
-    public static Task<EngineOutcome> Run(RequestSnapshot s, IReviewModel? model = null, ReviewLimits? limits = null, DataStores? stores = null) =>
-        new ReviewEngine(stores ?? Stores(), model ?? new RuleOnlyReviewModel(), limits ?? new ReviewLimits())
+    public static Task<EngineOutcome> Run(RequestSnapshot s, IReviewModel? model = null, ReviewLimits? limits = null, DataStores? stores = null,
+        IDirectoryReader? directory = null, bool useDirectory = true)
+    {
+        var st = stores ?? Stores();
+        return new ReviewEngine(st, new StoreSourcesOfTruth(st), model ?? new RuleOnlyReviewModel(), limits ?? new ReviewLimits(), new ReviewPolicy(),
+                useDirectory ? directory ?? FakeDirectory.SeededFromSample() : null)
             .RunAsync(s, "run-1", CancellationToken.None);
+    }
+
+    public static CheckResult Check(this EngineOutcome o, string code) => o.Result.Checks.Single(c => c.Code == code);
 }
 
 /// <summary>Scripted reviewer for host-validation tests.</summary>
@@ -64,7 +74,7 @@ public sealed class ScriptedHandler(params Func<HttpResponseMessage>[] responses
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        Requests.Add((request, await request.Content!.ReadAsStringAsync(ct)));
+        Requests.Add((request, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
         if (_next < responses.Length) return responses[_next++]();
         return Repeat?.Invoke() ?? throw new InvalidOperationException("No more scripted responses.");
     }
@@ -72,31 +82,23 @@ public sealed class ScriptedHandler(params Func<HttpResponseMessage>[] responses
     public static HttpResponseMessage Json(string json, HttpStatusCode code = HttpStatusCode.OK) =>
         new(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
 
-    public static HttpResponseMessage ToolCall(string name, string argumentsJson, string id = "call_1") =>
-        Json(System.Text.Json.JsonSerializer.Serialize(new
-        {
-            choices = new[]
-            {
-                new
-                {
-                    finish_reason = "tool_calls",
-                    message = new
-                    {
-                        role = "assistant",
-                        content = (string?)null,
-                        tool_calls = new[] { new { id, type = "function", function = new { name, arguments = argumentsJson } } },
-                    },
-                },
-            },
-        }));
-
-    public static HttpResponseMessage Final(string contentJson) =>
+    public static HttpResponseMessage Final(string contentJson, int promptTokens = 120, int completionTokens = 30) =>
         Json(System.Text.Json.JsonSerializer.Serialize(new
         {
             choices = new[] { new { finish_reason = "stop", message = new { role = "assistant", content = contentJson } } },
+            usage = new { prompt_tokens = promptTokens, completion_tokens = completionTokens },
         }));
 
-    public static AzureOpenAIReviewModel Model(ScriptedHandler handler) =>
+    public static HttpResponseMessage Throttled(int retryAfterMs = 10)
+    {
+        var r = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        r.Headers.Add("retry-after-ms", retryAfterMs.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        return r;
+    }
+
+    public static AzureOpenAIChat Chat(ScriptedHandler handler) =>
         new(new HttpClient(handler), new AzureOpenAIOptions { Endpoint = new Uri("https://sample-aoai.invalid/"), Deployment = "sample-deployment" },
             _ => ValueTask.FromResult("sample-token"));
+
+    public static AzureOpenAIReviewModel Model(ScriptedHandler handler) => new(Chat(handler));
 }
