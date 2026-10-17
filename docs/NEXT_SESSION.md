@@ -19,7 +19,7 @@ Branch `claude/charming-goldberg-2f0ejk` (v2). The previous branch `claude/optim
 3. Sign-out — **done** in code: `/logout` → `/.auth/logout?post_logout_redirect_uri=/signed-out.html` (public page with "sign in again" and Microsoft sign-out links). Confirm live after the `app` redeploy (F54).
 
 ## Deploy v2 — DONE 17 Oct 07:39 UTC (approved by Gokul; evidence in DEPLOYMENT_LOG)
-Applied; worker on v2 with only the 4 read Graph roles; write roles revoked. **Still to do:** (a) open the app → New request shows Enterprise ID + 7-step flow; (b) re-seed with `--domain-suffix @gopalakrishnanbaskarangmail.onmicrosoft.com` so domain IDs match tenant UPNs; (c) register testers with v2 roles (Gmail: Requester, Owner, IdTeam, RoleTeam, PMO, Operator; pilot.admin: Security); (d) live E2E with `SAMPLE Finance Reports` / `Viewer` (group to be created by the ID team) per workflow 09.
+Applied; worker on v2 with only the 4 read Graph roles; write roles revoked. Live check A passed; live check B found the Gmail tester has no v2 Requester role yet (no New request button) — run the `--register-user` lines first. **Still to do:** (a) open the app → New request shows Enterprise ID + 7-step flow; (b) re-seed with `--domain-suffix @gopalakrishnanbaskarangmail.onmicrosoft.com` so domain IDs match tenant UPNs; (c) register testers with v2 roles (Gmail: Requester, Owner, IdTeam, RoleTeam, PMO, Operator; pilot.admin: Security); (d) live E2E with `SAMPLE Finance Reports` / `Viewer` (group to be created by the ID team) per workflow 09.
 
 Steps as run:
 Full steps: `workflows/09-onboarding-flow-v2.md`.
