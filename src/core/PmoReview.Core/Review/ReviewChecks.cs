@@ -28,6 +28,11 @@ public static class CheckCodes
     public const string RiskGuest = "RISK_GUEST";
     public const string RiskBroadAccess = "RISK_BROAD_ACCESS";
     public const string RiskSensitive = "RISK_SENSITIVE";
+    public const string MapRowFlag = "MAP_ROW_FLAG";
+    public const string MapAzureRoles = "MAP_AZURE_ROLES";
+    public const string RiskProduction = "RISK_PRODUCTION";
+    public const string RiskRowCaveat = "RISK_ROW_CAVEAT";
+    public const string RiskTenant = "RISK_TENANT";
     public const string AiReview = "AI_REVIEW";
 }
 
@@ -40,7 +45,12 @@ public sealed record RowMatch(IReadOnlyList<MappingRow> ResourceRows, IReadOnlyL
     public MappingRow? Row => Matches.Count == 1 ? Matches[0] : null;
 }
 
-public sealed record HostReview(IReadOnlyList<CheckResult> Checks, IReadOnlyList<string> RiskFlags, MappingAssessment Mapping, IReadOnlyList<ResponseRecord> UserRecords);
+public sealed record HostReview(IReadOnlyList<CheckResult> Checks, IReadOnlyList<string> RiskFlags, MappingAssessment Mapping, IReadOnlyList<ResponseRecord> UserRecords)
+{
+    /// <summary>The matched row (exactly one), for the approver summary.</summary>
+    public MappingRow? Row { get; init; }
+    public string? Tenant { get; init; }
+}
 
 /// <summary>
 /// Stage 2 host checks, recorded pass/fail one by one. Authoritative: a reviewer model cannot override them.
@@ -51,13 +61,18 @@ public static partial class ReviewChecks
     public static RowMatch Match(RequestSnapshot s, IReadOnlyList<MappingRow> sheet)
     {
         var resourceRows = MappingSheet.ForResource(sheet, s.Resource);
-        var matches = resourceRows.Where(r => MappingSheet.Same(r.AccessLevel, s.AccessLevel)).ToList();
+        var matches = resourceRows.Where(r => MappingSheet.Same(r.AccessLevel, s.AccessLevel) && InEnvironment(r, s.Environment)).ToList();
         return new RowMatch(resourceRows, matches);
     }
 
+    /// <summary>A row without an environment applies to every environment.</summary>
+    public static bool InEnvironment(MappingRow r, string? environment) =>
+        r.Environment is null || (environment is not null && Domain.Environments.Same(r.Environment, environment));
+
+    /// <param name="entraNotConnected">Set when the project's tenant is not the agent's tenant: Entra is checked by the teams there.</param>
     public static HostReview Evaluate(
         RequestSnapshot s, Project? project, IReadOnlyList<MappingRow> sheet, IReadOnlyList<ResponseRecord> responses,
-        RowMatch match, CrossCheck? entra, ReviewPolicy policy, bool skipEntra = false)
+        RowMatch match, CrossCheck? entra, ReviewPolicy policy, bool skipEntra = false, string? entraNotConnected = null)
     {
         var checks = new List<CheckResult>();
         void Add(string code, string group, CheckStatus status, string detail) => checks.Add(new CheckResult(code, group, status, detail));
@@ -70,17 +85,23 @@ public static partial class ReviewChecks
             missing.Count == 0 ? "All intake fields are present." : $"Missing: {string.Join(", ", missing)}.");
 
         // 1. Mapping sheet.
+        var env = s.Environment is null ? "" : $" in {s.Environment}";
         if (match.Matches.Count == 0)
         {
             var levels = match.ResourceRows.Select(r => r.AccessLevel).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var elsewhere = match.ResourceRows.Where(r => MappingSheet.Same(r.AccessLevel, s.AccessLevel) && r.Environment is not null)
+                .Select(r => r.Environment!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             Add(CheckCodes.MapRowExists, CheckGroups.MappingSheet, CheckStatus.Fail, levels.Count == 0
                 ? $"The mapping sheet has no row for resource '{s.Resource}'."
-                : $"The mapping sheet has no row for resource '{s.Resource}' with access level '{s.AccessLevel}'. Levels on the sheet: {string.Join(", ", levels)}.");
+                : elsewhere.Count > 0
+                    ? $"The mapping sheet has no row for '{s.Resource}' / '{s.AccessLevel}'{env}: that access exists only in {string.Join(", ", elsewhere)}." +
+                      (Domain.Environments.IsProduction(s.Environment) ? " No Prod group exists for it yet; it must be created (IaC) and added to the sheet first." : "")
+                    : $"The mapping sheet has no row for resource '{s.Resource}' with access level '{s.AccessLevel}'. Levels on the sheet: {string.Join(", ", levels)}.");
         }
         else
         {
             Add(CheckCodes.MapRowExists, CheckGroups.MappingSheet, CheckStatus.Pass,
-                $"Found {Rows(match.Matches)} for '{s.Resource}' / '{s.AccessLevel}'.");
+                $"Found {Rows(match.Matches)} for '{s.Resource}' / '{s.AccessLevel}'{env}.");
         }
 
         if (match.Matches.Count > 1)
@@ -122,6 +143,18 @@ public static partial class ReviewChecks
             Add(CheckCodes.MapNotDeprecated, CheckGroups.MappingSheet, row.Deprecated ? CheckStatus.Fail : CheckStatus.Pass, row.Deprecated
                 ? $"Row {row.RowId} is marked deprecated. PMO must point this resource and access level to a current row."
                 : $"Row {row.RowId} is current (not deprecated).");
+
+            // Workbook colour coding: red = wrong or undecided, never acted on without a human decision.
+            Add(CheckCodes.MapRowFlag, CheckGroups.MappingSheet, row.Flag == RowFlag.Red ? CheckStatus.Fail : CheckStatus.Pass, row.Flag == RowFlag.Red
+                ? $"Row {row.RowId} is flagged red (wrong or undecided): {row.Notes ?? "see the mapping sheet notes"}. PMO must resolve it before anyone is added."
+                : row.Flag == RowFlag.Amber ? $"Row {row.RowId} is usable with a caveat (amber); shown to the approvers." : $"Row {row.RowId} has no open flag.");
+
+            var grants = row.Grants();
+            var unresolved = grants.Where(g => g.Scope is null || (g.RoleDefinitionId ?? BuiltInRoles.IdOf(g.RoleName)) is null).ToList();
+            Add(CheckCodes.MapAzureRoles, CheckGroups.MappingSheet, CheckStatus.Pass, grants.Count == 0
+                ? "The row names no Azure role (e.g. a Databricks role): the role assignment team assigns it."
+                : $"{grants.Count} Azure role(s) on the row: {string.Join("; ", grants.Select(g => $"{g.RoleName} on {Short(g)}"))}." +
+                  (unresolved.Count == 0 ? "" : $" {unresolved.Count} without a resolved role id or scope go to the role assignment team."));
         }
 
         // 2. Response document (this user's other records, and this request's own record if it exists).
@@ -200,6 +233,10 @@ public static partial class ReviewChecks
         {
             Add(CheckCodes.EntraGroup, CheckGroups.EntraCrossCheck, CheckStatus.NotApplicable, NoRow);
         }
+        else if (entraNotConnected is not null)
+        {
+            Add(CheckCodes.EntraGroup, CheckGroups.EntraCrossCheck, CheckStatus.NotApplicable, $"Not checked by the agent: {entraNotConnected}.");
+        }
         else if (entra is null && skipEntra)
         {
             Add(CheckCodes.EntraGroup, CheckGroups.EntraCrossCheck, CheckStatus.NotApplicable, "Not checked in Entra (local development: no directory reader).");
@@ -218,7 +255,9 @@ public static partial class ReviewChecks
             Add(CheckCodes.EntraGroup, CheckGroups.EntraCrossCheck, status, detail);
         }
 
-        if (entra is null && skipEntra)
+        if (entraNotConnected is not null)
+            Add(CheckCodes.EntraUser, CheckGroups.EntraCrossCheck, CheckStatus.NotApplicable, $"Not checked by the agent: {entraNotConnected}.");
+        else if (entra is null && skipEntra)
             Add(CheckCodes.EntraUser, CheckGroups.EntraCrossCheck, CheckStatus.NotApplicable, "Not checked in Entra (local development).");
         else if (entra is null || entra.Error is not null)
             Add(CheckCodes.EntraUser, CheckGroups.EntraCrossCheck, CheckStatus.Pending, "Waiting for the read-only Entra check.");
@@ -243,6 +282,12 @@ public static partial class ReviewChecks
             $"User already has {active.Count} active or pending assignment(s){(active.Any(r => r.Privileged) ? ", including privileged access" : "")}.",
             $"User has {active.Count} other active or pending assignment(s).");
         Flag(CheckCodes.RiskSensitive, row?.SensitiveResource == true, RiskFlags.Sensitive, $"Sensitive resource: {s.Resource}.", "Not marked sensitive.");
+        Flag(CheckCodes.RiskProduction, Domain.Environments.IsProduction(s.Environment), RiskFlags.Production,
+            $"Production environment ({s.Environment}).", s.Environment is null ? "No environment on this project." : $"Not production ({s.Environment}).");
+        Flag(CheckCodes.RiskRowCaveat, row?.Flag == RowFlag.Amber, RiskFlags.RowCaveat,
+            $"Mapping row caveat: {row?.Notes ?? "see the mapping sheet"}.", "No caveat on the mapping row.");
+        Flag(CheckCodes.RiskTenant, entraNotConnected is not null, RiskFlags.TenantNotConnected,
+            $"{Tenants.Label(project)}: Entra is not checked by the agent ({entraNotConnected}).", $"Tenant {Tenants.Label(project)}: checked by the agent.");
 
         var mapping = match.Matches.Count switch
         {
@@ -255,8 +300,11 @@ public static partial class ReviewChecks
             },
             _ => new MappingAssessment { Status = MappingStatus.Ambiguous, Explanation = $"{match.Matches.Count} rows match: {Rows(match.Matches)}." },
         };
-        return new HostReview(checks, flags, mapping, userRecords);
+        return new HostReview(checks, flags, mapping, userRecords) { Row = row, Tenant = project?.TenantName };
     }
+
+    private static string Short(AzureRoleGrant g) =>
+        g.ResourceName ?? (g.Scope is { } sc ? sc[(sc.LastIndexOf('/') + 1)..] : "scope not resolved");
 
     public static (CheckStatus, string) GroupCheck(MappingRow row, IReadOnlyList<DirectoryGroup> groups)
     {
@@ -266,6 +314,8 @@ public static partial class ReviewChecks
                 ? (CheckStatus.Pass, $"Group {row.EntraGroup} does not exist yet; flagged to be created by the ID team.")
                 : (CheckStatus.Fail, $"The mapping sheet says group {row.EntraGroup} exists, but Entra has no group with that name. PMO must fix the sheet or flag it 'to be created'.");
         if (!groups[0].SecurityEnabled) return (CheckStatus.Fail, $"Entra group {row.EntraGroup} is not a security group.");
+        if (row.GroupObjectId is { } id && !string.Equals(id.Trim(), groups[0].ObjectId, StringComparison.OrdinalIgnoreCase))
+            return (CheckStatus.Fail, $"Entra group {row.EntraGroup} has object id {groups[0].ObjectId}, but the mapping sheet says {id}. PMO must correct the sheet (resolve groups by object id).");
         return row.GroupState == GroupState.ToBeCreated
             ? (CheckStatus.Pass, $"Group {row.EntraGroup} already exists in Entra; the ID team reuses it instead of creating it.")
             : (CheckStatus.Pass, $"Group {row.EntraGroup} exists in Entra (security group).");

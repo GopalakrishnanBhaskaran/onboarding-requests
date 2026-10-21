@@ -16,7 +16,9 @@ builder.WebHost.UseUrls("http://127.0.0.1:7071");
 var app = builder.Build();
 
 var stores = InMemoryDataStores.Create();
-await SampleDataLoader.SeedAsync(stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json")));
+// The SAMPLE rows' Azure roles use a placeholder resource group scope locally (no Azure here).
+var accessScope = Environment.GetEnvironmentVariable("SAMPLE_ACCESS_SCOPE") ?? "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-pmo-sample-access";
+await SampleDataLoader.SeedAsync(stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), accessScope));
 var settings = PilotSettings.FromEnvironment(Environment.GetEnvironmentVariable);
 var api = PilotApp.Build(stores, settings, new SystemClock(), app.Services.GetRequiredService<ILoggerFactory>());
 

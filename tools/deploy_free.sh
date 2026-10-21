@@ -37,9 +37,19 @@
 #       principals; worker + SWA settings; creates the empty resource group <scope> if it is missing (free).
 #       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
+#
+#   tools/deploy_free.sh environment <subscriptionId> <pilot|dev|test|prod> [--redirect <mail>]
+#       Settings only (worker + SWA): APP_ENVIRONMENT, NOTIFY_REDIRECT_TO (test environments: every mail goes to that
+#       one address, naming the intended recipients), AGENT_TENANT_ID (tenant separation). prod refuses a redirect.
+#
+#   tools/deploy_free.sh email <subscriptionId> [--redirect <mail>] [--approved-by "<name> <date>"]
+#       Mail through Azure Communication Services Email (managed identity, Azure-managed DoNotReply domain). New resources
+#       (pay per mail, from credits) + one role for the worker on that resource: dry run (plan + what-if) without
+#       --approved-by. Approved: policy stage A (allow the 3 types), wait for it, create the resources, switch the worker
+#       to NOTIFY_SENDER=AcsEmail.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -60,6 +70,7 @@ policy_allows_worker() {
 }
 
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
+worker_setting() { az functionapp config appsettings list -g "$RG_DEFAULT" -n "$1" --query "[?name=='$2'].value | [0]" -o tsv 2>/dev/null || true; }
 
 # global.json needs the .NET 10 SDK (the worker targets net10.0; the API's net9.0 builds with it too).
 # Azure Cloud Shell ships .NET 9 only, so install 10 into ~/.dotnet with Microsoft's script (user folder, no admin).
@@ -80,6 +91,11 @@ deploy_worker() {
   local name; name=$(worker_name)
   [[ -n "$name" ]] || { echo "No worker in $RG_DEFAULT (enableHandoff/deployWorker=false?)."; return 1; }
   rm -rf "$ROOT/.local/worker" "$ROOT/.local/worker.zip"
+  # Tenant separation: the agent reads and writes Entra only for projects in its own tenant.
+  if [[ -z "$(worker_setting "$name" AGENT_TENANT_ID)" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings "AGENT_TENANT_ID=$(az account show --query tenantId -o tsv)"
+    echo "Set AGENT_TENANT_ID on $name (the tenant of this subscription)."
+  fi
   dotnet publish "$ROOT/src/worker/PmoReview.Worker" -c Release -o "$ROOT/.local/worker"
   (cd "$ROOT/.local/worker" && zip -qr "$ROOT/.local/worker.zip" .)
   # A just-created role assignment (Blob Data Owner on the package container) can take minutes to apply: retry.
@@ -241,6 +257,78 @@ provisioning() {
   echo "Until then the agent's writes are refused and it retries every run; the request page says it is waiting for the permission."
 }
 
+# Per-environment settings (no resource or permission change). A test environment may send every mail to one address.
+set_environment() {
+  local env="$1" redirect="${2:-}" name swa tenant
+  [[ "$env" =~ ^(pilot|dev|test|prod)$ ]] || { echo "Environment must be pilot, dev, test or prod."; return 1; }
+  if [[ "$env" == "prod" && -n "$redirect" ]]; then echo "Refusing: production mails the real recipients (no --redirect)."; return 1; fi
+  if [[ -n "$redirect" && ! "$redirect" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then echo "--redirect must be one mail address."; return 1; fi
+  name=$(worker_name); swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  tenant=$(az account show --query tenantId -o tsv)
+  [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none \
+    --settings "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" -o none \
+    --setting-names "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant"
+  echo "Environment $env on ${name:-no worker} and $swa; mail redirect: ${redirect:-none (real recipients)}; agent tenant $tenant."
+}
+
+policy_allows_email() {
+  az policy assignment show -g "$RG_DEFAULT" -n pmo-pilot-allowed-types \
+    --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Communication/communicationServices"
+}
+
+# Mail through Azure Communication Services Email (VERIFIED_FACTS F64). New resources: approval-gated, dry run first.
+email_setup() {
+  local redirect="${1:-}" name mi role_id role_name out endpoint from env
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  # Prefer a mail-specific built-in role when the tenant lists it; otherwise Contributor on that one resource only.
+  role_id=$(az role definition list --name "Communication and Email Service Owner" --query "[0].name" -o tsv 2>/dev/null || true)
+  role_name="Communication and Email Service Owner"
+  [[ -n "$role_id" ]] || { role_id=b24988ac-6180-42a0-ab88-20f7382dd24c; role_name="Contributor (on the Communication Services resource only)"; }
+  env=$(worker_setting "$name" APP_ENVIRONMENT); env=${env:-pilot}
+  [[ -f "$ROOT/.local/params.json" ]] || { echo "Run tools/deploy_free.sh params <subscriptionId> first."; return 1; }
+  python3 - "$ROOT/.local/params.json" "$ROOT/.local/params-email.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["parameters"]["enableEmail"] = {"value": True}
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+  echo "Plan (mail), expected cost: pay per mail from Azure credits (illustrative USD 0.00025 per mail + 0.00012 per MB, F64; ~₹0 at pilot volume):"
+  echo "  Policy (stage A): allow Microsoft.Communication/communicationServices, emailServices, emailServices/domains"
+  echo "  Create: Email Communication Service ecs-pmo-<suffix> (global, data location India) + domain AzureManagedDomain (DoNotReply@<guid>.azurecomm.net)"
+  echo "  Create: Communication Services acs-pmo-<suffix> (global, data location India), linked to that domain"
+  echo "  Role: $role_name for the worker identity $mi at the Communication Services resource scope only"
+  echo "  Worker settings: NOTIFY_SENDER=AcsEmail ACS_ENDPOINT=<endpoint> NOTIFY_FROM=DoNotReply@<domain> APP_ENVIRONMENT=$env NOTIFY_REDIRECT_TO=${redirect:-<unchanged>}"
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "== what-if (policy change) =="
+    az deployment sub what-if --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" \
+      --parameters "@$ROOT/.local/params-email.json" --result-format ResourceIdOnly | tee "$ROOT/.local/whatif-email.txt" || true
+    echo "== what-if (mail resources) =="
+    az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/email.bicep" \
+      --parameters "workerPrincipalId=$mi" "senderRoleDefinitionId=$role_id" "tags={\"workload\":\"pmo-review-pilot\"}" \
+      --result-format ResourceIdOnly | tee -a "$ROOT/.local/whatif-email.txt" || true
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  if ! policy_allows_email; then
+    az deployment sub create --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" --parameters "@$ROOT/.local/params-email.json" -o none
+    echo "Policy updated (approved by $APPROVED_BY). Waiting for it to take effect (up to 30 minutes)..."
+    local i; for i in $(seq 1 30); do policy_allows_email && break; sleep 60; done
+    sleep 120 # the assignment reads as updated before the deny evaluation follows
+  fi
+  out=$(az deployment group create -g "$RG_DEFAULT" -n pmo-review-email --template-file "$ROOT/infra/modules/email.bicep" \
+    --parameters "workerPrincipalId=$mi" "senderRoleDefinitionId=$role_id" "tags={\"workload\":\"pmo-review-pilot\"}" --query properties.outputs -o json)
+  endpoint=$(python3 -c "import json,sys;print(json.load(sys.stdin)['acsEndpoint']['value'])" <<<"$out")
+  from=$(python3 -c "import json,sys;print(json.load(sys.stdin)['senderAddress']['value'])" <<<"$out")
+  local settings=("NOTIFY_SENDER=AcsEmail" "ACS_ENDPOINT=$endpoint" "NOTIFY_FROM=$from")
+  [[ -n "$redirect" ]] && settings+=("NOTIFY_REDIRECT_TO=$redirect")
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings "${settings[@]}"
+  cp "$ROOT/.local/params-email.json" "$ROOT/.local/params.json"
+  echo "Mail on (approved by $APPROVED_BY): $endpoint from $from. The worker mails pending notifications every 5 minutes."
+  echo "New role assignments can take a few minutes; a refused send is retried 3 times, then listed under Issues and reports."
+  echo "Then run: tools/deploy_free.sh app <subscriptionId> (the website shows 'mailed')."
+}
+
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;
 # InfraConsistencyTests checks it matches the API project's TargetFramework).
 deploy_app() {
@@ -270,9 +358,16 @@ app_settings_v2() {
   w=$(worker_name)
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
+  # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
+  local env sender redirect tenant
+  env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
+  sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
+  redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
+  tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" -o none
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" \
+    "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
 }
@@ -365,7 +460,7 @@ case "$CMD" in
     W=$(worker_name); echo "  worker: ${W:-not deployed}"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     if [[ -n "$W" ]]; then
-      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
+      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER NOTIFY_FROM NOTIFY_REDIRECT_TO APP_ENVIRONMENT AGENT_TENANT_ID AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
         V=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='$k'].value | [0]" -o tsv 2>/dev/null)
         echo "  $k: ${V:-not set}"
       done
@@ -390,14 +485,18 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "budgetEmail": v(next(iter(b["notifications"].values()))["contactEmails"][0]), "budgetAmount": v(2000),
      "budgetStartDate": v(b["timePeriod"]["startDate"][:10]), "enableHandoff": v(True), "deployWorker": v(True),
      "workerLocation": v("centralindia"), "workerRuntimeVersion": v("10.0"),
-     "notifySender": v("Outbox"), "roleReader": v("None"), "appUrl": v(f"https://{host}" if host else ""),
+     "roleReader": v("None"), "appUrl": v(f"https://{host}" if host else ""),
      # v2.1 provisioning as it is live (approved separately); off when never switched on.
      "agentProvisioning": v(live.get("AGENT_PROVISIONING", "").lower() == "true"),
      "agentRoleAssignment": v(live.get("AGENT_ROLE_ASSIGNMENT", "").lower() == "true"),
-     "roleAssignAllowedRoles": v(live.get("ROLE_ASSIGN_ALLOWED_ROLES", "")), "roleAssignScopes": v(live.get("ROLE_ASSIGN_SCOPES", ""))}
+     "roleAssignAllowedRoles": v(live.get("ROLE_ASSIGN_ALLOWED_ROLES", "")), "roleAssignScopes": v(live.get("ROLE_ASSIGN_SCOPES", "")),
+     # Mail and environment as they are live (deploy_free.sh email / environment).
+     "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
+     "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
+     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", ""))}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
-print("wrote", out, "| worker on, notifications Outbox, ADO off, role reader None")
+print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
 PY
     ;;
   worker)
@@ -425,6 +524,22 @@ PY
     done
     provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
     ;;
+  environment)
+    ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
+    [[ "${4:-}" == "--redirect" ]] && REDIRECT="${5:?mail address}"
+    set_environment "$ENVNAME" "$REDIRECT"
+    ;;
+  email)
+    shift 2; REDIRECT=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --redirect) REDIRECT="${2:?mail address}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (email): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    email_setup "$REDIRECT"
+    ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
     RG="rg-pmo-review-pilot"
@@ -440,5 +555,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|environment|email ..."; exit 1 ;;
 esac

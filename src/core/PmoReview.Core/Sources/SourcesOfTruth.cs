@@ -93,6 +93,25 @@ public static class MappingSheet
                 w.WriteString("groupState", r.GroupState.ToString());
                 if (r.AzureRoleDefinitionId is not null) w.WriteString("azureRole", r.AzureRoleDefinitionId.ToLowerInvariant());
                 if (r.AzureScope is not null) w.WriteString("azureScope", r.AzureScope.ToLowerInvariant());
+                // Fields added on 21 Oct 2026 are written only when set, so the fingerprint of an older row is unchanged
+                // (no re-review of in-flight requests just because of the deploy).
+                if (r.Environment is not null) w.WriteString("environment", Normalize(r.Environment).ToLowerInvariant());
+                if (r.GroupObjectId is not null) w.WriteString("groupObjectId", r.GroupObjectId.ToLowerInvariant());
+                if (r.Flag != RowFlag.None) w.WriteString("flag", r.Flag.ToString());
+                if (r.AzureRoles.Count > 0)
+                {
+                    w.WriteStartArray("azureRoles");
+                    foreach (var g in r.AzureRoles)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("roleName", Normalize(g.RoleName).ToLowerInvariant());
+                        w.WriteString("roleId", g.RoleDefinitionId?.ToLowerInvariant());
+                        w.WriteString("scope", g.Scope?.TrimEnd('/').ToLowerInvariant());
+                        w.WriteString("resource", g.ResourceName?.ToLowerInvariant());
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                }
                 w.WriteEndObject();
             }
             w.WriteEndArray();

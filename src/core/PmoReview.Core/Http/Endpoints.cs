@@ -12,10 +12,25 @@ namespace PmoReview.Core.Http;
 /// <summary>Item plus its concurrency token, as returned to the SPA.</summary>
 public sealed record Item<T>(T Value, string Etag);
 
-public sealed record ProjectSummary(string ProjectId, string Name, IReadOnlyList<AppRole> Roles, bool IsSample);
+public sealed record ProjectSummary(string ProjectId, string Name, IReadOnlyList<AppRole> Roles, bool IsSample)
+{
+    /// <summary>The Entra tenant of the project (tenant separation), e.g. "PEST".</summary>
+    public string? TenantName { get; init; }
+    /// <summary>Environments a request picks from (empty = no environment field).</summary>
+    public IReadOnlyList<string> Environments { get; init; } = [];
+    public string? DomainIdSuffix { get; init; }
+}
 
 /// <param name="AgentProvisioning">v2.1: the AI agent creates user/group/membership after both approvals (wording in the app follows it).</param>
-public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList<ProjectSummary> Projects, bool AgentProvisioning = false, bool AgentRoleAssignment = false);
+public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList<ProjectSummary> Projects, bool AgentProvisioning = false, bool AgentRoleAssignment = false)
+{
+    /// <summary>Deployment environment (APP_ENVIRONMENT), shown in the header.</summary>
+    public string AppEnvironment { get; init; } = "pilot";
+    /// <summary>Notifications are mailed (else kept in the app only).</summary>
+    public bool MailEnabled { get; init; }
+    /// <summary>Non-production: every mail goes to this test address.</summary>
+    public string? MailRedirectTo { get; init; }
+}
 
 public static class Endpoints
 {
@@ -27,9 +42,16 @@ public static class Endpoints
             foreach (var (projectId, roles) in c.Caller.Grants.OrderBy(g => g.Key, StringComparer.Ordinal))
             {
                 var p = await stores.Projects.GetAsync(projectId, projectId, c.Ct);
-                projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false));
+                projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false)
+                {
+                    TenantName = p?.Value.TenantName, Environments = p?.Value.Environments ?? [], DomainIdSuffix = p?.Value.DomainIdSuffix,
+                });
             }
-            return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects, workflow.Settings.AgentProvisioning, workflow.Settings.AgentRoleAssignment));
+            var s = workflow.Settings;
+            return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects, s.AgentProvisioning, s.AgentRoleAssignment)
+            {
+                AppEnvironment = s.AppEnvironment, MailEnabled = s.MailEnabled, MailRedirectTo = s.MailRedirectTo,
+            });
         });
         host.Map("GET", "queue", async c => Ok(new { items = await workflow.MyActionsAsync(c.Caller, c.Ct) }));
 

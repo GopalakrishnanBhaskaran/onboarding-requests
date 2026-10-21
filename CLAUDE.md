@@ -7,7 +7,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 
 ## Hard rules
 1. **Cost.** Static Web Apps (Free) with managed Functions, Cosmos DB free tier, Azure Policy assignment, Cost Management budget, plus (approved 16 Oct 2026, Azure credits, budget ₹2,000/month, alerts 50/80/100%) one Flex Consumption Function App (the AI agent worker) and its one storage account with their role assignments — nothing else. Anything more needs Gokul's written approval.
-2. **Never create:** Azure OpenAI, App Insights, Log Analytics, Key Vault, Service Bus, API Management, App Service (other than the Flex plan above), Azure SQL, VNets, private endpoints; no further Storage accounts or Function Apps. Azure OpenAI and mail/ADO adapters are coded and **off** until Gokul approves them.
+2. **Never create:** Azure OpenAI, App Insights, Log Analytics, Key Vault, Service Bus, API Management, App Service (other than the Flex plan above), Azure SQL, VNets, private endpoints; no further Storage accounts or Function Apps. Azure OpenAI and mail/ADO adapters are coded and **off** until Gokul approves them. Mail (21 Oct 2026): one Azure Communication Services + one Email Communication Service (Azure-managed domain) via `tools/deploy_free.sh email` — coded, **off until approved** (dry run first).
 3. **Verify, don't assume.** Check every limit, endpoint and permission against current Microsoft Learn; record URL + date in `docs/VERIFIED_FACTS.md`. If a fact differs from the plan, stop and report.
 4. **Approval gate before any Azure resource or permission change:** show `tools/deploy_free.sh whatif` output, resource list and expected cost. Wait for an explicit "approved". Code-only redeploys (`app`, `worker`) need no approval. Removing the retired Graph write roles (`revoke-graph-writes`) and switching agent provisioning on (`provisioning … on`) are security changes: dry run first, then only with `--approved-by`. Switching it off (`provisioning … off`) is always allowed; removing its rights needs approval.
 5. **The agent never approves.** Writes exist only in `GraphDirectoryWriter` (POST users, groups, groups/{id}/members/$ref) and `ArmRoleAssignmentWriter` (one PUT of a role assignment), held by the worker only when `AGENT_PROVISIONING` / `AGENT_ROLE_ASSIGNMENT` are on, and used only at With ID Team / With Role Team after both current approvals (re-checked before every write; reads before every write). No update, delete, licence, guest invite or TAP call. Otherwise only Graph `checkMemberGroups` (read action), Azure OpenAI chat completions and the optional `sendMail` / ADO calls. Approvals only from the named Owner, then a Security member who is not the Owner approver. Never skip a stage, never auto-approve. The AI model never decides or writes.
@@ -15,7 +15,8 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 7. **No secrets or real data** in source, prompts, logs or examples. Sample data is labelled `SAMPLE`. Cosmos connection string lives only in SWA app settings; the worker uses managed identity. Never record personal user ids in docs.
 8. **Evidence only.** Never say deployed/working without running it and showing output. Separate facts from assumptions.
 9. Ask once per phase, only for blocking choices. Routine reversible coding proceeds.
-10. `ALLOW_PAID_SERVICES=false` by default; startup throws if a paid provider is selected while it is false. `ALLOW_UNVERIFIED_ENTRA=true` only with `PILOT_LOCAL_DEV=true`. The worker refuses the retired `ENTRA_AUTO_ASSIGN` / `ENTRA_PROVISION_JOINERS` / `ENTRA_AUTO_CREATE_PACKAGES` settings. `AGENT_PROVISIONING` / `AGENT_ROLE_ASSIGNMENT` default false (Bicep and app settings); the role allow-lists are `ROLE_ASSIGN_ALLOWED_ROLES` / `ROLE_ASSIGN_SCOPES`.
+10. Tenant separation (21 Oct 2026): one project = one Entra tenant (e.g. Vestacy, PEST). The agent reads and writes Entra/Azure only for projects in its own tenant (`AGENT_TENANT_ID`); for another tenant the teams work there and the checks say so. `APP_ENVIRONMENT` = pilot|dev|test|prod; `NOTIFY_REDIRECT_TO` (one test mailbox for every mail) is refused in prod. Real workbook data (group classification, response documents) never goes into git: `tools/import_workbook.py` writes to `.local/` and Cosmos.
+11. `ALLOW_PAID_SERVICES=false` by default; startup throws if a paid provider is selected while it is false. `ALLOW_UNVERIFIED_ENTRA=true` only with `PILOT_LOCAL_DEV=true`. The worker refuses the retired `ENTRA_AUTO_ASSIGN` / `ENTRA_PROVISION_JOINERS` / `ENTRA_AUTO_CREATE_PACKAGES` settings. `AGENT_PROVISIONING` / `AGENT_ROLE_ASSIGNMENT` default false (Bicep and app settings); the role allow-lists are `ROLE_ASSIGN_ALLOWED_ROLES` / `ROLE_ASSIGN_SCOPES`.
 
 ## Stack
 | Layer | Pilot (active) | Coded, off |
@@ -26,7 +27,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Data | Cosmos DB NoSQL free tier, shared 1000 RU/s | — |
 | AI agent worker | `src/worker` timer (every 5 min) on Flex Consumption, managed identity, Graph read | v2.1 provisioning: Graph `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All`; RBAC Administrator constrained to allow-listed roles (off until approved) |
 | Reviewer | `RuleOnlyReviewModel` (deterministic checklist) | `AzureOpenAIReviewModel` (temperature 0, json_schema) |
-| Notifications | Outbox (recorded in `notifications`, shown in the app) | `GraphMailSender` (`NOTIFY_SENDER=GraphMail`) |
+| Notifications | Outbox (recorded in `notifications`, shown in the app) | `AcsEmailSender` (`NOTIFY_SENDER=AcsEmail`, managed identity; `deploy_free.sh email`), `GraphMailSender` (`NOTIFY_SENDER=GraphMail`) |
 | Audit | Trail in the request + issues list | ADO work item (`ADO_ORG_URL`, `ADO_PROJECT`) |
 
 .NET target: libraries **net9.0 + net10.0**; SWA managed API **.NET 9 isolated** because the SWA CLI rejects 10.0 (VERIFIED_FACTS F21). .NET 9 support ends 10 Nov 2026 — switch API csproj + `staticwebapp.config.json` to 10.0 as soon as the CLI accepts it; `InfraConsistencyTests` keeps them in step.
@@ -34,7 +35,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 ## Layout (WAT)
 - `workflows/` SOPs (09 = v2 flow; 08 superseded).
 - `tools/` deploy, seed, diagnosis, schema validation, acceptance, cost check, local dev API.
-- `src/core` domain, workflow state machine (`Workflow/`), review checklist (`Review/`), sources of truth, HTTP endpoints. No Azure SDK.
+- `src/core` domain (incl. `Tenants`, `Environments`, `BuiltInRoles`), workflow state machine (`Workflow/`), review checklist (`Review/`), sources of truth, HTTP endpoints. No Azure SDK.
 - `src/adapters` Cosmos store, review models, Graph/ARM readers and the two v2.1 writers, mail sender, ADO tracker, composition root (`PilotApp`).
 - `src/api` HTTP Functions. `src/web` SPA. `src/worker` AI agent timer.
 - `infra/` Bicep. `tests/` unit, contract, security, acceptance (AC01–AC27). `docs/` architecture, facts, costs, runbook, logs.
@@ -59,6 +60,9 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Agent provisioning (v2.1) | `tools/deploy_free.sh provisioning <subscriptionId> on <rgScope> [roleIds]` (dry run) → `… --approved-by "<name> <date>"`; `… off` to switch off |
 | Remove retired Graph write roles | `tools/deploy_free.sh revoke-graph-writes <subscriptionId>` (dry run) → `--approved-by "<name> <date>"` |
 | Flow diagnosis (read-only) | `bash tools/workflow_diag.sh <subscriptionId>` |
+| Environment settings (no resource change) | `tools/deploy_free.sh environment <subscriptionId> test --redirect <mail>` |
+| Mail (approval) | `tools/deploy_free.sh email <subscriptionId> [--redirect <mail>]` (dry run) → `… --approved-by "<name> <date>"` |
+| Import a tenant's workbooks | `python3 tools/import_workbook.py --tenant PEST --project PEST --classification <xlsx> --response <xlsx> [--resolve] [--apply]` · test `python3 tools/test_import_workbook.py` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 
 ## Security rules for API code

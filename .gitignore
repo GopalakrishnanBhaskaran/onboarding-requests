@@ -15,3 +15,7 @@ __pycache__/
 src/web/test-results/
 src/web/playwright-report/
 *.tsbuildinfo
+
+# Real workbooks (Vestacy / PEST group classification, response documents) never go into git: import with tools/import_workbook.py
+*.xlsx
+*.xlsm

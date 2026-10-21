@@ -22,7 +22,7 @@ if [[ -n "$W" ]]; then
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
   echo "-- settings:"
   az functionapp config appsettings list -g "$RG" -n "$W" \
-    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES'], name)].{name:name, value:value}" -o table
+    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID'], name)].{name:name, value:value}" -o table
   MI=$(az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv)
   echo "-- Graph application permissions (v2 expects read only: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All):"
   HELD=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
@@ -51,8 +51,10 @@ def q(container, sql):
     except Exception as e:  # container missing before the v2 apply
         print(f"  {container}: not readable ({type(e).__name__})")
         return []
-for p in q("projects", "SELECT c.projectId, c.domainIdSuffix FROM c"):
-    print(f"  project {p['projectId']}: domain-specific IDs end with {p.get('domainIdSuffix')}")
+for p in q("projects", "SELECT c.projectId, c.domainIdSuffix, c.tenantName, c.tenantId, c.environments, c.contacts.security AS security FROM c"):
+    print(f"  project {p['projectId']}: tenant {p.get('tenantName') or '-'} ({p.get('tenantId') or 'agent tenant'}), "
+          f"environments {', '.join(p.get('environments') or []) or '-'}, domain-specific IDs end with {p.get('domainIdSuffix')}, "
+          f"Security contacts {', '.join(p.get('security') or []) or '-'}")
 reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt FROM c ORDER BY c.updatedAt DESC")
 for r in reqs:
     print(f"  {r['id'][:8]} {r.get('projectId')} {r.get('status') or 'legacy-v1'} waiting={r.get('waitingOn')} r{r.get('revision')} {r.get('domainId')} '{r.get('accessLevel')}' on '{r.get('resource')}' updated={r.get('updatedAt')}")
@@ -65,6 +67,8 @@ for i in issues:
     if i.get("status") == "Open" and i.get("kind") == "NeedsDeveloper":
         print(f"  NEEDS DEVELOPER request={str(i.get('requestId'))[:8]} step={i.get('step')} x{i.get('occurrences')} last={i.get('lastSeenAt')}")
         print(f"      {i.get('detail')}")
-notes = q("notifications", "SELECT c.status FROM c")
+notes = q("notifications", "SELECT c.status, c.kind, c.lastError, c.deliveredTo FROM c")
 print("  notifications by status:", dict(Counter(n["status"] for n in notes)) or "none")
+print("  mail errors:", dict(Counter(n.get("lastError") for n in notes if n.get("lastError"))) or "none")
+print("  mailed to (test redirect shows one address):", dict(Counter(a for n in notes for a in (n.get("deliveredTo") or []))) or "none")
 PY

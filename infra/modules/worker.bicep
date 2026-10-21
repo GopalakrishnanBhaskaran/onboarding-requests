@@ -20,11 +20,24 @@ param workerRuntimeVersion string = '10.0'
 @allowed([
   'Outbox'
   'GraphMail'
+  'AcsEmail'
 ])
 param notifySender string = 'Outbox'
 
-@description('Shared sender mailbox for GraphMail. Empty for Outbox.')
+@description('Shared sender mailbox for GraphMail, or DoNotReply@<managed domain> for AcsEmail. Empty for Outbox.')
 param notifyFrom string = ''
+
+@description('Azure Communication Services endpoint for AcsEmail. Empty otherwise.')
+param acsEndpoint string = ''
+
+@description('pilot, dev, test or prod.')
+param appEnvironment string = 'pilot'
+
+@description('Non-production only: every mail goes to this test address.')
+param notifyRedirectTo string = ''
+
+@description('Entra tenant id of the AI agent (tenant separation).')
+param agentTenantId string = ''
 
 @description('Azure DevOps organisation URL (e.g. https://dev.azure.com/contoso). Empty = no work items.')
 param adoOrgUrl string = ''
@@ -149,6 +162,10 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ROLE_READER', value: roleReader }
         { name: 'NOTIFY_SENDER', value: notifySender }
         { name: 'NOTIFY_FROM', value: notifyFrom }
+        { name: 'ACS_ENDPOINT', value: acsEndpoint }
+        { name: 'APP_ENVIRONMENT', value: appEnvironment }
+        { name: 'NOTIFY_REDIRECT_TO', value: notifyRedirectTo }
+        { name: 'AGENT_TENANT_ID', value: agentTenantId }
         { name: 'ADO_ORG_URL', value: adoOrgUrl }
         { name: 'ADO_PROJECT', value: adoProject }
         { name: 'APP_URL', value: appUrl }

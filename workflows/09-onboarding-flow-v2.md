@@ -62,6 +62,13 @@ Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings 
 | Write refused (permission): retried every run for 24 h (new permissions reach the worker late, F61) | Warning while waiting; resolved when it works |
 | Write still refused after 24 h, 3 failed attempts, role/scope not on the allow-list | High, Needs developer |
 
+## Tenants, environments, mail (21 Oct 2026)
+- **One project per tenant.** SAMPLE data: `SAMPLE-PEST` (environments Dev, PreProd, Prod; the agent's tenant in the pilot) and `SAMPLE-VESTACY` (a SAMPLE tenant id, so it shows the hand-off: the agent never reads or writes it). Bind a project to a tenant with `seed_sample_data.py --tenant-id PROJECT=<guid>` (or `=none` for the agent's tenant). The worker's tenant is `AGENT_TENANT_ID` (set by `deploy_free.sh worker` / `environment`).
+- **Real workbooks** (Vestacy/PEST group classification, Data Response documents) go in with `tools/import_workbook.py` (one tenant per run, output in `.local/`, `--apply` writes Cosmos). Red rows are never sent for approval; amber caveats are shown to the approvers; groups only in the response document are "to be created"; resource names resolve to Azure scopes with `--scope-map` or `--resolve` (read-only `az`).
+- **Azure roles per group.** PMO pastes them on the Mapping sheet page (*Azure roles the AI agent assigns*), one per line `Role name | resource name | Azure scope`. The approvers see the full list on the decision page. After both approvals the agent assigns them only when every role is resolved and allow-listed; otherwise the role team gets the full list and must record exactly those lines.
+- **Mail.** `deploy_free.sh environment <sub> test --redirect <tester mail>` (settings only) and `deploy_free.sh email <sub> --redirect <tester mail>` (new resources: dry run → approval). Without mail the notifications stay in the app (status Recorded). Who is mailed: the named Owner and Security (approval requests), Security (alerts, what the agent provisioned/assigned, completion, daily summary), the requester, and the joiner at the Enterprise ID mail (request received, access ready with sign-in name, group and roles). Never a TAP.
+- **Why a decision is missing.** The request page tells the signed-in person why they see no decision (not the named Owner, no Owner role yet, gave the Owner approval so Security must be someone else). A guest Owner is matched under the mail, the `#EXT#` UPN or the `live.com#` form.
+
 ## Validation
 - Status table shows Request ID, requester, stage, waiting on, done, next, time in stage, ADO link.
 - Daily summary (Issues and reports) shows wait time per team; issues list shows any SLA breach, mismatch or unauthorized approval.
@@ -70,6 +77,8 @@ Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings 
 ## Failure handling
 | Symptom | Action |
 |---|---|
+| Owner sees no decision | Read the blue *Waiting for a decision* box on the request: it names who the request waits for and why this sign-in does not count. Fix the Owner role (`--register-user … --roles Owner`) or ask the requester to correct the Owner. |
+| No mail arrives | `workflow_diag.sh`: notifications by status and mail errors. Recorded = mail not switched on (`deploy_free.sh email`); MailForbidden = the sender role has not reached the worker yet (retried 3 times, then an issue). |
 | AI Review, waiting on AI agent | Normal for up to 5 min: the website runs the rule checks, the worker runs the Entra check (every 5 min). *Run agent step now* cannot run the Entra check. |
 | With ID Team, waiting on AI agent > 10 min (v2.1) | The worker provisions on its next run; Issues and reports shows any `agent-error` / provisioning issue; `workflow_diag.sh`. |
 | Stuck in AI Review > 10 min | Issues and reports (or `workflow_diag.sh`): a **Needs developer** issue `agent-error:…` names the error the worker hit; Entra read failure → `DependencyFailure`. No issue at all → the worker is not running the current code: `workflow_diag.sh` shows the last worker deploy; `tools/deploy_free.sh worker <sub>`. |

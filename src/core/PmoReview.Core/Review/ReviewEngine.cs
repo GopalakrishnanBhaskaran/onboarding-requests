@@ -19,7 +19,7 @@ public sealed record EngineOutcome(
 /// add concerns, then compute the outcome and validate the result against the schema.
 /// </summary>
 public sealed class ReviewEngine(DataStores stores, ISourcesOfTruth sources, IReviewModel model, ReviewLimits limits, ReviewPolicy policy,
-    IDirectoryReader? directory = null, bool skipEntraLocalDev = false)
+    IDirectoryReader? directory = null, bool skipEntraLocalDev = false, string? agentTenantId = null)
 {
     public ReviewerInfo Reviewer => model.Info;
 
@@ -43,8 +43,11 @@ public sealed class ReviewEngine(DataStores stores, ISourcesOfTruth sources, IRe
         }
 
         var match = ReviewChecks.Match(snapshot, sheet);
-        var entra = await CrossCheckAsync(snapshot, match.Row, ct);
-        var host = ReviewChecks.Evaluate(snapshot, project, sheet, responses, match, entra, policy, skipEntraLocalDev && directory is null);
+        // Tenant separation: only the process with the Entra reader (the worker, which knows its tenant) decides that a
+        // project's tenant is not its own; the website leaves the check pending for it.
+        var notConnected = directory is null ? null : Tenants.NotConnected(project, agentTenantId);
+        var entra = notConnected is null ? await CrossCheckAsync(snapshot, match.Row, ct) : null;
+        var host = ReviewChecks.Evaluate(snapshot, project, sheet, responses, match, entra, policy, skipEntraLocalDev && directory is null, notConnected);
 
         ModelReview review;
         using (var budget = CancellationTokenSource.CreateLinkedTokenSource(ct))

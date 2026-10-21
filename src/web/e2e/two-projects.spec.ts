@@ -24,7 +24,7 @@ async function as(browser: Browser, userId: string): Promise<{ ctx: BrowserConte
 /** Unique per run: the in-memory store lives as long as the local API, and the review flags duplicate requests. */
 const enterpriseId = (tag: string) => `sample.e2e.${tag}.${Date.now().toString(36)}`;
 
-async function submit(page: Page, fields: { enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string }) {
+async function submit(page: Page, fields: { enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string; environment?: string }) {
   await page.goto('/#/requests/new');
   await expect(page.getByRole('heading', { name: 'New onboarding request' })).toBeVisible();
   // The flow and who does what are stated upfront.
@@ -34,8 +34,10 @@ async function submit(page: Page, fields: { enterpriseId: string; resource: stri
   await page.getByLabel('Enterprise ID').fill(fields.enterpriseId);
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
-  await page.getByLabel('Resource').fill(fields.resource);
-  await page.getByLabel('Access level').fill(fields.accessLevel);
+  // Environment, resource and access level are picked from the mapping sheet of this tenant.
+  if (fields.environment) await page.getByLabel('Environment').selectOption(fields.environment);
+  await page.getByLabel('Resource').selectOption(fields.resource);
+  await page.getByLabel('Access level').selectOption(fields.accessLevel);
   await page.getByLabel('Justification').fill(fields.justification);
   await page.getByLabel('Owner (sign-in name)').fill(fields.owner);
   await page.getByRole('button', { name: 'Submit request' }).click();
@@ -50,6 +52,12 @@ async function expectStage(page: Page, stage: string) {
 async function open(page: Page, requestId: string) {
   await page.goto(`/#/requests/${requestId}`);
   await expect(page.getByRole('heading', { level: 1, name: /^Request [0-9a-f]{8}/ })).toBeVisible();
+}
+
+/** The decision needs the approver to confirm they read what is being decided. */
+async function decide(page: Page, button: string) {
+  await page.getByLabel(/I have read the request/).check();
+  await page.getByRole('button', { name: button }).click();
 }
 
 test('unauthenticated visitor is sent to Entra sign-in; the signed-out page is public', async ({ page }) => {
@@ -78,6 +86,8 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
   const otto = await as(browser, 'sample-user-otto');
   await open(otto.page, id);
   await expect(otto.page.getByRole('button', { name: DECISION })).toHaveCount(0);
+  // … and is told why, instead of a blank page.
+  await expect(otto.page.getByText(/Waiting for the Owner named on the request: sample-user-olivia@sample.invalid. You are signed in as sample-user-otto/)).toBeVisible();
 
   // A user of another project cannot see the request at all.
   const bob = await as(browser, 'sample-user-bob');
@@ -85,12 +95,14 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
 
   const olivia = await as(browser, 'sample-user-olivia');
   await open(olivia.page, id);
-  await olivia.page.getByRole('button', { name: 'Approve business need' }).click();
+  await expect(olivia.page.getByRole('button', { name: 'Approve business need' })).toBeDisabled();
+  await decide(olivia.page, 'Approve business need');
   await expectStage(olivia.page, 'Awaiting Security');
 
   const sam = await as(browser, 'sample-user-sam');
   await open(sam.page, id);
-  await sam.page.getByRole('button', { name: 'Approve risk and access level' }).click();
+  await expect(sam.page.getByText(/Approved by sample-user-olivia@sample.invalid/).first()).toBeVisible();
+  await decide(sam.page, 'Approve risk and access level');
   await expectStage(sam.page, 'With ID Team');
 
   const ivan = await as(browser, 'sample-user-ivan');
@@ -114,14 +126,14 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
   for (const u of [alice, otto, bob, olivia, sam, ivan, rose]) await u.ctx.close();
 });
 
-test('request that does not match the mapping sheet is returned with the reason and can be corrected', async ({ browser }) => {
+test('a request the AI review finds gaps in is returned with the reason and can be corrected', async ({ browser }) => {
   const alice = await as(browser, 'sample-user-alice');
   await submit(alice.page, {
     enterpriseId: enterpriseId('ret'),
-    resource: 'SAMPLE Unknown Resource',
+    resource: 'SAMPLE Databricks Engineering',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
-    justification: 'SAMPLE: needs access to a resource that is not in the mapping sheet.',
+    justification: 'SAMPLE: views dashboards.',
   });
   await expectStage(alice.page, 'Returned');
   await expect(alice.page.getByText('Why it was returned')).toBeVisible();
@@ -149,6 +161,50 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
 
   await alice.ctx.close();
   await otto.ctx.close();
+});
+
+test('tenant project: environment, the Azure roles and risk flags are on the decision page; Prod is returned', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  await alice.page.goto('/');
+  await alice.page.getByRole('combobox', { name: 'Project' }).click();
+  await alice.page.getByRole('option', { name: /SAMPLE PEST data platform/ }).click();
+  await expect(alice.page.getByText('Tenant:').first()).toBeVisible();
+  const mail = `${enterpriseId('pest')}@company.example`;
+  const id = await submit(alice.page, {
+    enterpriseId: mail,
+    environment: 'Dev',
+    resource: 'SAMPLE PEST Platform (ph)',
+    accessLevel: 'Support Reader',
+    owner: 'sample-user-olivia@sample.invalid',
+    justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
+  });
+  await expectStage(alice.page, 'Awaiting Owner');
+
+  const olivia = await as(browser, 'sample-user-olivia');
+  await olivia.page.goto('/');
+  await olivia.page.getByRole('combobox', { name: 'Project' }).click();
+  await olivia.page.getByRole('option', { name: /SAMPLE PEST data platform/ }).click();
+  await open(olivia.page, id);
+  const panel = olivia.page.locator('section[aria-labelledby="decision-h"]');
+  await expect(panel.getByText('SAMPLE PEST', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Dev', { exact: true })).toBeVisible();
+  await expect(panel.getByText(/sample-azr-pes-rg-data-dev-ph-weu-support-reader \(to be created\)/)).toBeVisible();
+  await expect(panel.getByRole('table', { name: 'Azure roles in this decision' }).getByText('Reader', { exact: true })).toBeVisible();
+  await decide(olivia.page, 'Approve business need');
+  await expectStage(olivia.page, 'Awaiting Security');
+
+  const prod = await submit(alice.page, {
+    enterpriseId: `${enterpriseId('prd')}@company.example`,
+    environment: 'Prod',
+    resource: 'SAMPLE PEST Platform (ph)',
+    accessLevel: 'Support Reader',
+    owner: 'sample-user-olivia@sample.invalid',
+    justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
+  });
+  expect(prod).toBeTruthy();
+  await expectStage(alice.page, 'Returned');
+  await expect(alice.page.getByText(/flagged red/).first()).toBeVisible();
+  for (const u of [alice, olivia]) await u.ctx.close();
 });
 
 test('PMO sees the mapping sheet and the response document', async ({ browser }) => {

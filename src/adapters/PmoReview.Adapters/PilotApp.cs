@@ -17,6 +17,9 @@ namespace PmoReview.Adapters;
 /// <summary>Settings read from environment / app settings. Defaults are the zero-cost pilot.</summary>
 public sealed record PilotSettings
 {
+    /// <summary>APP_ENVIRONMENT values. Only non-production environments may redirect mail to a test address.</summary>
+    public static readonly IReadOnlyList<string> AppEnvironments = ["pilot", "dev", "test", "prod"];
+
     public bool AllowPaidServices { get; init; }
     public IReadOnlyCollection<string> AllowedIdentityProviders { get; init; } = ["aad"];
     /// <summary>RuleOnly (pilot) | AzureOpenAI (paid).</summary>
@@ -43,6 +46,16 @@ public sealed record PilotSettings
         var unverified = On("ALLOW_UNVERIFIED_ENTRA");
         if (unverified && !On("PILOT_LOCAL_DEV"))
             throw new InvalidOperationException("ALLOW_UNVERIFIED_ENTRA=true is only allowed with PILOT_LOCAL_DEV=true (local development).");
+        var environment = (get("APP_ENVIRONMENT") ?? "pilot").Trim().ToLowerInvariant();
+        if (!AppEnvironments.Contains(environment))
+            throw new InvalidOperationException($"APP_ENVIRONMENT must be one of {string.Join(", ", AppEnvironments)}.");
+        var redirect = get("NOTIFY_REDIRECT_TO")?.Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(redirect)) redirect = null;
+        if (redirect is not null && environment == "prod")
+            throw new InvalidOperationException("NOTIFY_REDIRECT_TO is for test environments only; production mails the real recipients.");
+        if (redirect is not null && !System.Text.RegularExpressions.Regex.IsMatch(redirect, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))
+            throw new InvalidOperationException("NOTIFY_REDIRECT_TO must be one mail address.");
+        var tenant = get("AGENT_TENANT_ID")?.Trim();
         return new PilotSettings
         {
             AllowPaidServices = On("ALLOW_PAID_SERVICES"),
@@ -71,6 +84,10 @@ public sealed record PilotSettings
                 AgentRoleAssignment = On("AGENT_ROLE_ASSIGNMENT"),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
+                AgentTenantId = Guid.TryParse(tenant, out var tid) ? tid.ToString("D") : null,
+                AppEnvironment = environment,
+                MailEnabled = get("NOTIFY_SENDER") is "GraphMail" or "AcsEmail",
+                MailRedirectTo = redirect,
             },
         };
     }
@@ -116,7 +133,7 @@ public static class PilotApp
         // The model gets most of the budget; the rest covers claim, reads and commit.
         var modelBudget = budget > TimeSpan.FromSeconds(10) ? budget - TimeSpan.FromSeconds(5) : budget;
         var engine = new ReviewEngine(stores, sources, reviewer, new ReviewLimits { TimeBudget = modelBudget }, policy, directory,
-            skipEntraLocalDev: settings.Workflow.AllowUnverifiedEntra);
+            skipEntraLocalDev: settings.Workflow.AllowUnverifiedEntra, agentTenantId: settings.Workflow.AgentTenantId);
         var processor = new ReviewProcessor(stores, engine, clock, budget, loggers.CreateLogger<ReviewProcessor>());
         var dispatcher = DispatcherFactory.Create(settings, processor, queue);
         var runs = new RunService(stores, dispatcher, reviewer.Info, clock, TimeSpan.FromMinutes(settings.StuckRunMinutes));

@@ -14,6 +14,7 @@ public sealed record RequestSnapshot
     public string? DomainId { get; init; }
     public string? Resource { get; init; }
     public string? AccessLevel { get; init; }
+    public string? Environment { get; init; }
     public string? Justification { get; init; }
     public string? Owner { get; init; }
     public bool Guest { get; init; }

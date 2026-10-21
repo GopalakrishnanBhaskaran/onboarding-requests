@@ -66,7 +66,7 @@ public sealed class TestApp
     private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null)
     {
         Stores = stores ?? InMemoryDataStores.Create();
-        SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"))).GetAwaiter().GetResult();
+        SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
         Settings = settings;
         Directory = FakeDirectory.SeededFromSample();
         Roles = new FakeRoles();
@@ -77,6 +77,11 @@ public sealed class TestApp
         Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles,
             writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null);
     }
+
+    /// <summary>The approved access resource group of the tests (fills the SAMPLE PEST rows' Azure role scopes).</summary>
+    public const string SampleAccessScope = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-access";
+    public const string Pest = "SAMPLE-PEST";
+    public const string Vestacy = "SAMPLE-VESTACY";
 
     public static TestApp Create() => new(new PilotSettings(), null, null, null);
 
@@ -98,13 +103,15 @@ public sealed class TestApp
     }
 
     public static object Intake(string enterpriseId = "sample.e1001", string resource = "SAMPLE Databricks Engineering", string accessLevel = "User",
-        string? justification = null, string owner = "sample-user-olivia@sample.invalid", bool guest = false, string first = "Sample", string last = "Joiner") => new
+        string? justification = null, string owner = "sample-user-olivia@sample.invalid", bool guest = false, string first = "Sample", string last = "Joiner",
+        string? environment = null) => new
     {
         enterpriseId,
         firstName = first,
         lastName = last,
         resource,
         accessLevel,
+        environment,
         justification = justification ?? "SAMPLE: joins the data engineering team to build and run ingestion pipelines in the dev workspace.",
         owner,
         guest,
@@ -182,11 +189,18 @@ public sealed class TestApp
         notes = "SAMPLE: assigned.",
     };
 
-    public Task<Resp> ReportIdTeam(string requestId, object body, string user = Ivan) =>
-        Call(user, "POST", $"projects/{Alpha}/requests/{requestId}/tasks/id-team/report", body);
+    public Task<Resp> ReportIdTeam(string requestId, object body, string user = Ivan, string project = Alpha) =>
+        Call(user, "POST", $"projects/{project}/requests/{requestId}/tasks/id-team/report", body);
 
-    public Task<Resp> ReportRoleTeam(string requestId, object body, string user = Rose) =>
-        Call(user, "POST", $"projects/{Alpha}/requests/{requestId}/tasks/role-team/report", body);
+    public Task<Resp> ReportRoleTeam(string requestId, object body, string user = Rose, string project = Alpha) =>
+        Call(user, "POST", $"projects/{project}/requests/{requestId}/tasks/role-team/report", body);
+
+    /// <summary>A call whose platform principal carries a given sign-in name (userDetails), e.g. a guest UPN.</summary>
+    public Task<Resp> CallAs(string user, string userDetails, string method, string path, object? body = null) =>
+        Send(method, path, new Dictionary<string, string>
+        {
+            [ClientPrincipalParser.HeaderName] = ClientPrincipalParser.Encode(new ClientPrincipal("aad", user, userDetails, ["anonymous", "authenticated"])),
+        }, body is null ? null : AppJson.Serialize(body));
 
     /// <summary>The user signs in, registers a permanent method, and the ID team deletes the TAP.</summary>
     public void UserCompletesFirstSignIn(string upn = DefaultUser)

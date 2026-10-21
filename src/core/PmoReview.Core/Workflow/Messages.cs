@@ -8,7 +8,8 @@ public static class Recipients
 {
     public static IEnumerable<string?> Requester(AccessRequest r) => [r.CreatedByName];
     public static IEnumerable<string?> Owner(AccessRequest r) => [r.Owner];
-    public static IEnumerable<string?> User(AccessRequest r) => [r.DomainId];
+    /// <summary>The joiner: the enterprise mail address given as Enterprise ID (the new tenant account has no mailbox yet).</summary>
+    public static IEnumerable<string?> User(AccessRequest r) => [Services.DomainIds.MailOf(r.EnterpriseId)];
     public static IEnumerable<string?> Security(Project? p) => p?.Contacts.Security ?? [];
     public static IEnumerable<string?> IdTeam(Project? p) => p?.Contacts.IdTeam ?? [];
     public static IEnumerable<string?> RoleTeam(Project? p) => p?.Contacts.RoleTeam ?? [];
@@ -49,7 +50,7 @@ public static class Messages
 
     public static string Who(AccessRequest r) => $"{r.FirstName} {r.LastName} ({r.DomainId}{(r.Guest ? ", guest" : "")})";
 
-    public static string What(AccessRequest r) => $"{Who(r)}: '{r.AccessLevel}' on '{r.Resource}'";
+    public static string What(AccessRequest r) => $"{Who(r)}: '{r.AccessLevel}' on '{r.Resource}'{(r.Environment is null ? "" : $" ({r.Environment})")}";
 
     public static string Link(WorkflowSettings s, AccessRequest r) =>
         s.AppUrl is null ? $"Request ID {r.Id}" : $"{s.AppUrl.TrimEnd('/')}/#/requests/{Uri.EscapeDataString(r.Id)}";
@@ -117,9 +118,25 @@ public static class Messages
                $"Approvals: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)}).";
     }
 
-    public static string RoleTeamInstructions(ResponseRecord record) =>
-        $"From the response document: user {record.UserId}, group {record.EntraGroup}, role {record.Role}{(record.RoleScope is null ? "" : $" at {record.RoleScope}")}.\n" +
-        "Assign exactly this role to the group (no extra roles, none missing), then record what you assigned here; that updates the response document.";
+    public static string RoleTeamInstructions(ResponseRecord record) => record.AzureRoles.Count == 0
+        ? $"From the response document: user {record.UserId}, group {record.EntraGroup}, role {record.Role}{(record.RoleScope is null ? "" : $" at {record.RoleScope}")}.\n" +
+          "Assign exactly this role to the group (no extra roles, none missing), then record what you assigned here; that updates the response document."
+        : $"From the response document: user {record.UserId}, group {record.EntraGroup}{(record.Environment is null ? "" : $" ({record.Environment})")}. " +
+          $"Assign exactly these {record.AzureRoles.Count} Azure role(s) to the group (no extra roles, none missing):\n" +
+          Bullets(record.AzureRoles.Select(g => $"{g.RoleName} on {g.Where}{(g.ResourceType is null ? "" : $" ({g.ResourceType})")}")) +
+          "\nThen record exactly what you assigned here (one line per role and scope); that updates the response document.";
+
+    /// <summary>After the agent created the user, group and membership (v2.1).</summary>
+    public static (string, string) Provisioned(AccessRequest r, ReviewedScope scope, string done, string next, WorkflowSettings s) => (
+        $"AI agent provisioned request {Short(r)}: {r.DomainId}",
+        $"After the Owner and Security approvals, the AI agent provisioned {What(r)}.\n\n{done}\n{next}\n\n" +
+        $"Approved access:\n{scope.Summary}\n\n{Link(s, r)}");
+
+    /// <summary>After the agent assigned the approved Azure roles to the group (v2.1).</summary>
+    public static (string, string) RolesAssigned(AccessRequest r, ReviewedScope scope, IReadOnlyList<AzureRoleGrant> grants, WorkflowSettings s) => (
+        $"AI agent assigned {grants.Count} Azure role(s): request {Short(r)}",
+        $"After the Owner and Security approvals, the AI agent assigned these Azure roles to group {scope.EntraGroup} for {What(r)}:\n" +
+        $"{Bullets(grants.Select(g => $"{g.RoleName} at {g.Scope}"))}\n\nThe agent verifies the assignment next. {Link(s, r)}");
 
     public static (string, string) TeamTask(AccessRequest r, TeamTask task, WorkflowSettings s) => (
         $"{Team(task.Team)} task: request {Short(r)}",
@@ -134,11 +151,23 @@ public static class Messages
         $"{Who(r)} has signed in and registered a permanent method, but a Temporary Access Pass is still on the account. " +
         $"Delete it in Entra (the agent never deletes anything). {Link(s, r)}");
 
-    public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope) => (
-        "Your access is ready",
-        $"Hello {r.FirstName},\n\nYour access '{r.AccessLevel}' on '{r.Resource}' is ready (role {scope.Role}).\n" +
-        $"Sign in with {r.DomainId} at https://myapps.microsoft.com. The ID team gives you a one-time Temporary Access Pass directly and separately; " +
-        "it is never sent by mail. After the first sign-in, register a permanent sign-in method (Microsoft Authenticator or a passkey).");
+    public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null)
+    {
+        var grants = scope.Grants();
+        var roles = grants.Count == 0 ? $"role {scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
+            : $"Azure roles:\n{Bullets(grants.Select(g => $"{g.RoleName} on {g.ResourceName ?? g.Scope}"))}";
+        var tenant = project?.TenantName is { } t ? $"Tenant: {t}\n" : "";
+        return (
+            $"Your access is ready: {r.AccessLevel} on {r.Resource}{(r.Environment is null ? "" : $" ({r.Environment})")}",
+            $"Hello {r.FirstName},\n\nYour access '{r.AccessLevel}' on '{r.Resource}' is ready.\n\n" +
+            tenant +
+            (r.Environment is null ? "" : $"Environment: {r.Environment}\n") +
+            $"Your sign-in name (domain-specific ID): {r.DomainId}\n" +
+            $"Group: {scope.EntraGroup}\n{roles}\n\n" +
+            "How to sign in: go to https://mysignins.microsoft.com. The ID team gives you a one-time Temporary Access Pass directly and separately; " +
+            "it is never sent by mail. After the first sign-in, register a permanent sign-in method (Microsoft Authenticator or a passkey).\n\n" +
+            $"Request {Short(r)} · requested by {r.CreatedByName} · approved by the Owner and Security.");
+    }
 
     public static (string, string) Completed(AccessRequest r, ReviewedScope scope, string timings) => (
         $"Completed: request {Short(r)}",

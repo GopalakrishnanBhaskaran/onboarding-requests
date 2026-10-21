@@ -203,7 +203,9 @@ public class ReviewChecksTests
         }, directory: directory);
         Assert.Equal(ReviewOutcome.Pass, o.Result.Outcome);
         Assert.Equal([RiskFlags.Privileged, RiskFlags.Guest, RiskFlags.BroadAccess, RiskFlags.Sensitive], o.Result.RiskFlags);
-        Assert.All(o.Result.Checks.Where(c => c.Group == CheckGroups.RiskFlags), c => Assert.Equal(CheckStatus.Flagged, c.Status));
+        string[] raised = [CheckCodes.RiskPrivileged, CheckCodes.RiskGuest, CheckCodes.RiskBroadAccess, CheckCodes.RiskSensitive];
+        Assert.All(o.Result.Checks.Where(c => raised.Contains(c.Code)), c => Assert.Equal(CheckStatus.Flagged, c.Status));
+        Assert.All(o.Result.Checks.Where(c => c.Group == CheckGroups.RiskFlags && !raised.Contains(c.Code)), c => Assert.Equal(CheckStatus.Pass, c.Status));
     }
 
     [Theory]

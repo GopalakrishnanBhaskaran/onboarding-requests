@@ -14,5 +14,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- Used only by the disabled AzureOpenAIReviewModel (managed identity). No cost by itself. -->
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <!-- Mail through Azure Communication Services Email (managed identity), off unless NOTIFY_SENDER=AcsEmail (approval-gated). -->
+    <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
   </ItemGroup>
 </Project>

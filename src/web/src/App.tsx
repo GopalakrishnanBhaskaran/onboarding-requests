@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Body1, Button, Caption1, Dropdown, FluentProvider, Link, MessageBar, MessageBarBody, Option, Title3,
+  Badge, Body1, Button, Caption1, Dropdown, FluentProvider, Link, MessageBar, MessageBarBody, Option, Title3,
   makeStyles, tokens, webDarkTheme, webLightTheme,
 } from '@fluentui/react-components';
 import { api } from './lib/api';
@@ -98,7 +98,8 @@ function Shell() {
       <a className={s.skip} href="#main">Skip to content</a>
       <header className={s.header}>
         <Title3 as="p">Onboarding requests</Title3>
-        <Caption1>Pilot</Caption1>
+        <Badge appearance="outline" color={me?.appEnvironment === 'prod' ? 'danger' : 'informative'}>{(me?.appEnvironment ?? 'pilot').toUpperCase()}</Badge>
+        {project && <Caption1>Tenant: <b>{project.tenantName || project.name}</b></Caption1>}
         <div className={s.grow} />
         {me && me.projects.length > 0 && project && (
           <Dropdown
@@ -109,7 +110,7 @@ function Shell() {
           >
             {me.projects.map((p) => (
               <Option key={p.projectId} value={p.projectId} text={p.name}>
-                {p.name} ({p.roles.join(', ')})
+                {p.name}{p.tenantName ? ` · tenant ${p.tenantName}` : ''} ({p.roles.join(', ')})
               </Option>
             ))}
           </Dropdown>
@@ -122,6 +123,11 @@ function Shell() {
       <MessageBar intent="info" layout="multiline" style={{ borderRadius: 0 }}>
         <MessageBarBody>{me?.agentProvisioning ? AGENT_BANNER : BANNER}</MessageBarBody>
       </MessageBar>
+      {me?.mailEnabled && me.mailRedirectTo && (
+        <MessageBar intent="warning" style={{ borderRadius: 0 }}>
+          <MessageBarBody>Test environment: every notification mail goes to {me.mailRedirectTo} (the intended recipients are named in each mail).</MessageBarBody>
+        </MessageBar>
+      )}
 
       {me && project && (
         <nav className={s.nav} aria-label="Main">

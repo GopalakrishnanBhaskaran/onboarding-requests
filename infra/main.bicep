@@ -38,11 +38,32 @@ param workerLocation string = location
 @description('Worker .NET version on Flex Consumption. Must match the worker TargetFramework.')
 param workerRuntimeVersion string = '10.0'
 
-@description('Notifications: Outbox (pilot, kept in the app) or GraphMail (needs notifyFrom).')
+@description('Notifications: Outbox (pilot, kept in the app), GraphMail (needs notifyFrom) or AcsEmail (needs acsEndpoint + notifyFrom; deploy_free.sh email).')
 param notifySender string = 'Outbox'
 
-@description('Shared sender mailbox for GraphMail.')
+@description('Sender: the shared mailbox for GraphMail, or DoNotReply@<managed domain> for AcsEmail.')
 param notifyFrom string = ''
+
+@description('Mail stage A: allow the Azure Communication Services Email types in the policy (approval-gated, creates nothing).')
+param enableEmail bool = false
+
+@description('Azure Communication Services endpoint for AcsEmail (https://<name>.communication.azure.com).')
+param acsEndpoint string = ''
+
+@description('Deployment environment: pilot, dev, test or prod. Shown in the app; test mail subjects carry it.')
+@allowed([
+  'pilot'
+  'dev'
+  'test'
+  'prod'
+])
+param appEnvironment string = 'pilot'
+
+@description('Non-production only: every mail goes to this one test address (the intended recipients are named in the mail).')
+param notifyRedirectTo string = ''
+
+@description('Entra tenant id of the AI agent (tenant separation: projects bound to another tenant are never read or changed by the agent).')
+param agentTenantId string = tenant().tenantId
 
 @description('Azure DevOps organisation URL for request work items. Empty = off.')
 param adoOrgUrl string = ''
@@ -94,6 +115,7 @@ module pilot 'modules/pilot.bicep' = {
     budgetStartDate: budgetStartDate
     tags: tags
     enableHandoff: enableHandoff
+    enableEmail: enableEmail
   }
 }
 
@@ -107,6 +129,10 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     workerRuntimeVersion: workerRuntimeVersion
     notifySender: notifySender
     notifyFrom: notifyFrom
+    acsEndpoint: acsEndpoint
+    appEnvironment: appEnvironment
+    notifyRedirectTo: notifyRedirectTo
+    agentTenantId: agentTenantId
     adoOrgUrl: adoOrgUrl
     adoProject: adoProject
     roleReader: roleReader

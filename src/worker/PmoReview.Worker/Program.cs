@@ -14,7 +14,7 @@ using PmoReview.Core.Storage;
 using PmoReview.Core.Workflow;
 
 // The AI agent's background worker (paid component). Refuses to start unless paid services are explicitly allowed
-// (CLAUDE.md rule 10). Managed identity only. The agent never approves. Entra and Azure RBAC are read only unless the
+// (CLAUDE.md rule 11). Managed identity only. The agent never approves. Entra and Azure RBAC are read only unless the
 // approved v2.1 provisioning is switched on (AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT): then, only after the Owner and
 // Security approvals, it creates the user, group and membership and assigns allow-listed Azure roles. Never a TAP.
 string? Env(string name) => Environment.GetEnvironmentVariable(name);
@@ -58,9 +58,16 @@ var host = new HostBuilder()
             var parts = sp.GetRequiredService<WorkflowParts>();
             var loggers = sp.GetRequiredService<ILoggerFactory>();
             var clock = sp.GetRequiredService<IClock>();
-            INotificationSender sender = Env("NOTIFY_SENDER") == "GraphMail"
-                ? new GraphMailSender(Http(), credential, Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox)."))
-                : new OutboxOnlySender();
+            INotificationSender sender = Env("NOTIFY_SENDER") switch
+            {
+                "GraphMail" => new GraphMailSender(Http(), credential, Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox).")),
+                // Azure Communication Services Email with the worker's managed identity (deploy_free.sh email, approval-gated).
+                "AcsEmail" => new AcsEmailSender(
+                    Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var acs) ? acs : throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs ACS_ENDPOINT (https://<name>.communication.azure.com)."),
+                    credential,
+                    Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs NOTIFY_FROM (DoNotReply@<managed domain>).")),
+                _ => new OutboxOnlySender(),
+            };
             IWorkItemTracker tracker = Uri.TryCreate(Env("ADO_ORG_URL"), UriKind.Absolute, out var org) && !string.IsNullOrWhiteSpace(Env("ADO_PROJECT"))
                 ? new AzureDevOpsWorkItemTracker(Http(), credential, new AzureDevOpsOptions
                 {
@@ -72,7 +79,8 @@ var host = new HostBuilder()
                 ? new AzureOpenAIAssistant(ReviewModelFactory.Chat(settings, logger: loggers.CreateLogger("AzureOpenAI")))
                 : null;
             return new WorkflowWorker(parts.Agent,
-                new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>()),
+                new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>(),
+                    redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment),
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant));
         });

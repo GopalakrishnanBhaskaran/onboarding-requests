@@ -44,13 +44,16 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
 {
     public bool CanReadEntra => directory is not null;
 
-    private CheckResult NoEntra(string code, string group) => new(code, group,
-        settings.AllowUnverifiedEntra ? CheckStatus.NotApplicable : CheckStatus.Pending,
-        settings.AllowUnverifiedEntra ? "Not verified in Entra (local development: no directory reader)." : "Verified in Entra by the background agent within a few minutes.");
+    private CheckResult NoEntra(string code, string group, string? notConnected = null) => notConnected is not null
+        ? new(code, group, CheckStatus.NotApplicable, $"Not verified by the agent: {notConnected}. The team's report is the record.")
+        : new(code, group,
+            settings.AllowUnverifiedEntra ? CheckStatus.NotApplicable : CheckStatus.Pending,
+            settings.AllowUnverifiedEntra ? "Not verified in Entra (local development: no directory reader)." : "Verified in Entra by the background agent within a few minutes.");
 
     /// <summary>Stage 4: user ID, group, membership, mapping sheet updated, TAP rules.</summary>
+    /// <param name="notConnected">The project's tenant is not the agent's (tenant separation): Entra is not read.</param>
     public async Task<Verification> IdTeamAsync(AccessRequest r, ReviewedScope scope, WorkflowState flow, IdTeamReport report,
-        IReadOnlyList<MappingRow> sheet, string groupPattern, CancellationToken ct)
+        IReadOnlyList<MappingRow> sheet, string groupPattern, CancellationToken ct, string? notConnected = null)
     {
         const string G = CheckGroups.IdTeam;
         var checks = new List<CheckResult>();
@@ -82,11 +85,11 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
 
         checks.Add(TapRules(report, flow));
 
-        if (directory is null)
+        if (directory is null || notConnected is not null)
         {
-            checks.Add(NoEntra(VerifyCodes.EntraUser, G));
-            checks.Add(NoEntra(VerifyCodes.EntraGroup, G));
-            checks.Add(NoEntra(VerifyCodes.EntraMembership, G));
+            checks.Add(NoEntra(VerifyCodes.EntraUser, G, notConnected));
+            checks.Add(NoEntra(VerifyCodes.EntraGroup, G, notConnected));
+            checks.Add(NoEntra(VerifyCodes.EntraMembership, G, notConnected));
             return new Verification(checks);
         }
 
@@ -150,12 +153,12 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
             : new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Fail, string.Join(" ", problems));
     }
 
-    /// <summary>Stage 5: the assignment matches the approved role exactly (no extra, none missing).</summary>
-    public async Task<Verification> RoleTeamAsync(ReviewedScope scope, ResponseRecord? record, RoleTeamReport report, CancellationToken ct)
+    /// <summary>Stage 5: the assignment matches the approved roles exactly (no extra, none missing).</summary>
+    public async Task<Verification> RoleTeamAsync(ReviewedScope scope, ResponseRecord? record, RoleTeamReport report, CancellationToken ct, string? notConnected = null)
     {
         const string G = CheckGroups.RoleTeam;
         var checks = new List<CheckResult>();
-        var expected = new AssignedRole(scope.Role, scope.RoleScope);
+        var expected = WorkflowAgent.ExpectedRoles(scope);
 
         if (record is null)
         {
@@ -169,9 +172,11 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
 
         checks.Add(Exact(VerifyCodes.RoleExact, "Reported and recorded", expected, record.AssignedRoles.Concat(report.AssignedRoles).Distinct(RoleComparer.Instance).ToList()));
 
-        if (roles is null || directory is null)
+        if (roles is null || directory is null || notConnected is not null)
         {
-            checks.Add(new CheckResult(VerifyCodes.RoleInAzure, G, CheckStatus.NotApplicable, "No role assignment reader configured; verified against the response document and the team's report."));
+            checks.Add(new CheckResult(VerifyCodes.RoleInAzure, G, CheckStatus.NotApplicable, notConnected is not null
+                ? $"Not read in Azure: {notConnected}. Verified against the response document and the team's report."
+                : "No role assignment reader configured; verified against the response document and the team's report."));
             return new Verification(checks);
         }
         var groups = await directory.FindGroupsAsync(scope.EntraGroup, ct);
@@ -180,21 +185,34 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
             checks.Add(new CheckResult(VerifyCodes.RoleInAzure, G, CheckStatus.Fail, $"Group {scope.EntraGroup} is not unique in Entra ({groups.Count} found)."));
             return new Verification(checks);
         }
-        var actual = await roles.ListForPrincipalAsync(groups[0].ObjectId, scope.RoleScope, ct);
+        var actual = await AssignedAsync(groups[0].ObjectId, expected, ct);
         checks.Add(actual is null
             ? new CheckResult(VerifyCodes.RoleInAzure, G, CheckStatus.NotApplicable, "This scope type cannot be read; verified against the response document.")
             : Exact(VerifyCodes.RoleInAzure, "Assigned in Azure", expected, actual));
         return new Verification(checks);
     }
 
-    private static CheckResult Exact(string code, string what, AssignedRole expected, IReadOnlyList<AssignedRole> actual)
+    /// <summary>The group's assignments at exactly the expected scopes; null if any scope cannot be read here.</summary>
+    private async Task<IReadOnlyList<AssignedRole>?> AssignedAsync(string groupId, IReadOnlyList<AssignedRole> expected, CancellationToken ct)
     {
-        AssignedRole[] missing = actual.Contains(expected, RoleComparer.Instance) ? [] : [expected];
-        var extra = actual.Where(a => !RoleComparer.Instance.Equals(a, expected)).ToList();
-        if (missing.Length == 0 && extra.Count == 0)
-            return new CheckResult(code, CheckGroups.RoleTeam, CheckStatus.Pass, $"{what}: exactly {Describe(expected)}.");
+        var all = new List<AssignedRole>();
+        foreach (var at in expected.Select(e => (e.Scope ?? "").Trim().TrimEnd('/')).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var found = await roles!.ListForPrincipalAsync(groupId, at.Length == 0 ? null : at, ct);
+            if (found is null) return null;
+            all.AddRange(found);
+        }
+        return all.Distinct(RoleComparer.Instance).ToList();
+    }
+
+    private static CheckResult Exact(string code, string what, IReadOnlyList<AssignedRole> expected, IReadOnlyList<AssignedRole> actual)
+    {
+        var missing = expected.Where(e => !actual.Contains(e, RoleComparer.Instance)).ToList();
+        var extra = actual.Where(a => !expected.Contains(a, RoleComparer.Instance)).ToList();
+        if (missing.Count == 0 && extra.Count == 0)
+            return new CheckResult(code, CheckGroups.RoleTeam, CheckStatus.Pass, $"{what}: exactly {string.Join("; ", expected.Select(Describe))}.");
         var parts = new List<string>();
-        if (missing.Length > 0) parts.Add($"missing {Describe(expected)}");
+        if (missing.Count > 0) parts.Add($"missing {string.Join(", ", missing.Select(Describe))}");
         if (extra.Count > 0) parts.Add($"extra {string.Join(", ", extra.Select(Describe))}");
         return new CheckResult(code, CheckGroups.RoleTeam, CheckStatus.Fail, $"{what}: {string.Join("; ", parts)}. Correct the assignment or revoke the extra role.");
     }
@@ -202,11 +220,12 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
     private static string Describe(AssignedRole a) => a.Scope is null ? a.Role : $"{a.Role} at {a.Scope}";
 
     /// <summary>Stage 6: login with the assigned access, permanent method registered, TAP deleted.</summary>
-    public async Task<Verification> FinalAsync(AccessRequest r, ReviewedScope scope, DateTimeOffset since, CancellationToken ct)
+    public async Task<Verification> FinalAsync(AccessRequest r, ReviewedScope scope, DateTimeOffset since, CancellationToken ct, string? notConnected = null)
     {
         const string G = CheckGroups.FinalVerification;
-        if (directory is null)
-            return new Verification([NoEntra(VerifyCodes.FinalLogin, G), NoEntra(VerifyCodes.FinalAccess, G), NoEntra(VerifyCodes.FinalPermanentMethod, G), NoEntra(VerifyCodes.FinalTapDeleted, G)]);
+        if (directory is null || notConnected is not null)
+            return new Verification([NoEntra(VerifyCodes.FinalLogin, G, notConnected), NoEntra(VerifyCodes.FinalAccess, G, notConnected),
+                NoEntra(VerifyCodes.FinalPermanentMethod, G, notConnected), NoEntra(VerifyCodes.FinalTapDeleted, G, notConnected)]);
 
         var checks = new List<CheckResult>();
         var user = await directory.FindUserAsync(r.DomainId!, ct);
@@ -224,13 +243,15 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
         var detail = member ? $"Member of {scope.EntraGroup}" : $"Not a member of {scope.EntraGroup}";
         if (member && roles is not null)
         {
-            var actual = await roles.ListForPrincipalAsync(groups[0].ObjectId, scope.RoleScope, ct);
-            if (actual is not null && !(actual.Count == 1 && RoleComparer.Instance.Equals(actual[0], new AssignedRole(scope.Role, scope.RoleScope))))
+            var expected = WorkflowAgent.ExpectedRoles(scope);
+            var actual = await AssignedAsync(groups[0].ObjectId, expected, ct);
+            var exact = actual is not null && actual.Count == expected.Count && expected.All(e => actual.Contains(e, RoleComparer.Instance));
+            if (actual is not null && !exact)
             {
                 access = CheckStatus.Fail;
-                detail += $"; group roles are {string.Join(", ", actual.Select(Describe))}, expected exactly {scope.Role}";
+                detail += $"; group roles are {string.Join(", ", actual.Select(Describe))}, expected exactly {string.Join(", ", expected.Select(Describe))}";
             }
-            else if (actual is not null) detail += $" with role {scope.Role}";
+            else if (actual is not null) detail += $" with {string.Join(", ", expected.Select(Describe))}";
         }
         checks.Add(new CheckResult(VerifyCodes.FinalAccess, G, access, detail + "."));
 

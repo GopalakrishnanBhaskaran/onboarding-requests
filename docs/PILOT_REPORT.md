@@ -1,13 +1,13 @@
 # Pilot Report — PMO onboarding flow (v2)
 
-Generated 2026-10-17 07:25 UTC from commit `2a82fa3` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
+Generated 2026-10-21 16:58 UTC from commit `e606253` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
 
 ## Verdict
 
 - Acceptance cases: **27/27 passed**.
 - Critical gates: **12/12 passed**.
-- Unit, contract and security tests: **210/210 passed** (0 failed, 0 skipped).
-- Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **6 passed, 0 failed**.
+- Unit, contract and security tests: **280/281 passed** (0 failed, 1 skipped).
+- Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **7 passed, 0 failed**.
 
 ## Critical gates
 
@@ -33,7 +33,7 @@ Generated 2026-10-17 07:25 UTC from commit `2a82fa3` by `tools/run_acceptance.sh
 | AC01 | Flow overview stated upfront | Submit response and notification carry the 7-step flow and who does what | response flowOverview 7 steps; notification to sample-user-alice@sample.invalid | Your onboarding request for Sample Joiner (sample.e1001@sample.invalid): 'User' on 'SAMPLE Databricks Engineering' was received.; ; Flow: | **PASS** |
 | AC02 | Incomplete request rejected **(gate)** | 400 incomplete_request listing exactly the missing fields; nothing saved | 400 incomplete_request: First name, Last name, Access level, Justification, Owner | saved requests: 0 | **PASS** |
 | AC03 | Domain-specific ID derived; ID/name format fixed | domainId = normalised Enterprise ID + project domain; format fixes logged | domainId sample.e7007@sample.invalid; names Sample Joiner | — | **PASS** |
-| AC04 | Review pass goes to the Owner with the AI summary | Awaiting Owner; notification to the named Owner with what, why, group, role, risk flags, review results | AwaitingOwner; to sample-user-olivia@sample.invalid | What: Sample Joiner (sample.e1001@sample.invalid) requests 'User' on 'SAMPLE Databricks Engineering'.; Why: SAMPLE: joins the data engineering team to build and run ingestion pipelines in the dev workspace.; Group: SAMPLE-GRP-ALPHA-DBW-ENG-USER.; Role: SAMPLE Workspace User at SAMPLE dbw-alpha-dev.; Risk flags: none.; Review: Pass — 20/20 checks passed. | **PASS** |
+| AC04 | Review pass goes to the Owner with the AI summary | Awaiting Owner; notification to the named Owner with what, why, group, role, risk flags, review results | AwaitingOwner; to sample-user-olivia@sample.invalid | What: Sample Joiner (sample.e1001@sample.invalid) requests 'User' on 'SAMPLE Databricks Engineering'.; Why: SAMPLE: joins the data engineering team to build and run ingestion pipelines in the dev workspace.; Group: SAMPLE-GRP-ALPHA-DBW-ENG-USER.; Role: SAMPLE Workspace User at SAMPLE dbw-alpha-dev.; Risk flags: none.; Review: Pass — 25/25 checks passed. | **PASS** |
 | AC05 | Mapping gap returned, never sent for approval **(gate)** | Returned to requester and PMO with specific reasons; no approval request | Returned; to sample-user-alice@sample.invalid,sample.pmo.alpha@sample.invalid | Mapping sheet: The mapping sheet has no row for resource 'SAMPLE Unknown System'. | **PASS** |
 | AC06 | Mapping sheet checks | Duplicate/conflicting rows, deprecated row, bad group name, unflagged privileged role each FAIL with a reason | Fail; failed REQ_PRIVILEGED_FLAGGED | Request vs mapping: Role Owner ('Admin') is privileged but row A-BILLING-ADMIN is not flagged Privileged. PMO must flag it. | **PASS** |
 | AC07 | Response document checks | Existing duplicate and conflicting assignment FAIL | duplicate: RESP_NO_DUPLICATE; conflict: RESP_NO_CONFLICT | — | **PASS** |
@@ -49,7 +49,7 @@ Generated 2026-10-17 07:25 UTC from commit `2a82fa3` by `tools/run_acceptance.sh
 | AC17 | Role mismatch returned to the role team | Task Returned (missing/extra role); RoleMismatch issue | Returned | - Reported and recorded: missing SAMPLE Workspace User at SAMPLE dbw-alpha-dev; extra SAMPLE Workspace Admin at SAMPLE dbw-alpha-dev. Correct the assignment or revoke the extra role. | **PASS** |
 | AC18 | Mapping change after review re-runs the review **(gate)** | mapping-changed event, new review, continues only if group and role are unchanged | AwaitingSecurity; events mapping-changed > review-start > review-pass | — | **PASS** |
 | AC19 | Final verification and notifications | Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified | Completed; checks FINAL_LOGIN=Pass, FINAL_ACCESS=Pass, FINAL_PERMANENT_METHOD=Pass, FINAL_TAP_DELETED=Pass | notifications: FlowOverview, ApprovalRequested, TeamTask, AccessReady, CompletionSummary, PmoInformed, Closure | **PASS** |
-| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-fcba68a14a0f48d3a34345ef434089be | Onboarding fcba68a1: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
+| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-5f8b67e93b474d38b053c157ff0d291b | Onboarding 5f8b67e9: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
 | AC21 | Status line and time per stage | Request ID \| Requester \| stage \| waiting on \| done \| next \| time in stage \| ADO link; wait per team | Awaiting Owner \| waiting Owner \| 5h 0m | Owner=5h 0m; AI agent=0m | **PASS** |
 | AC22 | Auto-fix limit then Failed-Needs-Dev | At most 3 retries per step; Failed-Needs-Dev with developer report | FailedNeedsDev; attempts r1=3 | — | **PASS** |
 | AC23 | Agent never approves, creates or assigns **(gate)** | No grant/assign/provision route; no Entra write call in source | 24 routes, none grant/assign/provision; Entra write calls in source: 0 | — | **PASS** |

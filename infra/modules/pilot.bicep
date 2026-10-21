@@ -7,6 +7,8 @@ param budgetStartDate string
 param tags object
 @description('Stage A for the AI agent worker (historical name): also allow the worker types (Function App, Flex plan, its storage account).')
 param enableHandoff bool = false
+@description('Mail stage A (approval-gated): also allow the Azure Communication Services Email types. Creates nothing.')
+param enableEmail bool = false
 
 var suffix = uniqueString(resourceGroup().id)
 var cosmosName = 'cosmos-pmo-pilot-${suffix}'
@@ -45,6 +47,14 @@ var handoffResourceTypes = [
   'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments'
 ]
 
+// Mail (approval-gated, deploy_free.sh email): Azure Communication Services Email with an Azure-managed domain.
+// Pay per mail from Azure credits (VERIFIED_FACTS F64); nothing is created until enableEmail and the email deployment run.
+var emailResourceTypes = [
+  'Microsoft.Communication/communicationServices'
+  'Microsoft.Communication/emailServices'
+  'Microsoft.Communication/emailServices/domains'
+]
+
 resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
   name: 'pmo-pilot-allowed-types'
   properties: {
@@ -56,7 +66,7 @@ resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
     enforcementMode: 'Default'
     parameters: {
       listOfResourceTypesAllowed: {
-        value: enableHandoff ? concat(allowedResourceTypes, handoffResourceTypes) : allowedResourceTypes
+        value: concat(allowedResourceTypes, enableHandoff ? handoffResourceTypes : [], enableEmail ? emailResourceTypes : [])
       }
     }
   }

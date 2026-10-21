@@ -28,6 +28,9 @@ public sealed class FakeDirectory : IDirectoryReader
                      "SAMPLE-GRP-ALPHA-DBW-ENG-USER", "SAMPLE-GRP-ALPHA-DBW-ENG-ADMIN", "SAMPLE-GRP-ALPHA-SALES-READ", "SAMPLE-GRP-ALPHA-SALES-WRITE",
                      "SAMPLE-GRP-ALPHA-LEGACY-USER", "SAMPLE-GRP-ALPHA-DRIVE-EDIT", "SAMPLE-GRP-ALPHA-DRIVE-EDIT-ALT", "sample_wiki_editors",
                      "SAMPLE-GRP-ALPHA-BILLING-ADMIN", "SAMPLE-GRP-BETA-TEST-USER",
+                     // SAMPLE PEST (the agent's tenant in the tests): the PreProd groups exist, the Dev ones are to be created.
+                     "sample-azr-pes-rg-data-ppd-ph-weu-support-reader", "sample-azr-pes-rg-data-ppd-ph-weu-support-writer",
+                     "sample-azr-pes-rg-data-ppd-fin-weu-powerbidevelopers",
                  })
             d.AddGroup(g);
         return d;
@@ -182,9 +185,12 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory) : IDirectoryWri
     /// <summary>The next membership add fails once with NotReplicated (a just-created group).</summary>
     public bool NotReplicatedOnce { get; set; }
 
+    public List<NewUser> Users { get; } = [];
+
     public Task<DirectoryUser> CreateUserAsync(NewUser user, CancellationToken ct)
     {
         Write($"create-user {user.UserPrincipalName}");
+        Users.Add(user);
         return Task.FromResult(directory.AddUser(user.UserPrincipalName));
     }
 
@@ -226,7 +232,7 @@ public sealed class FakeRoleWriter(FakeRoles roles) : IRoleAssignmentWriter
     {
         if (FailWith is { } f) throw new DirectoryWriteException(f);
         Calls.Add($"{principalType} {principalObjectId} {roleDefinitionId} {scope}");
-        roles.Assign(principalObjectId, roleDefinitionId == Reader ? "Reader" : roleDefinitionId, scope);
+        roles.Assign(principalObjectId, BuiltInRoles.NameOf(roleDefinitionId) ?? roleDefinitionId, scope);
         return Task.CompletedTask;
     }
 }

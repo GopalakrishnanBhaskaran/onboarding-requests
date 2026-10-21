@@ -42,7 +42,11 @@ public sealed record RequestView(
     IReadOnlyList<Notification> Notifications,
     IReadOnlyList<Issue> Issues,
     IReadOnlyList<string> FlowOverview,
-    string WhoDoesWhat);
+    string WhoDoesWhat)
+{
+    /// <summary>Why the caller sees no decision while the request waits for an approval (wrong person, missing role, …).</summary>
+    public string? ApprovalHint { get; init; }
+}
 
 public sealed record ActionItem(StatusLine Status, string Action);
 
@@ -367,8 +371,41 @@ public sealed partial class WorkflowService(
         var issueList = caller.Has(projectId, Permission.ViewIssues)
             ? (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).Where(i => i.RequestId == requestId).OrderByDescending(i => i.LastSeenAt).ToList()
             : [];
-        return new RequestView(Endpoints.ToItem(current), Reports.StatusLine(r, now), Reports.Timings(r, now), ActionsFor(caller, r),
-            await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhatFor(settings));
+        var actions = ActionsFor(caller, r);
+        return new RequestView(Endpoints.ToItem(current), Reports.StatusLine(r, now), Reports.Timings(r, now), actions,
+            await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhatFor(settings))
+        {
+            ApprovalHint = ApprovalHint(caller, r, actions),
+        };
+    }
+
+    /// <summary>
+    /// Shown instead of the decision panel when the request waits for an approval the caller cannot give, so a missing
+    /// Owner decision is never a silent blank: who it waits for, and why this sign-in does not count.
+    /// </summary>
+    public static string? ApprovalHint(CallerContext caller, AccessRequest r, IReadOnlyList<string> actions)
+    {
+        var f = r.Flow;
+        if (f is null || actions.Contains(Actions.ApproveOwner) || actions.Contains(Actions.ApproveSecurity)) return null;
+        var p = r.ProjectId;
+        var me = string.IsNullOrWhiteSpace(caller.DisplayName) ? "this account" : caller.DisplayName;
+        if (f.Status == RequestStatus.AwaitingOwner)
+        {
+            if (caller.Is(r.Owner) && !caller.Has(p, Permission.ApproveAsOwner))
+                return $"You are the Owner named on this request, but {me} has no Owner role in this project yet, so the decision is not shown. " +
+                       "Ask the pilot operator to register your account with the Owner role (tools/seed_sample_data.py --register-user … --roles Owner), then refresh.";
+            if (caller.Has(p, Permission.ApproveAsOwner))
+                return $"Waiting for the Owner named on the request: {r.Owner}. You are signed in as {me}; only the named Owner can decide. " +
+                       "If that is you under another sign-in name, sign in with that account or ask the requester to correct the Owner.";
+            return $"Waiting for the Owner named on the request: {r.Owner}.";
+        }
+        if (f.Status == RequestStatus.AwaitingSecurity)
+        {
+            if (caller.Has(p, Permission.ApproveAsSecurity) && f.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
+                return "You gave the Owner approval on this request, so another Security approver must decide (four eyes).";
+            return "Waiting for a Security approver.";
+        }
+        return null;
     }
 
     public async Task<IReadOnlyList<StatusLine>> ListAsync(CallerContext caller, string projectId, CancellationToken ct)

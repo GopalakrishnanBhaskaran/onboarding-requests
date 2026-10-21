@@ -28,9 +28,22 @@ public sealed class OutboxOnlySender : INotificationSender
     public Task SendAsync(Notification notification, CancellationToken ct) => Task.CompletedTask;
 }
 
-/// <summary>Worker: sends pending notifications. Retries at most 3 times, then marks Failed and logs an issue.</summary>
-public sealed class NotificationDispatcher(DataStores stores, INotificationSender sender, IssueLog issues, IClock clock, ILogger<NotificationDispatcher> logger, int maxAttempts = 3)
+/// <summary>
+/// Worker: sends pending notifications. Retries at most 3 times, then marks Failed and logs an issue. In a test
+/// environment with <paramref name="redirectTo"/> every mail goes to that one address, marked as a test and naming the
+/// intended recipients; the notification keeps its real recipients and records where it was delivered.
+/// </summary>
+public sealed class NotificationDispatcher(DataStores stores, INotificationSender sender, IssueLog issues, IClock clock, ILogger<NotificationDispatcher> logger,
+    int maxAttempts = 3, string? redirectTo = null, string environment = "pilot")
 {
+    /// <summary>The mail as it leaves the app: unchanged, or redirected to the test address.</summary>
+    public Notification Outgoing(Notification n) => redirectTo is null ? n : n with
+    {
+        To = [redirectTo],
+        Subject = $"[{environment.ToUpperInvariant()} test] {n.Subject}",
+        Body = $"Test environment ({environment}): this mail was meant for {string.Join(", ", n.To)}. It was redirected to the test address.\n\n{n.Body}",
+    };
+
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
         var handled = 0;
@@ -48,8 +61,9 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
                 {
                     try
                     {
-                        await sender.SendAsync(n, ct);
-                        next = n with { Status = NotificationStatus.Sent, SentAt = clock.UtcNow, Attempts = n.Attempts + 1, LastError = null };
+                        var outgoing = Outgoing(n);
+                        await sender.SendAsync(outgoing, ct);
+                        next = n with { Status = NotificationStatus.Sent, SentAt = clock.UtcNow, Attempts = n.Attempts + 1, LastError = null, DeliveredTo = outgoing.To };
                     }
                     catch (OutboundException e)
                     {

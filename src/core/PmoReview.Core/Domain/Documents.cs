@@ -35,11 +35,25 @@ public sealed record ProjectContacts
     public string? OwnerManagerFallback { get; init; }
 }
 
+/// <summary>
+/// One project = one Microsoft Entra tenant (e.g. Vestacy, PEST). Tenants are kept apart: every request, mapping row,
+/// response record, user role and notification belongs to exactly one project, and a group or user in one tenant says
+/// nothing about another, even when the names look alike.
+/// </summary>
 public sealed record Project : IDocument
 {
     public required string Id { get; init; }
     public required string ProjectId { get; init; }
     public required string Name { get; init; }
+    /// <summary>Display name of the Entra tenant this project's users, groups and roles live in (e.g. "PEST").</summary>
+    public string? TenantName { get; init; }
+    /// <summary>
+    /// Entra tenant (directory) id. Null = the AI agent's own tenant. When set, the agent reads and writes Entra only if it
+    /// equals <see cref="Workflow.WorkflowSettings.AgentTenantId"/>; otherwise the teams do it in that tenant.
+    /// </summary>
+    public string? TenantId { get; init; }
+    /// <summary>Environments a request can target, in order (e.g. Dev, PreProd, Prod). Empty = no environment field.</summary>
+    public IReadOnlyList<string> Environments { get; init; } = [];
     /// <summary>Appended to the normalised Enterprise ID to derive the domain-specific ID, e.g. "@contoso.onmicrosoft.com".</summary>
     public string? DomainIdSuffix { get; init; }
     /// <summary>Entra group naming convention (regex, whole name). Checked in Stage 2 and when the ID team reports.</summary>
@@ -55,6 +69,37 @@ public sealed record Project : IDocument
 /// The sheet is a source of truth owned by PMO; it is read fresh on every request and never cached.
 /// <see cref="Version"/> increases on every change, so a review can tell the sheet changed after it.
 /// </summary>
+/// <summary>Workbook colour coding: Red = wrong or undecided (never act on it), Amber = usable with a caveat.</summary>
+public enum RowFlag { None, Amber, Red }
+
+/// <summary>
+/// One Azure role the group carries, as the response document states it: role name, the resource it applies to and the
+/// resolved Azure scope. The AI agent assigns only grants with a role definition id and a scope on its allow-list.
+/// </summary>
+public sealed record AzureRoleGrant
+{
+    /// <summary>Role name as written in the response document, e.g. "Storage Blob Data Reader".</summary>
+    public required string RoleName { get; init; }
+    /// <summary>Role definition GUID (built-in names are resolved by <see cref="BuiltInRoles"/>).</summary>
+    public string? RoleDefinitionId { get; init; }
+    /// <summary>Azure scope (<c>/subscriptions/…</c>). Null = the resource name could not be resolved: the role team assigns it.</summary>
+    public string? Scope { get; init; }
+    /// <summary>Resource name from the response document, e.g. a storage account or resource group.</summary>
+    public string? ResourceName { get; init; }
+    /// <summary>e.g. Microsoft.Storage/storageAccounts, Microsoft.Resources/resourceGroups.</summary>
+    public string? ResourceType { get; init; }
+
+    /// <summary>"Role at scope" as the role team and the verification read it.</summary>
+    [JsonIgnore] public string Where => Scope ?? ResourceName ?? "";
+
+    /// <summary>The role definition id, from the grant or from the built-in role name.</summary>
+    [JsonIgnore] public string? RoleId => RoleDefinitionId?.Trim().ToLowerInvariant() ?? BuiltInRoles.IdOf(RoleName);
+
+    public bool SameAs(AzureRoleGrant o) =>
+        string.Equals(RoleId ?? RoleName.Trim(), o.RoleId ?? o.RoleName.Trim(), StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Where.Trim().TrimEnd('/'), o.Where.Trim().TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+}
+
 public sealed record MappingRow : IDocument
 {
     /// <summary>Same as <see cref="RowId"/>.</summary>
@@ -71,6 +116,20 @@ public sealed record MappingRow : IDocument
     public string? AzureRoleDefinitionId { get; init; }
     /// <summary>Optional: the Azure scope (<c>/subscriptions/…</c>) for <see cref="AzureRoleDefinitionId"/>.</summary>
     public string? AzureScope { get; init; }
+    /// <summary>
+    /// Every Azure role the group carries (response document: role × resource). Takes precedence over the single
+    /// <see cref="AzureRoleDefinitionId"/> / <see cref="AzureScope"/> pair.
+    /// </summary>
+    public IReadOnlyList<AzureRoleGrant> AzureRoles { get; init; } = [];
+    /// <summary>Environment of the group (e.g. Dev, PreProd). Null = the row applies to every environment.</summary>
+    public string? Environment { get; init; }
+    /// <summary>Entra object id of the group, when known. Names get typos and trailing spaces; ids do not.</summary>
+    public string? GroupObjectId { get; init; }
+    /// <summary>Job roles the group is meant for (e.g. "Application / Production Support").</summary>
+    public string? JobRoles { get; init; }
+    public RowFlag Flag { get; init; }
+    /// <summary>Caveats and open questions from the workbook (shown to approvers; Red blocks the review).</summary>
+    public string? Notes { get; init; }
     public bool Privileged { get; init; }
     public bool SensitiveResource { get; init; }
     public bool Deprecated { get; init; }
@@ -82,6 +141,34 @@ public sealed record MappingRow : IDocument
     public bool IsSample { get; init; }
     public int SchemaVersion { get; init; } = 2;
     [JsonIgnore] public string PartitionKey => ProjectId;
+
+    /// <summary>The Azure roles of this row: <see cref="AzureRoles"/>, else the single legacy pair, else none.</summary>
+    public IReadOnlyList<AzureRoleGrant> Grants() =>
+        AzureRoles.Count > 0 ? AzureRoles
+        : AzureRoleDefinitionId is not null && AzureScope is not null
+            ? [new AzureRoleGrant { RoleName = BuiltInRoles.NameOf(AzureRoleDefinitionId) ?? AzureRoleDefinitionId, RoleDefinitionId = AzureRoleDefinitionId, Scope = AzureScope }]
+            : [];
+}
+
+/// <summary>Built-in Azure role names → role definition ids (Microsoft Learn, built-in roles, checked 21 Oct 2026; VERIFIED_FACTS F62).</summary>
+public static class BuiltInRoles
+{
+    public static readonly IReadOnlyDictionary<string, string> Ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Reader"] = "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+        ["Storage Blob Data Reader"] = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+        ["Storage Blob Data Contributor"] = "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+        ["Storage Blob Data Owner"] = "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+        ["Key Vault Reader"] = "21090545-7ca7-4776-b22c-e363652d74d2",
+        ["Key Vault Secrets User"] = "4633458b-17de-408a-b874-0445c86b69e6",
+        ["Key Vault Secrets Officer"] = "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+    };
+
+    public static string? IdOf(string? roleName) =>
+        roleName is not null && Ids.TryGetValue(roleName.Trim(), out var id) ? id : null;
+
+    public static string? NameOf(string? roleId) =>
+        roleId is null ? null : Ids.FirstOrDefault(p => string.Equals(p.Value, roleId.Trim(), StringComparison.OrdinalIgnoreCase)).Key;
 }
 
 public enum ResponseState { PendingApproval, Approved, Assigned, Rejected, Revoked }
@@ -103,9 +190,12 @@ public sealed record ResponseRecord : IDocument
     public required string UserId { get; init; }
     public required string Resource { get; init; }
     public required string AccessLevel { get; init; }
+    public string? Environment { get; init; }
     public required string EntraGroup { get; init; }
     public required string Role { get; init; }
     public string? RoleScope { get; init; }
+    /// <summary>The Azure roles that were reviewed and approved for the group (role × resource).</summary>
+    public IReadOnlyList<AzureRoleGrant> AzureRoles { get; init; } = [];
     public bool Privileged { get; init; }
     public required ResponseState State { get; init; }
     public required string Justification { get; init; }
@@ -135,6 +225,7 @@ public sealed record AccessRequest : IDocument
 {
     public required string Id { get; init; }
     public required string ProjectId { get; init; }
+    /// <summary>The joiner's enterprise sign-in or mail address (e.g. jane.doe@company.com). Notifications to the user go here.</summary>
     public string? EnterpriseId { get; init; }
     public string? FirstName { get; init; }
     public string? LastName { get; init; }
@@ -142,6 +233,8 @@ public sealed record AccessRequest : IDocument
     public string? DomainId { get; init; }
     public string? Resource { get; init; }
     public string? AccessLevel { get; init; }
+    /// <summary>Target environment (one of the project's environments), e.g. Dev or PreProd.</summary>
+    public string? Environment { get; init; }
     public string? Justification { get; init; }
     /// <summary>Sign-in name of the business Owner. Only this person's approval counts at the Owner stage.</summary>
     public string? Owner { get; init; }

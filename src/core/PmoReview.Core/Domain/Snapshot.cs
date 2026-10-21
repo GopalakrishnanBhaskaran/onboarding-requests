@@ -17,6 +17,7 @@ public static class SnapshotBuilder
         DomainId = request.DomainId,
         Resource = request.Resource,
         AccessLevel = request.AccessLevel,
+        Environment = request.Environment,
         Justification = request.Justification,
         Owner = request.Owner,
         Guest = request.Guest,
@@ -36,6 +37,8 @@ public static class SnapshotBuilder
             w.WriteString("accessLevel", s.AccessLevel);
             w.WriteString("domainId", s.DomainId);
             w.WriteString("enterpriseId", s.EnterpriseId);
+            // Written only when set, so snapshots taken before environments existed keep their hash.
+            if (s.Environment is not null) w.WriteString("environment", s.Environment);
             w.WriteString("firstName", s.FirstName);
             w.WriteBoolean("guest", s.Guest);
             w.WriteString("justification", s.Justification);

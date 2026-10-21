@@ -22,6 +22,11 @@ export interface ProjectSummary {
   name: string;
   roles: AppRole[];
   isSample: boolean;
+  /** The Entra tenant of the project (tenant separation), e.g. "PEST". */
+  tenantName?: string | null;
+  /** Environments a request picks from; empty = the project has no environment field. */
+  environments?: string[];
+  domainIdSuffix?: string | null;
 }
 
 export interface Me {
@@ -30,6 +35,24 @@ export interface Me {
   projects: ProjectSummary[];
   /** v2.1: the AI agent provisions after both approvals (the wording in the app follows it). */
   agentProvisioning?: boolean;
+  agentRoleAssignment?: boolean;
+  /** Deployment environment: pilot, dev, test or prod. */
+  appEnvironment?: string;
+  /** Notifications are mailed by the worker (else kept in the app only). */
+  mailEnabled?: boolean;
+  /** Test environment: every mail goes to this one address. */
+  mailRedirectTo?: string | null;
+}
+
+export type RowFlag = 'None' | 'Amber' | 'Red';
+
+/** One Azure role of a group, as the response document states it (role × resource). */
+export interface AzureRoleGrant {
+  roleName: string;
+  roleDefinitionId: string | null;
+  scope: string | null;
+  resourceName: string | null;
+  resourceType: string | null;
 }
 
 export interface IntakeFields {
@@ -38,6 +61,7 @@ export interface IntakeFields {
   lastName?: string | null;
   resource?: string | null;
   accessLevel?: string | null;
+  environment?: string | null;
   justification?: string | null;
   owner?: string | null;
   guest?: boolean;
@@ -72,6 +96,9 @@ export interface ReviewedScope {
   /** The Azure role the approvers approve (v2.1: the only role the agent may assign). */
   azureRoleDefinitionId: string | null;
   azureScope: string | null;
+  /** Every Azure role approved for the group (empty on older reviews: then the single pair above). */
+  azureRoles?: AzureRoleGrant[];
+  environment?: string | null;
   groupState: GroupState;
   groupExistsInEntra: boolean | null;
   riskFlags: string[];
@@ -199,7 +226,8 @@ export interface Timings {
 
 export type NotificationKind =
   | 'FlowOverview' | 'ReviewReturned' | 'ApprovalRequested' | 'Reminder' | 'Escalation' | 'Rejected' | 'TeamTask' | 'TaskReturned'
-  | 'TapCleanupNeeded' | 'AccessReady' | 'CompletionSummary' | 'PmoInformed' | 'Closure' | 'SecurityAlert' | 'DailySummary' | 'DeveloperReport';
+  | 'TapCleanupNeeded' | 'AccessReady' | 'CompletionSummary' | 'PmoInformed' | 'Closure' | 'SecurityAlert' | 'DailySummary' | 'DeveloperReport'
+  | 'ProvisioningSummary';
 
 export interface Notification {
   id: string;
@@ -209,6 +237,9 @@ export interface Notification {
   body: string;
   createdAt: string;
   status: 'Pending' | 'Sent' | 'Recorded' | 'Failed';
+  /** Where the mail went (a test environment redirects every mail to one address). */
+  deliveredTo?: string[] | null;
+  lastError?: string | null;
 }
 
 export interface Issue {
@@ -233,6 +264,8 @@ export interface RequestView {
   issues: Issue[];
   flowOverview: string[];
   whoDoesWhat: string;
+  /** Why no decision is shown while the request waits for an approval (wrong sign-in, missing role, four eyes). */
+  approvalHint?: string | null;
 }
 
 export interface ReviewResult {
@@ -287,6 +320,13 @@ export interface MappingRow {
   /** Optional: the Azure role (definition GUID) and scope the AI agent assigns to the group after both approvals. */
   azureRoleDefinitionId: string | null;
   azureScope: string | null;
+  /** Every Azure role the group carries (response document). */
+  azureRoles?: AzureRoleGrant[];
+  environment?: string | null;
+  groupObjectId?: string | null;
+  jobRoles?: string | null;
+  flag?: RowFlag;
+  notes?: string | null;
   privileged: boolean;
   sensitiveResource: boolean;
   deprecated: boolean;
@@ -303,9 +343,11 @@ export interface ResponseRecord {
   userId: string;
   resource: string;
   accessLevel: string;
+  environment?: string | null;
   entraGroup: string;
   role: string;
   roleScope: string | null;
+  azureRoles?: AzureRoleGrant[];
   state: 'PendingApproval' | 'Approved' | 'Assigned' | 'Rejected' | 'Revoked';
   assignedRoles: AssignedRole[];
   assignedBy: string | null;

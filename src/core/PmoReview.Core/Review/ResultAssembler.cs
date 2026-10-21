@@ -61,17 +61,24 @@ public static partial class ResultAssembler
         var group = m.EntraGroup is null ? "not mapped" : m.GroupState == GroupState.ToBeCreated ? $"{m.EntraGroup} (to be created by the ID team)" : m.EntraGroup;
         var counted = checks.Where(c => c.Status is CheckStatus.Pass or CheckStatus.Fail or CheckStatus.Pending).ToList();
         var passed = counted.Count(c => c.Status == CheckStatus.Pass);
+        var where = string.Join(", ", new[] { host.Tenant is null ? null : $"tenant {host.Tenant}", s.Environment is null ? null : $"environment {s.Environment}" }.OfType<string>());
         var lines = new List<string>
         {
-            $"What: {s.FirstName} {s.LastName} ({s.DomainId}{(s.Guest ? ", guest" : "")}) requests '{s.AccessLevel}' on '{s.Resource}'.",
+            $"What: {s.FirstName} {s.LastName} ({s.DomainId}{(s.Guest ? ", guest" : "")}) requests '{s.AccessLevel}' on '{s.Resource}'{(where.Length == 0 ? "" : $" ({where})")}.",
             $"Why: {Text(SecretMasker.Apply(s.Justification), 300) ?? "—"}",
             $"Group: {group}.",
             $"Role: {m.Role ?? "not mapped"}{(m.RoleScope is null ? "" : $" at {m.RoleScope}")}.",
-            $"Risk flags: {(host.RiskFlags.Count == 0 ? "none" : string.Join(", ", host.RiskFlags))}.",
-            $"Review: {outcome} — {passed}/{counted.Count} checks passed{Pending(counted)}.",
         };
+        var grants = host.Row?.Grants() ?? [];
+        if (grants.Count > 0)
+            lines.Add($"Azure roles on the group ({grants.Count}): " +
+                      string.Join("; ", grants.Take(12).Select(g => $"{g.RoleName} on {g.ResourceName ?? g.Scope ?? "scope not resolved"}")) + (grants.Count > 12 ? "; …" : "") + ".");
+        if (host.Row?.Notes is { } notes && host.Row.Flag != RowFlag.None)
+            lines.Add($"Mapping row note ({host.Row.Flag}): {Text(notes, 300)}");
+        lines.Add($"Risk flags: {(host.RiskFlags.Count == 0 ? "none" : string.Join(", ", host.RiskFlags))}.");
+        lines.Add($"Review: {outcome} — {passed}/{counted.Count} checks passed{Pending(counted)}.");
         if (aiNotes is not null) lines.Add($"AI notes: {aiNotes}");
-        return string.Join("\n", lines);
+        return Text(string.Join("\n", lines), 2500)!;
     }
 
     private static string Pending(IReadOnlyList<CheckResult> checks)

@@ -23,6 +23,8 @@ public enum NotificationKind
     SecurityAlert,
     DailySummary,
     DeveloperReport,
+    /// <summary>What the AI agent created or assigned after both approvals (Security, Owner, requester).</summary>
+    ProvisioningSummary,
 }
 
 /// <summary>Pending → Sent (mail sender) or Recorded (pilot: kept in the app only) or Failed (after 3 attempts).</summary>
@@ -46,6 +48,8 @@ public sealed record Notification : IDocument
     public required NotificationStatus Status { get; init; }
     public int Attempts { get; init; }
     public DateTimeOffset? SentAt { get; init; }
+    /// <summary>Where the mail actually went (differs from <see cref="To"/> only in a test environment's redirect).</summary>
+    public IReadOnlyList<string>? DeliveredTo { get; init; }
     public string? LastError { get; init; }
     public int SchemaVersion { get; init; } = 1;
     [JsonIgnore] public string PartitionKey => ProjectId;

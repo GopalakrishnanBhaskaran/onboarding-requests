@@ -42,9 +42,11 @@ public sealed partial class WorkflowAgent
 
         if (!BothApprovalsCurrent(flow))
             return ToIdTeam(r, task, work with { Manual = "the Owner and Security approvals are not both current" }, project, now, IssueSeverity.High);
-        var manual = r.Guest ? "guest accounts are invited by the ID team, not created by the agent"
+        var manual = Tenants.NotConnected(project, settings.AgentTenantId)
+            ?? (r.Guest ? "guest accounts are invited by the ID team, not created by the agent"
             : row?.Privileged == true ? $"mapping row {scope.MappingRowId} is privileged access"
-            : null;
+            : row?.Flag == RowFlag.Red ? $"mapping row {scope.MappingRowId} is flagged red (needs a human decision)"
+            : null);
         if (manual is not null) return ToIdTeam(r, task, work with { Manual = manual }, project, now, IssueSeverity.Info);
 
         try
@@ -77,6 +79,9 @@ public sealed partial class WorkflowAgent
                     return ToIdTeam(r, task, work with { Manual = $"{groups.Count} groups are named {scope.EntraGroup} in Entra" }, project, now, IssueSeverity.High);
                 if (groups.Count == 1 && !groups[0].SecurityEnabled)
                     return ToIdTeam(r, task, work with { Manual = $"{scope.EntraGroup} is not a security group" }, project, now, IssueSeverity.High);
+                if (groups.Count == 1 && row?.GroupObjectId is { } expectedId && !string.Equals(expectedId.Trim(), groups[0].ObjectId, StringComparison.OrdinalIgnoreCase))
+                    return ToIdTeam(r, task, work with { Manual = $"{scope.EntraGroup} in Entra has object id {groups[0].ObjectId}, the mapping sheet says {expectedId}" },
+                        project, now, IssueSeverity.High);
                 if (groups.Count == 1)
                 {
                     work = work with { GroupObjectId = groups[0].ObjectId };
@@ -143,8 +148,14 @@ public sealed partial class WorkflowAgent
             var next = (flow with { Scope = newScope, IdTeamTask = tapTask }).Waiting(WaitingOn.IdTeam, now)
                 .Log(now, Agent, "agent-provisioned", $"{done} The ID team issues the one-time Temporary Access Pass.");
             var (subject, body) = Messages.TeamTask(r, tapTask, settings);
+            var (ps, pb) = Messages.Provisioned(r, newScope, done, "The ID team issues the one-time Temporary Access Pass next.", settings);
             return new Step(r with { Flow = next },
-                [.. resolved, c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{tapTask.Id}:tap", NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c)], Stop: true);
+            [
+                .. resolved,
+                c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{tapTask.Id}:tap", NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c),
+                c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:provisioned", NotificationKind.ProvisioningSummary,
+                    Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r)), ps, pb, c),
+            ], Stop: true);
         }
 
         // Existing account: nothing left for the ID team. Verified on the next run (Entra reads lag right after a write).
@@ -161,7 +172,13 @@ public sealed partial class WorkflowAgent
         };
         var verify = (flow with { Scope = newScope, IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-provisioned", $"{done} Existing account: no TAP needed. Verified on the next agent run.");
-        return new Step(r with { Flow = verify }, resolved, Stop: true);
+        var (s1, b1) = Messages.Provisioned(r, newScope, done, "Existing account: no Temporary Access Pass needed. The agent verifies it, then the roles are assigned.", settings);
+        return new Step(r with { Flow = verify },
+        [
+            .. resolved,
+            c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:provisioned", NotificationKind.ProvisioningSummary,
+                Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r)), s1, b1, c),
+        ], Stop: true);
     }
 
     private static string Done(AgentWork w, AccessRequest r, ReviewedScope scope) =>
@@ -171,7 +188,7 @@ public sealed partial class WorkflowAgent
     /// <summary>Entra mail nickname from the Enterprise ID (ASCII letters, digits, dot, dash, underscore).</summary>
     private static string MailNickname(AccessRequest r)
     {
-        var nick = NicknameUnsafe().Replace(r.EnterpriseId ?? r.DomainId!.Split('@')[0], "");
+        var nick = NicknameUnsafe().Replace((r.EnterpriseId ?? r.DomainId!).Split('@')[0], "");
         return nick.Length == 0 ? $"user{r.Id[..8]}" : nick[..Math.Min(nick.Length, 64)];
     }
 
@@ -262,27 +279,40 @@ public sealed partial class WorkflowAgent
         var project = await ProjectAsync(r, ct);
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var work = task.Agent ?? new AgentWork { At = now };
-        // Exactly the Azure role the Owner and Security saw: taken from the approved scope, never from the live row.
-        var roleId = scope.AzureRoleDefinitionId;
-        var azureScope = scope.AzureScope;
+        // Exactly the Azure roles the Owner and Security saw: taken from the approved scope, never from the live row.
+        var grants = scope.Grants();
 
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
-            : row is null ? $"mapping row {scope.MappingRowId} not found"
+            : Tenants.NotConnected(project, settings.AgentTenantId)
+            ?? (row is null ? $"mapping row {scope.MappingRowId} not found"
             : row.Privileged ? $"mapping row {scope.MappingRowId} is privileged access"
-            : roleId is null || azureScope is null ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)"
-            : !settings.RoleAssignAllowedRoleIds.Contains(roleId, StringComparer.OrdinalIgnoreCase) ? $"Azure role {roleId} is not on the agent's allow-list"
-            : !settings.RoleAssignScopes.Any(s => InScope(azureScope, s)) ? $"scope {azureScope} is not on the agent's allow-list"
-            : null;
-        if (manual is not null)
+            : grants.Count == 0 ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)"
+            : null);
+        var severity = manual?.Contains("not assigned", StringComparison.Ordinal) == true ? IssueSeverity.High : IssueSeverity.Info;
+        if (manual is null)
         {
-            var severity = manual.Contains("allow-list", StringComparison.Ordinal) || manual.Contains("not assigned", StringComparison.Ordinal)
-                ? IssueSeverity.High : IssueSeverity.Info;
-            return ToRoleTeam(r, task, work with { Manual = manual }, project, now, severity);
+            // All or nothing: the agent assigns the group's roles only when every one is resolved and allow-listed, so
+            // the role team never finishes half of an assignment the agent started.
+            var unresolved = grants.Where(g => g.RoleId is null || g.Scope is null).ToList();
+            var notAllowed = grants.Except(unresolved).Where(g => !settings.RoleAssignAllowedRoleIds.Contains(g.RoleId!, StringComparer.OrdinalIgnoreCase)
+                                                                   || !settings.RoleAssignScopes.Any(a => InScope(g.Scope!, a))).ToList();
+            if (notAllowed.Count > 0)
+            {
+                manual = $"{notAllowed.Count} of {grants.Count} Azure role(s) are not on the agent's allow-list (role or scope): " +
+                         string.Join("; ", notAllowed.Select(g => $"{g.RoleName} at {g.Scope}"));
+                severity = IssueSeverity.High;
+            }
+            else if (unresolved.Count > 0)
+            {
+                manual = $"{unresolved.Count} of {grants.Count} Azure role(s) have no resolved role id or scope: " +
+                         string.Join("; ", unresolved.Select(g => $"{g.RoleName} on {g.Where}"));
+            }
         }
+        if (manual is not null) return ToRoleTeam(r, task, work with { Manual = manual }, project, now, severity);
 
         try
         {
-            var groupId = flow.IdTeamTask?.Agent?.GroupObjectId ?? flow.IdTeamTask?.IdReport?.GroupObjectId;
+            var groupId = flow.IdTeamTask?.Agent?.GroupObjectId ?? flow.IdTeamTask?.IdReport?.GroupObjectId ?? row?.GroupObjectId;
             if (groupId is null)
             {
                 var groups = await directory!.FindGroupsAsync(scope.EntraGroup, ct);
@@ -290,7 +320,8 @@ public sealed partial class WorkflowAgent
                     return ToRoleTeam(r, task, work with { Manual = $"group {scope.EntraGroup} is not unique in Entra ({groups.Count} found)" }, project, now, IssueSeverity.High);
                 groupId = groups[0].ObjectId;
             }
-            await roleWriter!.AssignAsync(groupId, "Group", roleId!, azureScope!, ct);
+            // Idempotent: a repeat (retry after a refusal part-way) finds the earlier assignments and counts them as done.
+            foreach (var g in grants) await roleWriter!.AssignAsync(groupId, "Group", g.RoleId!, g.Scope!, ct);
         }
         catch (DirectoryWriteException e) when (e.Forbidden)
         {
@@ -302,19 +333,33 @@ public sealed partial class WorkflowAgent
         }
 
         // Same record the role team would write through its form.
-        var roles = new List<AssignedRole> { new(scope.Role, scope.RoleScope) };
+        var roles = ExpectedRoles(scope);
         await UpdateResponseAsync(r, x => x with { AssignedRoles = roles, State = ResponseState.Assigned, AssignedBy = AgentName, AssignedAt = now }, ct);
+        var list = string.Join("; ", grants.Select(g => $"{g.RoleName} at {g.Scope}"));
         var reported = task with
         {
             Agent = work with { At = now, RoleAssigned = true, Completed = true },
             State = TeamTaskState.Reported, ReportedAt = now, ReportedBy = AgentName,
             PickedUpAt = task.PickedUpAt ?? now, PickedUpBy = task.PickedUpBy ?? AgentName,
-            RoleReport = new RoleTeamReport { AssignedRoles = roles, Notes = $"Assigned by the AI agent: Azure role {roleId} at {azureScope} to group {scope.EntraGroup}." },
+            RoleReport = new RoleTeamReport { AssignedRoles = roles, Notes = $"Assigned by the AI agent to group {scope.EntraGroup}: {list}." },
         };
         var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
-            .Log(now, Agent, "agent-role-assigned", $"AI agent assigned {scope.Role} (Azure role {roleId}) at {azureScope} to group {scope.EntraGroup} and updated the response document.");
-        return new Step(r with { Flow = next }, work.RefusedSince is null ? []
-            : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]); // the permission arrived
+            .Log(now, Agent, "agent-role-assigned", $"AI agent assigned {grants.Count} Azure role(s) to group {scope.EntraGroup} ({list}) and updated the response document.");
+        var (subject, body) = Messages.RolesAssigned(r, scope, grants, settings);
+        var effects = new List<Func<CancellationToken, Task>>
+        {
+            c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:assigned", NotificationKind.ProvisioningSummary,
+                Recipients.Security(project).Concat(Recipients.Owner(r)), subject, body, c),
+        };
+        if (work.RefusedSince is not null) effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)); // the permission arrived
+        return new Step(r with { Flow = next }, effects);
+    }
+
+    /// <summary>What the role assignment must show, exactly: every approved Azure role at its scope, else the mapped role.</summary>
+    public static IReadOnlyList<AssignedRole> ExpectedRoles(ReviewedScope scope)
+    {
+        var grants = scope.Grants();
+        return grants.Count == 0 ? [new AssignedRole(scope.Role, scope.RoleScope)] : grants.Select(g => new AssignedRole(g.RoleName, g.Where)).ToList();
     }
 
     /// <summary>Scope prefix match on whole path segments (…/rg-a does not allow …/rg-ab).</summary>

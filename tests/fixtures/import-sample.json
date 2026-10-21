@@ -1,0 +1,194 @@
+{
+  "project": {
+    "projectId": "SAMPLE-PEST-IMPORT",
+    "tenantName": "PEST",
+    "environments": [
+      "Dev",
+      "Prod"
+    ]
+  },
+  "mappingSheet": [
+    {
+      "id": "PH-SUPPORT-DEV",
+      "projectId": "SAMPLE-PEST-IMPORT",
+      "rowId": "PH-SUPPORT-DEV",
+      "resource": "SAMPLE PEST Central hub / platform (ph)",
+      "accessLevel": "Support",
+      "environment": "Dev",
+      "entraGroup": "azr-pes-rg-data-dev-ph-weu-support",
+      "groupObjectId": "11111111-1111-4111-8111-111111111111",
+      "role": "CONTRIBUTOR - whole platform",
+      "roleScope": null,
+      "azureRoles": [
+        {
+          "roleName": "Storage Blob Data Contributor",
+          "resourceName": "samplestddevdaiweu01",
+          "resourceType": "Microsoft.Storage/storageAccounts",
+          "scope": null,
+          "roleDefinitionId": null
+        },
+        {
+          "roleName": "Reader",
+          "resourceName": "pes-rg-data-dev-dai-weu-001",
+          "resourceType": "Microsoft.Resources/resourceGroups",
+          "scope": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/pes-rg-data-dev-dai-weu-001",
+          "roleDefinitionId": null
+        },
+        {
+          "roleName": "Reader",
+          "resourceName": "pes-rg-data-dev-acq-weu-001",
+          "resourceType": "Microsoft.Resources/resourceGroups",
+          "scope": null,
+          "roleDefinitionId": null
+        }
+      ],
+      "jobRoles": "Application / Production Support",
+      "flag": "Amber",
+      "notes": "• BROAD ACCESS: whole platform",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE workbook (tools/test_import_workbook.py)",
+      "version": 1,
+      "updatedBy": "import_workbook",
+      "updatedAt": "2026-10-21T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "FIN-POWERBIDEVELOPERS-DEV",
+      "projectId": "SAMPLE-PEST-IMPORT",
+      "rowId": "FIN-POWERBIDEVELOPERS-DEV",
+      "resource": "SAMPLE PEST Finance (fin)",
+      "accessLevel": "Power BI Developer",
+      "environment": "Dev",
+      "entraGroup": "azr-pes-rg-data-dev-fin-weu-powerbidevelopers",
+      "groupObjectId": "22222222-2222-4222-8222-222222222222",
+      "role": "REPORTING - no data-plane RBAC",
+      "roleScope": null,
+      "azureRoles": [],
+      "jobRoles": "Power BI Developer",
+      "flag": "None",
+      "notes": "• Members: 2",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE workbook (tools/test_import_workbook.py)",
+      "version": 1,
+      "updatedBy": "import_workbook",
+      "updatedAt": "2026-10-21T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "SUP-POWERBIDEVELOPER-DEV",
+      "projectId": "SAMPLE-PEST-IMPORT",
+      "rowId": "SUP-POWERBIDEVELOPER-DEV",
+      "resource": "SAMPLE PEST Supply (sup)",
+      "accessLevel": "Power BI Developer (singular duplicate)",
+      "environment": "Dev",
+      "entraGroup": "azr-pes-rg-data-dev-sup-weu-powerbideveloper",
+      "groupObjectId": null,
+      "role": "TYPO",
+      "roleScope": null,
+      "azureRoles": [],
+      "jobRoles": null,
+      "flag": "Red",
+      "notes": "• EMPTY GROUP",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "Exists",
+      "sourceReference": "SAMPLE workbook (tools/test_import_workbook.py)",
+      "version": 1,
+      "updatedBy": "import_workbook",
+      "updatedAt": "2026-10-21T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "PH-SUPPORT-READER-DEV",
+      "projectId": "SAMPLE-PEST-IMPORT",
+      "rowId": "PH-SUPPORT-READER-DEV",
+      "resource": "SAMPLE PEST Central hub / platform (ph)",
+      "accessLevel": "Support Reader",
+      "environment": "Dev",
+      "entraGroup": "azr-pes-rg-data-dev-ph-weu-support-reader",
+      "groupObjectId": null,
+      "role": "Support Reader",
+      "roleScope": null,
+      "azureRoles": [
+        {
+          "roleName": "Storage Blob Data Reader",
+          "resourceName": "samplestddevdaiweu01",
+          "resourceType": "Microsoft.Storage/storageAccounts",
+          "scope": null,
+          "roleDefinitionId": null
+        },
+        {
+          "roleName": "Storage Blob Data Reader",
+          "resourceName": "samplestddevlogweu01",
+          "resourceType": "Microsoft.Storage/storageAccounts",
+          "scope": null,
+          "roleDefinitionId": null
+        },
+        {
+          "roleName": "Reader",
+          "resourceName": "pes-rg-data-dev-dai-weu-001",
+          "resourceType": "Microsoft.Resources/resourceGroups",
+          "scope": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/pes-rg-data-dev-dai-weu-001",
+          "roleDefinitionId": null
+        }
+      ],
+      "jobRoles": null,
+      "flag": "Amber",
+      "notes": "Not in the live group classification: the group is created after approval (by the agent or the ID team, or IaC where tenant policy requires).",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "ToBeCreated",
+      "sourceReference": "SAMPLE workbook (tools/test_import_workbook.py)",
+      "version": 1,
+      "updatedBy": "import_workbook",
+      "updatedAt": "2026-10-21T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    },
+    {
+      "id": "PH-SUPPORT-READER-PROD",
+      "projectId": "SAMPLE-PEST-IMPORT",
+      "rowId": "PH-SUPPORT-READER-PROD",
+      "resource": "SAMPLE PEST Central hub / platform (ph)",
+      "accessLevel": "Support Reader",
+      "environment": "Prod",
+      "entraGroup": "azr-pes-rg-data-prd-ph-weu-support-reader",
+      "groupObjectId": null,
+      "role": "Support Reader",
+      "roleScope": null,
+      "azureRoles": [
+        {
+          "roleName": "Reader",
+          "resourceName": "pes-rg-data-prd-dai-weu-001",
+          "resourceType": "Microsoft.Resources/resourceGroups",
+          "scope": null,
+          "roleDefinitionId": null
+        }
+      ],
+      "jobRoles": null,
+      "flag": "Red",
+      "notes": "The classification lists no Prod groups for PEST: the group must be created (IaC) before anyone is added.",
+      "privileged": false,
+      "sensitiveResource": false,
+      "deprecated": false,
+      "groupState": "ToBeCreated",
+      "sourceReference": "SAMPLE workbook (tools/test_import_workbook.py)",
+      "version": 1,
+      "updatedBy": "import_workbook",
+      "updatedAt": "2026-10-21T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 2
+    }
+  ]
+}

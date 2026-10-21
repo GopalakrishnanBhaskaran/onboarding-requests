@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge, Body1, Button, Caption1, Checkbox, Field, Input, MessageBar, MessageBarBody, Subtitle2, Textarea } from '@fluentui/react-components';
 import { api } from '../lib/api';
 import type { AccessRequest, RequestView, TeamTask } from '../lib/types';
-import { checkColor, checkLabel, dateTime, localInput, taskLabel } from '../lib/format';
+import { checkColor, checkLabel, dateTime, grantsOf, localInput, taskLabel } from '../lib/format';
 import { ErrorBar, useStyles } from './common';
 
 /** Task view for both teams: instructions, state, the AI verification and the last difference. */
@@ -146,8 +146,11 @@ export function IdTeamForm({ request, onDone }: { request: AccessRequest; onDone
 export function RoleTeamForm({ request, onDone }: { request: AccessRequest; onDone: (v: RequestView) => void }) {
   const s = useStyles();
   const scope = request.flow?.scope;
-  const [role, setRole] = useState(scope?.role ?? '');
-  const [roleScope, setRoleScope] = useState(scope?.roleScope ?? '');
+  const approved = grantsOf(scope);
+  // One line per role and scope, prefilled with what was approved (the team edits it to what it really did).
+  const [lines, setLines] = useState(approved.length > 0
+    ? approved.map((g) => `${g.roleName} | ${g.scope ?? g.resourceName ?? ''}`).join('\n')
+    : `${scope?.role ?? ''}${scope?.roleScope ? ` | ${scope.roleScope}` : ''}`);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -165,7 +168,11 @@ export function RoleTeamForm({ request, onDone }: { request: AccessRequest; onDo
     setBusy(true);
     setError(null);
     try {
-      onDone(await api.reportRoleTeam(request.projectId, request.id, [{ role: role.trim(), scope: roleScope.trim() || null }], notes.trim()));
+      const roles = lines.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+        const [role = '', at = ''] = l.split('|').map((x) => x.trim());
+        return { role, scope: at || null };
+      });
+      onDone(await api.reportRoleTeam(request.projectId, request.id, roles, notes.trim()));
     } catch (e) {
       setError(e);
     } finally {
@@ -177,13 +184,12 @@ export function RoleTeamForm({ request, onDone }: { request: AccessRequest; onDo
     <form className={s.stack} onSubmit={(e) => { e.preventDefault(); void record(); }} aria-label="Role assignment completion">
       <ErrorBar error={error} />
       {!request.flow?.roleTeamTask?.pickedUpAt && <div><Button onClick={() => void pickUp()}>Pick up task</Button></div>}
-      <div className={s.row}>
-        <Field label="Role assigned"><Input value={role} onChange={(_, d) => setRole(d.value)} /></Field>
-        <Field label="Scope"><Input value={roleScope} onChange={(_, d) => setRoleScope(d.value)} /></Field>
-      </div>
-      <Caption1>List exactly what you assigned. The AI verification checks it matches the approved role: no extra roles, none missing.</Caption1>
+      <Field label="Roles in place (one per line: role | scope)" hint="Prefilled with the approved roles; change it to exactly what is in place.">
+        <Textarea value={lines} onChange={(_, d) => setLines(d.value)} rows={Math.max(2, approved.length)} resize="vertical" />
+      </Field>
+      <Caption1>List exactly what is in place. The AI verification checks it matches the approved roles: no extra roles, none missing.</Caption1>
       <Field label="Notes (optional)"><Textarea value={notes} onChange={(_, d) => setNotes(d.value)} maxLength={1000} /></Field>
-      <div><Button appearance="primary" type="submit" disabled={busy || role.trim() === ''}>Record completion</Button></div>
+      <div><Button appearance="primary" type="submit" disabled={busy || lines.trim() === ''}>Record completion</Button></div>
     </form>
   );
 }

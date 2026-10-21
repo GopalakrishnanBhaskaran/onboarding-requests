@@ -15,6 +15,11 @@ Examples:
   # Seed (optionally with the tenant domain used for domain-specific IDs)
   COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --domain-suffix @contoso.onmicrosoft.com
 
+  # Tenant projects (SAMPLE PEST / SAMPLE Vestacy): the agent may assign roles in the approved access scope, and in a test
+  # environment every project contact (PMO, Security, ID team, role team, operators, managers) is the tester's mailbox
+  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py \
+      --access-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --test-contact tester@example.com
+
   # Register a real test account after its first sign-in (userId from /.auth/me)
   COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py \
       --register-user <swa-user-id> --project SAMPLE-ALPHA --roles Requester,Owner
@@ -41,6 +46,10 @@ CREATE_ONLY = {"mappingSheet", "responseDocument"}
 ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 DOMAIN_SUFFIX = re.compile(r"^@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
+ACCESS_SCOPE = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}$")
+MAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+SCOPE_PLACEHOLDER = "{{ACCESS_SCOPE}}"
 
 
 def validate(data: dict) -> list[str]:
@@ -102,6 +111,73 @@ def keep_live_domain(doc: dict, live: dict | None) -> dict:
     return doc
 
 
+def keep_live_tenant(doc: dict, live: dict | None) -> dict:
+    """Pure: a project keeps the tenant id and contacts already stored live (set by --tenant-id / --test-contact)."""
+    if not live:
+        return doc
+    out = dict(doc)
+    if "tenantId" in live:
+        out["tenantId"] = live["tenantId"]
+    if live.get("contacts"):
+        out["contacts"] = live["contacts"]
+    return out
+
+
+def apply_access_scope(data: dict, scope: str | None) -> dict:
+    """Pure: Azure roles written against the approved access scope get it; without --access-scope their scope stays
+    unresolved (the role assignment team assigns them)."""
+    if scope and not ACCESS_SCOPE.match(scope):
+        raise SystemExit("--access-scope must be /subscriptions/<id>/resourceGroups/<name>")
+    for row in data.get("mappingSheet", []):
+        for g in row.get("azureRoles") or []:
+            if g.get("scope") == SCOPE_PLACEHOLDER:
+                g["scope"] = scope
+    return data
+
+
+def apply_test_contact(data: dict, mail: str | None) -> dict:
+    """Pure: a test environment sends every project notification to one tester mailbox."""
+    if not mail:
+        return data
+    if not MAIL.match(mail):
+        raise SystemExit("--test-contact must be one mail address")
+    for p in data.get("projects", []):
+        c = p.setdefault("contacts", {})
+        for k in ("pmo", "security", "idTeam", "roleTeam", "operators"):
+            c[k] = [mail.lower()]
+        for k in ("securityManager", "idTeamManager", "roleTeamManager", "ownerManagerFallback"):
+            c[k] = mail.lower()
+    return data
+
+
+def apply_tenant_ids(data: dict, pairs: list[str]) -> dict:
+    """Pure: --tenant-id PROJECT=<guid> binds a project to an Entra tenant ('none' = the agent's own tenant)."""
+    for pair in pairs:
+        project, _, tenant = pair.partition("=")
+        if tenant.lower() != "none" and not GUID.match(tenant):
+            raise SystemExit("--tenant-id must be PROJECT=<tenant guid> or PROJECT=none")
+        found = [p for p in data.get("projects", []) if p["projectId"] == project]
+        if not found:
+            raise SystemExit(f"--tenant-id: no project {project}")
+        found[0]["tenantId"] = None if tenant.lower() == "none" else tenant.lower()
+    return data
+
+
+def fill_live_scope(client, doc: dict) -> None:
+    """A live SAMPLE row whose Azure role scopes are still unresolved gets the --access-scope (version bumped, so the
+    agent re-reviews in-flight requests: the approvers then see the scope). Rows PMO changed otherwise are untouched."""
+    live = client.read_item(doc["id"], partition_key=doc["projectId"])
+    want = [g.get("scope") for g in doc.get("azureRoles") or []]
+    have = live.get("azureRoles") or []
+    if not have or len(have) != len(want) or any(h.get("scope") for h in have) or not all(want):
+        return
+    live["azureRoles"] = [{**h, "scope": w} for h, w in zip(have, want)]
+    live["version"] = int(live.get("version", 1)) + 1
+    live["updatedBy"] = "seed"
+    client.replace_item(live["id"], live)
+    print(f"  {doc['id']}: Azure role scope set")
+
+
 def connect(database: str):
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
@@ -120,6 +196,9 @@ def main() -> int:
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
     ap.add_argument("--dry-run", action="store_true", help="validate and print counts only")
     ap.add_argument("--domain-suffix", help="tenant domain for domain-specific IDs, e.g. @contoso.onmicrosoft.com")
+    ap.add_argument("--access-scope", help="resource group the agent may assign roles in (fills the SAMPLE rows' Azure roles)")
+    ap.add_argument("--test-contact", help="test environment: every project contact is this mailbox")
+    ap.add_argument("--tenant-id", action="append", default=[], metavar="PROJECT=GUID", help="bind a project to an Entra tenant (repeatable)")
     ap.add_argument("--register-user", metavar="USER_ID", help="SWA client principal userId of a test account")
     ap.add_argument("--project", help="SAMPLE- project for --register-user")
     ap.add_argument("--roles", help="comma-separated roles for --register-user")
@@ -137,6 +216,7 @@ def main() -> int:
         return 0
 
     data = apply_domain_suffix(json.loads(args.data.read_text(encoding="utf-8")), args.domain_suffix)
+    data = apply_tenant_ids(apply_test_contact(apply_access_scope(data, args.access_scope), args.test_contact), args.tenant_id)
     problems = validate(data)
     if problems:
         print("Refusing to seed:", *problems, sep="\n  ", file=sys.stderr)
@@ -159,15 +239,21 @@ def main() -> int:
                     client.create_item(doc)
                     created[section] += 1
                 except CosmosResourceExistsError:
-                    pass  # changed in the app since; keep it
+                    if section == "mappingSheet" and args.access_scope:
+                        fill_live_scope(client, doc)  # an unresolved SAMPLE scope gets the approved one; nothing else changes
+                    # otherwise changed in the app since; keep it
             else:
-                if section == "projects" and not args.domain_suffix:
+                if section == "projects":
                     try:
                         live = client.read_item(doc["id"], partition_key=doc["projectId"])
                     except CosmosResourceNotFoundError:
                         live = None
-                    doc = keep_live_domain(doc, live)
-                    print(f"  {doc['projectId']}: domain {doc['domainIdSuffix']}")
+                    if not args.domain_suffix:
+                        doc = keep_live_domain(doc, live)
+                    if not args.test_contact and not any(t.startswith(doc["projectId"] + "=") for t in args.tenant_id):
+                        doc = keep_live_tenant(doc, live)
+                    print(f"  {doc['projectId']}: domain {doc['domainIdSuffix']}, tenant {doc.get('tenantName') or doc['name']} "
+                          f"({doc.get('tenantId') or 'agent tenant'})")
                 client.upsert_item(doc)
                 created[section] += 1
     print("seeded:", json.dumps(created))

@@ -14,10 +14,21 @@ public static class SampleDataLoader
         List<ResponseRecord> ResponseDocument,
         List<UserAccess> UserAccess);
 
-    public static SampleData Read(string path)
+    /// <summary>Written in the sample file where the Azure scope is the approved access resource group (seed --access-scope).</summary>
+    public const string AccessScopePlaceholder = "{{ACCESS_SCOPE}}";
+
+    /// <param name="accessScope">Fills <see cref="AccessScopePlaceholder"/>; null leaves those scopes unresolved (role team).</param>
+    public static SampleData Read(string path, string? accessScope = null)
     {
         var data = JsonSerializer.Deserialize<SampleData>(File.ReadAllText(path), AppJson.Options)
                    ?? throw new InvalidOperationException("Sample data file is empty.");
+        data = data with
+        {
+            MappingSheet = data.MappingSheet.Select(r => r with
+            {
+                AzureRoles = r.AzureRoles.Select(g => g.Scope == AccessScopePlaceholder ? g with { Scope = accessScope } : g).ToList(),
+            }).ToList(),
+        };
         var notSample = data.Projects.Any(p => !p.IsSample) || data.MappingSheet.Any(r => !r.IsSample)
                         || data.ResponseDocument.Any(r => !r.IsSample) || data.UserAccess.Any(u => !u.IsSample);
         if (notSample) throw new InvalidOperationException("Sample data contains a record without isSample=true. Refusing to load.");

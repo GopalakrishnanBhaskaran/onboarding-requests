@@ -76,9 +76,30 @@ public sealed class CallerContext(string userId, string displayName, IReadOnlyDi
     public IEnumerable<string> ProjectsWith(Permission permission) =>
         Grants.Where(g => AccessPolicy.Allows(g.Value, permission)).Select(g => g.Key).OrderBy(p => p, StringComparer.Ordinal);
 
-    /// <summary>The caller is the person named on the request (sign-in name, case-insensitive).</summary>
+    /// <summary>
+    /// The caller is the person named on the request (sign-in name, case-insensitive). A guest's sign-in can reach the
+    /// app as its mail address (owner@gmail.com), as its guest UPN (owner_gmail.com#EXT#@tenant.onmicrosoft.com) or with a
+    /// provider prefix (live.com#owner@gmail.com); all three name the same person.
+    /// </summary>
     public bool Is(string? signInName) =>
-        !string.IsNullOrWhiteSpace(signInName) && string.Equals(DisplayName.Trim(), signInName.Trim(), StringComparison.OrdinalIgnoreCase);
+        !string.IsNullOrWhiteSpace(signInName) && !string.IsNullOrWhiteSpace(DisplayName) && SignInKey(DisplayName) == SignInKey(signInName);
+
+    public static string SignInKey(string signIn)
+    {
+        var t = signIn.Trim().ToLowerInvariant();
+        var hash = t.IndexOf('#');
+        if (hash > 0 && t.IndexOf("#ext#@", StringComparison.Ordinal) is var ext and > 0)
+        {
+            var local = t[..ext];
+            var underscore = local.LastIndexOf('_');
+            if (underscore > 0) return $"{local[..underscore]}@{local[(underscore + 1)..]}";
+        }
+        else if (hash > 0 && t[..hash] is "live.com" or "gmail.com" or "mail" or "sts" && t[(hash + 1)..].Contains('@'))
+        {
+            return t[(hash + 1)..];
+        }
+        return t;
+    }
 }
 
 public sealed class AccessService(DataStores stores)

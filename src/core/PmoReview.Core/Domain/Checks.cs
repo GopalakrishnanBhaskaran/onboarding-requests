@@ -23,4 +23,7 @@ public static class RiskFlags
     public const string Guest = "Guest user";
     public const string BroadAccess = "Existing broad access";
     public const string Sensitive = "Sensitive resource";
+    public const string Production = "Production environment";
+    public const string RowCaveat = "Mapping row caveat";
+    public const string TenantNotConnected = "Tenant not connected to the agent";
 }

@@ -34,6 +34,17 @@ public sealed record WorkflowSettings
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>
     public TimeSpan PermissionWait { get; init; } = TimeSpan.FromHours(24);
+    /// <summary>
+    /// The Entra tenant the AI agent's identity lives in (<c>AGENT_TENANT_ID</c>). Projects bound to another tenant are
+    /// never read or changed by the agent (tenant separation, <see cref="Tenants"/>).
+    /// </summary>
+    public string? AgentTenantId { get; init; }
+    /// <summary>Deployment environment (<c>APP_ENVIRONMENT</c>: dev, test, prod). Shown in the app and in test mail subjects.</summary>
+    public string AppEnvironment { get; init; } = "pilot";
+    /// <summary>True when the worker mails notifications (<c>NOTIFY_SENDER</c> other than Outbox).</summary>
+    public bool MailEnabled { get; init; }
+    /// <summary>Non-production only: every mail goes to this address instead of the real recipients (listed in the mail).</summary>
+    public string? MailRedirectTo { get; init; }
 
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {

@@ -70,7 +70,9 @@ public class FlowTests
         Assert.Equal(ResponseState.Assigned, record.State);
         Assert.Equal(TestApp.SignIn(TestApp.Rose), record.AssignedBy);
         Assert.Equal(RequestStatus.Verifying, await app.Status(id));
-        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.AccessReady && n.To.Single() == TestApp.DefaultUser);
+        // The joiner is mailed at the Enterprise ID when it is a mail address (short IDs have none); the requester always.
+        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.AccessReady && n.To.SequenceEqual([TestApp.SignIn(TestApp.Alice)])
+                                                          && n.Body.Contains(TestApp.DefaultUser) && n.Body.Contains(TestApp.DefaultGroup));
 
         // 7. Verify: waits for the user's sign-in and permanent method, and the TAP removal.
         await app.RunWorker();

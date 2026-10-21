@@ -1,13 +1,40 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Badge, Button, Caption1, Checkbox, Field, Input, Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
+  Badge, Button, Caption1, Checkbox, Field, Input, Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Textarea,
 } from '@fluentui/react-components';
 import { api } from '../lib/api';
-import type { Item, MappingRow, ProjectSummary, ResponseRecord } from '../lib/types';
-import { dateTime } from '../lib/format';
+import type { AzureRoleGrant, Item, MappingRow, ProjectSummary, ResponseRecord } from '../lib/types';
+import { dateTime, scopeName } from '../lib/format';
 import { ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
-const blank = { rowId: '', resource: '', accessLevel: '', entraGroup: '', role: '', roleScope: '', sourceReference: '', privileged: false, sensitiveResource: false, toBeCreated: false };
+const blank = {
+  rowId: '', resource: '', accessLevel: '', environment: '', entraGroup: '', role: '', roleScope: '', sourceReference: '', privileged: false,
+  sensitiveResource: false, toBeCreated: false,
+};
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The row's Azure roles: the list, else the single pair of older rows. */
+function grants(r: MappingRow): AzureRoleGrant[] {
+  if (r.azureRoles && r.azureRoles.length > 0) return r.azureRoles;
+  return r.azureRoleDefinitionId && r.azureScope
+    ? [{ roleName: r.azureRoleDefinitionId, roleDefinitionId: r.azureRoleDefinitionId, scope: r.azureScope, resourceName: null, resourceType: null }]
+    : [];
+}
+
+/** One response-document line per role: "Role name | resource name | Azure scope (optional)". */
+export function toLines(list: AzureRoleGrant[]): string {
+  return list.map((g) => [g.roleName, g.resourceName ?? '', g.scope ?? ''].join(' | ')).join('\n');
+}
+
+export function fromLines(text: string): AzureRoleGrant[] {
+  return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [role = '', resource = '', scope = ''] = l.split('|').map((x) => x.trim());
+    return {
+      roleName: role, roleDefinitionId: GUID.test(role) ? role : null, resourceName: resource || (scope ? scopeName(scope) : null),
+      scope: scope || null, resourceType: null,
+    };
+  });
+}
 
 /**
  * The two sources of truth. PMO owns the mapping sheet (resource + access level → Entra group → role); the ID team may
@@ -20,8 +47,10 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
   const [rows, setRows] = useState<Item<MappingRow>[] | null>(null);
   const [records, setRecords] = useState<Item<ResponseRecord>[] | null>(null);
   const [form, setForm] = useState(blank);
-  const [azure, setAzure] = useState({ rowId: '', roleId: '', scope: '' });
+  const [azure, setAzure] = useState({ rowId: '', lines: '' });
+  const [envFilter, setEnvFilter] = useState('');
   const [error, setError] = useState<unknown>(null);
+  const environments = project.environments ?? [];
 
   const load = useCallback(async () => {
     setError(null);
@@ -48,8 +77,11 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
   const body = (r: MappingRow, change: Partial<MappingRow>) => ({
     resource: r.resource, accessLevel: r.accessLevel, entraGroup: r.entraGroup, role: r.role, roleScope: r.roleScope,
     privileged: r.privileged, sensitiveResource: r.sensitiveResource, deprecated: r.deprecated, groupState: r.groupState,
-    sourceReference: r.sourceReference, azureRoleDefinitionId: r.azureRoleDefinitionId, azureScope: r.azureScope, ...change,
+    sourceReference: r.sourceReference, azureRoleDefinitionId: r.azureRoleDefinitionId, azureScope: r.azureScope,
+    azureRoles: r.azureRoles ?? [], environment: r.environment ?? null, groupObjectId: r.groupObjectId ?? null, jobRoles: r.jobRoles ?? null,
+    flag: r.flag ?? 'None', notes: r.notes ?? null, ...change,
   });
+  const shown = rows?.filter(({ value: r }) => !envFilter || !r.environment || r.environment === envFilter);
 
   return (
     <div className={s.stack}>
@@ -59,13 +91,24 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
 
       <section className={s.section} aria-labelledby="sheet-h">
         <Subtitle2 as="h2" id="sheet-h">PMO-to-Entra group mapping sheet</Subtitle2>
-        <Caption1 className={s.muted}>Read fresh by every AI review. A change re-runs the review of in-flight requests for that resource.</Caption1>
+        <Caption1 className={s.muted}>
+          Tenant {project.tenantName || project.name} only. Read fresh by every AI review. A change re-runs the review of in-flight requests for that resource.
+          Red rows are never acted on; amber rows carry a caveat the approvers see.
+        </Caption1>
+        {environments.length > 0 && (
+          <Field label="Environment">
+            <select value={envFilter} onChange={(e) => setEnvFilter(e.target.value)}>
+              <option value="">All</option>
+              {environments.map((e) => <option key={e} value={e}>{e}</option>)}
+            </select>
+          </Field>
+        )}
         <div className={s.tableWrap}>
           <Table aria-label="Mapping sheet" size="small">
             <TableHeader>
               <TableRow>
                 <TableHeaderCell>Row</TableHeaderCell>
-                <TableHeaderCell>Resource / access level</TableHeaderCell>
+                <TableHeaderCell>Resource / access level / environment</TableHeaderCell>
                 <TableHeaderCell>Entra group</TableHeaderCell>
                 <TableHeaderCell>Role (scope)</TableHeaderCell>
                 <TableHeaderCell>Flags</TableHeaderCell>
@@ -74,23 +117,32 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows?.map(({ value: r, etag }) => (
+              {shown?.map(({ value: r, etag }) => (
                 <TableRow key={r.id}>
                   <TableCell>{r.rowId} v{r.version}<Caption1 block className={s.muted}>{r.sourceReference}</Caption1></TableCell>
-                  <TableCell>{r.resource} · {r.accessLevel}</TableCell>
-                  <TableCell>{r.entraGroup} {r.groupState === 'ToBeCreated' && <Badge color="warning">to be created</Badge>}</TableCell>
+                  <TableCell>
+                    {r.resource} · {r.accessLevel}{r.environment ? ` · ${r.environment}` : ''}
+                    {r.jobRoles && <Caption1 block className={s.muted}>For: {r.jobRoles}</Caption1>}
+                  </TableCell>
+                  <TableCell>
+                    {r.entraGroup} {r.groupState === 'ToBeCreated' && <Badge color="warning">to be created</Badge>}
+                    {r.groupObjectId && <Caption1 block className={s.muted}>{r.groupObjectId}</Caption1>}
+                  </TableCell>
                   <TableCell>
                     {r.role}{r.roleScope ? ` (${r.roleScope})` : ''}
-                    {r.azureRoleDefinitionId && (
-                      <Caption1 block className={s.muted}>AI agent assigns Azure role {r.azureRoleDefinitionId} at {r.azureScope}</Caption1>
-                    )}
+                    {grants(r).map((g, i) => (
+                      <Caption1 key={i} block className={s.muted}>Azure: {g.roleName} on {g.resourceName ?? scopeName(g.scope)}{g.scope ? '' : ' (scope not resolved)'}</Caption1>
+                    ))}
                   </TableCell>
                   <TableCell>
                     <div className={s.row}>
                       {r.privileged && <Badge color="danger">privileged</Badge>}
                       {r.sensitiveResource && <Badge color="warning">sensitive</Badge>}
                       {r.deprecated && <Badge color="subtle">deprecated</Badge>}
+                      {r.flag === 'Red' && <Badge color="danger">red: needs a decision</Badge>}
+                      {r.flag === 'Amber' && <Badge color="warning">amber: caveat</Badge>}
                     </div>
+                    {r.notes && r.flag && r.flag !== 'None' && <Caption1 block className={s.pre}>{r.notes}</Caption1>}
                   </TableCell>
                   <TableCell><Caption1>{r.updatedBy} · {dateTime(r.updatedAt)}</Caption1></TableCell>
                   <TableCell>
@@ -122,7 +174,8 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             e.preventDefault();
             void run(async () => {
               await api.addMappingRow(project.projectId, {
-                rowId: form.rowId || null, resource: form.resource, accessLevel: form.accessLevel, entraGroup: form.entraGroup, role: form.role,
+                rowId: form.rowId || null, resource: form.resource, accessLevel: form.accessLevel, environment: form.environment || null,
+                entraGroup: form.entraGroup, role: form.role,
                 roleScope: form.roleScope || null, sourceReference: form.sourceReference, privileged: form.privileged,
                 sensitiveResource: form.sensitiveResource, groupState: form.toBeCreated ? 'ToBeCreated' : 'Exists',
               });
@@ -135,6 +188,14 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             <Field label="Row id (optional)"><Input value={form.rowId} onChange={(_, d) => setForm({ ...form, rowId: d.value })} /></Field>
             <Field label="Resource" required><Input value={form.resource} onChange={(_, d) => setForm({ ...form, resource: d.value })} /></Field>
             <Field label="Access level" required><Input value={form.accessLevel} onChange={(_, d) => setForm({ ...form, accessLevel: d.value })} /></Field>
+            {environments.length > 0 && (
+              <Field label="Environment">
+                <select value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
+                  <option value="">Every environment</option>
+                  {environments.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </Field>
+            )}
           </div>
           <div className={s.row}>
             <Field label="Entra group" required><Input value={form.entraGroup} onChange={(_, d) => setForm({ ...form, entraGroup: d.value })} /></Field>
@@ -159,35 +220,34 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             e.preventDefault();
             const row = rows.find((x) => x.value.rowId === azure.rowId);
             if (!row) return;
-            const clear = azure.roleId.trim() === '' && azure.scope.trim() === '';
+            // The list replaces the single role of older rows.
             void run(() => api.updateMappingRow(project.projectId, row.value.rowId, body(row.value, {
-              azureRoleDefinitionId: clear ? null : azure.roleId.trim(), azureScope: clear ? null : azure.scope.trim(),
+              azureRoles: fromLines(azure.lines), azureRoleDefinitionId: null, azureScope: null,
             }), row.etag));
           }}
         >
-          <Subtitle2 as="h2">Azure role the AI agent assigns (PMO)</Subtitle2>
+          <Subtitle2 as="h2">Azure roles the AI agent assigns (PMO)</Subtitle2>
           <Caption1 className={s.muted}>
-            Optional per row. After both approvals (Owner, then Security), the AI agent assigns this Azure role to the row's group, if the role and
-            scope are on its approved allow-list; otherwise the role assignment team does it. Leave both empty to clear.
+            The group's Azure roles from the response document, one per line: <code>Role name | resource name | Azure scope</code>, for example
+            <code> Reader | rg-pmo-sample-access | /subscriptions/&lt;id&gt;/resourceGroups/rg-pmo-sample-access</code>. Built-in role names
+            (Reader, Storage Blob Data Reader/Contributor, Key Vault …) resolve to their ids. After both approvals the AI agent sets up every
+            line if all roles and scopes are on its approved allow-list; otherwise the role assignment team does it. Empty clears the list.
           </Caption1>
-          <div className={s.row}>
+          <div className={s.row} style={{ alignItems: 'flex-start' }}>
             <Field label="Row" required>
               <select value={azure.rowId} onChange={(e) => {
                 const r = rows.find((x) => x.value.rowId === e.target.value)?.value;
-                setAzure({ rowId: e.target.value, roleId: r?.azureRoleDefinitionId ?? '', scope: r?.azureScope ?? '' });
+                setAzure({ rowId: e.target.value, lines: r ? toLines(grants(r)) : '' });
               }}>
                 <option value="">Select a row</option>
-                {rows.map(({ value: r }) => <option key={r.rowId} value={r.rowId}>{r.rowId} · {r.resource} · {r.accessLevel}</option>)}
+                {rows.map(({ value: r }) => <option key={r.rowId} value={r.rowId}>{r.rowId} · {r.resource} · {r.accessLevel}{r.environment ? ` · ${r.environment}` : ''}</option>)}
               </select>
             </Field>
-            <Field label="Azure role definition ID" hint="GUID, e.g. Reader acdd72a7-3385-48ef-bd42-f606fba81ae7">
-              <Input value={azure.roleId} onChange={(_, d) => setAzure({ ...azure, roleId: d.value })} />
-            </Field>
-            <Field label="Azure scope" hint="/subscriptions/{id}/resourceGroups/{name}">
-              <Input value={azure.scope} onChange={(_, d) => setAzure({ ...azure, scope: d.value })} />
+            <Field label="Azure roles (one per line)" style={{ flexGrow: 1, minWidth: 320 }}>
+              <Textarea value={azure.lines} onChange={(_, d) => setAzure({ ...azure, lines: d.value })} rows={5} resize="vertical" />
             </Field>
           </div>
-          <div><Button type="submit" disabled={azure.rowId === ''}>Save Azure role</Button></div>
+          <div><Button type="submit" disabled={azure.rowId === ''}>Save Azure roles</Button></div>
         </form>
       )}
 
@@ -210,7 +270,7 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
               {records?.map(({ value: x }) => (
                 <TableRow key={x.id}>
                   <TableCell>{x.userId}</TableCell>
-                  <TableCell>{x.resource} · {x.accessLevel}</TableCell>
+                  <TableCell>{x.resource} · {x.accessLevel}{x.environment ? ` · ${x.environment}` : ''}</TableCell>
                   <TableCell>{x.entraGroup} · {x.role}</TableCell>
                   <TableCell><Badge appearance="outline">{x.state}</Badge></TableCell>
                   <TableCell>{x.assignedRoles.map((a) => a.scope ? `${a.role} (${a.scope})` : a.role).join(', ') || '—'}{x.assignedBy ? ` · ${x.assignedBy}` : ''}</TableCell>

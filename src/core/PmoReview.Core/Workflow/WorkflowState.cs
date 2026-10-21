@@ -58,6 +58,13 @@ public sealed record ReviewedScope
     /// <summary>The Azure role (definition GUID) and scope the approvers saw; the only role the agent may assign (v2.1).</summary>
     public string? AzureRoleDefinitionId { get; init; }
     public string? AzureScope { get; init; }
+    /// <summary>
+    /// Every Azure role (role × resource) the approvers saw for the group; the only roles the agent may assign (v2.1).
+    /// Empty on scopes written before 21 Oct 2026: then the single <see cref="AzureRoleDefinitionId"/> pair applies.
+    /// </summary>
+    public IReadOnlyList<AzureRoleGrant> AzureRoles { get; init; } = [];
+    /// <summary>The environment the access is for (e.g. Dev, PreProd).</summary>
+    public string? Environment { get; init; }
     public GroupState GroupState { get; init; }
     /// <summary>Entra cross-check: the group already exists (reuse it), even if the sheet says "to be created".</summary>
     public bool? GroupExistsInEntra { get; init; }
@@ -66,13 +73,24 @@ public sealed record ReviewedScope
     /// <summary>AI summary carried with every approval request: what, why, group, role, risk flags, review results.</summary>
     public required string Summary { get; init; }
 
-    /// <summary>Same group and role, incl. the Azure role: any difference needs new approvals.</summary>
-    public bool SameAccess(ReviewedScope other) =>
-        string.Equals(EntraGroup, other.EntraGroup, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(Role, other.Role, StringComparison.OrdinalIgnoreCase)
-        && string.Equals(RoleScope ?? "", other.RoleScope ?? "", StringComparison.OrdinalIgnoreCase)
-        && string.Equals(AzureRoleDefinitionId ?? "", other.AzureRoleDefinitionId ?? "", StringComparison.OrdinalIgnoreCase)
-        && string.Equals((AzureScope ?? "").TrimEnd('/'), (other.AzureScope ?? "").TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+    /// <summary>The approved Azure roles: <see cref="AzureRoles"/>, else the single legacy pair, else none.</summary>
+    public IReadOnlyList<AzureRoleGrant> Grants() =>
+        AzureRoles.Count > 0 ? AzureRoles
+        : AzureRoleDefinitionId is not null && AzureScope is not null
+            ? [new AzureRoleGrant { RoleName = BuiltInRoles.NameOf(AzureRoleDefinitionId) ?? AzureRoleDefinitionId, RoleDefinitionId = AzureRoleDefinitionId, Scope = AzureScope }]
+            : [];
+
+    /// <summary>Same group and role, incl. every Azure role: any difference needs new approvals.</summary>
+    public bool SameAccess(ReviewedScope other)
+    {
+        var a = Grants();
+        var b = other.Grants();
+        return string.Equals(EntraGroup, other.EntraGroup, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(Role, other.Role, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(RoleScope ?? "", other.RoleScope ?? "", StringComparison.OrdinalIgnoreCase)
+               && (Environment is null ? other.Environment is null : Domain.Environments.Same(Environment, other.Environment))
+               && a.Count == b.Count && a.All(g => b.Any(g.SameAs));
+    }
 }
 
 /// <summary>Temporary Access Pass metadata. The pass itself never reaches this app, its logs, ADO, mail or prompts.</summary>

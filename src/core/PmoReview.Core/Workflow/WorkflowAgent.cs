@@ -153,7 +153,7 @@ public sealed partial class WorkflowAgent(
         if (flow.Status == RequestStatus.Submitted && r.Revision == 1 && trigger == "submit")
         {
             var (subject, body) = Messages.FlowOverview(r, settings);
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"submit:r{r.Revision}", NotificationKind.FlowOverview, Recipients.Requester(r), subject, body, c));
+            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"submit:r{r.Revision}", NotificationKind.FlowOverview, Recipients.Requester(r).Concat(Recipients.User(r)), subject, body, c));
         }
 
         // Reuse a run already started for this stage (e.g. a save that lost a race after the run was created).
@@ -250,6 +250,8 @@ public sealed partial class WorkflowAgent(
             RoleScope = m.RoleScope,
             AzureRoleDefinitionId = reviewedRow?.AzureRoleDefinitionId,
             AzureScope = reviewedRow?.AzureScope,
+            AzureRoles = reviewedRow?.Grants() ?? [],
+            Environment = r.Environment,
             GroupState = m.GroupState ?? GroupState.Exists,
             GroupExistsInEntra = m.GroupExistsInEntra,
             SheetFingerprint = run.SheetFingerprint!,
@@ -321,6 +323,7 @@ public sealed partial class WorkflowAgent(
                 await stores.ResponseDocument.CreateAsync(new ResponseRecord
                 {
                     Id = r.Id, ProjectId = r.ProjectId, RequestId = r.Id, UserId = r.DomainId!, Resource = r.Resource!, AccessLevel = r.AccessLevel!,
+                    Environment = r.Environment, AzureRoles = scope.Grants(),
                     EntraGroup = scope.EntraGroup, Role = scope.Role, RoleScope = scope.RoleScope, Privileged = row?.Privileged ?? false,
                     State = ResponseState.PendingApproval, Justification = SecretMasker.Apply(r.Justification)!,
                     UpdatedBy = Agent, UpdatedAt = now, Version = 1, IsSample = row?.IsSample ?? false,
@@ -335,14 +338,15 @@ public sealed partial class WorkflowAgent(
         var e = existing.Value;
         var same = MappingSheet.Same(e.EntraGroup, scope.EntraGroup) && MappingSheet.Same(e.Role, scope.Role)
                    && string.Equals(e.RoleScope ?? "", scope.RoleScope ?? "", StringComparison.OrdinalIgnoreCase)
-                   && MappingSheet.Same(e.UserId, r.DomainId) && e.State != ResponseState.Rejected;
+                   && MappingSheet.Same(e.UserId, r.DomainId) && e.State != ResponseState.Rejected
+                   && e.Environment == r.Environment && e.AzureRoles.Count == scope.Grants().Count && e.AzureRoles.All(g => scope.Grants().Any(g.SameAs));
         if (same) return;
         try
         {
             await stores.ResponseDocument.ReplaceAsync(e with
             {
                 UserId = r.DomainId!, Resource = r.Resource!, AccessLevel = r.AccessLevel!, EntraGroup = scope.EntraGroup, Role = scope.Role,
-                RoleScope = scope.RoleScope, Privileged = row?.Privileged ?? e.Privileged, State = ResponseState.PendingApproval,
+                RoleScope = scope.RoleScope, Environment = r.Environment, AzureRoles = scope.Grants(), Privileged = row?.Privileged ?? e.Privileged, State = ResponseState.PendingApproval,
                 Justification = SecretMasker.Apply(r.Justification)!, OwnerApprovedBy = null, OwnerApprovedAt = null,
                 SecurityApprovedBy = null, SecurityApprovedAt = null, AssignedRoles = [], AssignedBy = null, AssignedAt = null,
                 UpdatedBy = Agent, UpdatedAt = now, Version = e.Version + 1,
@@ -485,7 +489,7 @@ public sealed partial class WorkflowAgent(
         var projectDoc = await ProjectAsync(r, ct);
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
         var pattern = string.IsNullOrWhiteSpace(projectDoc?.GroupNamePattern) ? policy.DefaultGroupNamePattern : projectDoc!.GroupNamePattern!;
-        var v = await verifier.IdTeamAsync(r, flow.Scope!, flow, task.IdReport, sheet, pattern, ct);
+        var v = await verifier.IdTeamAsync(r, flow.Scope!, flow, task.IdReport, sheet, pattern, ct, NotConnected(projectDoc));
         if (v.Pending) return null; // the worker (with the Entra reader) finishes it
 
         if (v.Failed) return Returned(r, task with { Checks = v.Checks }, v, projectDoc,
@@ -586,7 +590,7 @@ public sealed partial class WorkflowAgent(
 
         var project = await ProjectAsync(r, ct);
         var record = (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id);
-        var v = await verifier.RoleTeamAsync(flow.Scope!, record, task.RoleReport, ct);
+        var v = await verifier.RoleTeamAsync(flow.Scope!, record, task.RoleReport, ct, NotConnected(project));
         if (v.Pending) return null;
         if (v.Failed) return Returned(r, task with { Checks = v.Checks }, v, project, IssueKind.RoleMismatch, "role-team");
 
@@ -594,10 +598,10 @@ public sealed partial class WorkflowAgent(
         var next = (flow with { RoleTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks } })
             .Log(now, Agent, "role-team-verified", "AI verified the role assignment matches the approved role exactly.")
             .To(RequestStatus.Verifying, WaitingOn.User, now, Agent, "verify-start", "Final verification: waiting for the user's sign-in, permanent method and TAP removal.");
-        var (subject, body) = Messages.AccessReady(r, flow.Scope!);
+        var (subject, body) = Messages.AccessReady(r, flow.Scope!, project);
         return new Step(r with { Flow = next },
         [
-            c => notifier.EnqueueAsync(r.ProjectId, r.Id, "access-ready", NotificationKind.AccessReady, Recipients.User(r), subject, body, c),
+            c => notifier.EnqueueAsync(r.ProjectId, r.Id, "access-ready", NotificationKind.AccessReady, Recipients.User(r).Concat(Recipients.Requester(r)), subject, body, c),
             c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.RoleMismatch, IssueKind.TaskSlaBreached], c),
         ]);
     }
@@ -608,9 +612,9 @@ public sealed partial class WorkflowAgent(
     {
         var flow = r.Flow!;
         var since = flow.IdTeamTask?.IdReport?.Tap?.IssuedAt ?? flow.IdTeamTask?.ReportedAt ?? flow.StageSince;
-        var v = await verifier.FinalAsync(r, flow.Scope!, since, ct);
-        var now = clock.UtcNow;
         var project = await ProjectAsync(r, ct);
+        var v = await verifier.FinalAsync(r, flow.Scope!, since, ct, NotConnected(project));
+        var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();
         var changed = !SameChecks(flow.FinalChecks, v.Checks);
         var next = flow with { FinalChecks = v.Checks };
@@ -715,6 +719,9 @@ public sealed partial class WorkflowAgent(
                 $"Failed-Needs-Dev: request {Messages.Short(r)}", report, c),
         ]);
     }
+
+    /// <summary>Tenant separation, decided only where Entra can be read (the worker); see <see cref="Tenants"/>.</summary>
+    private string? NotConnected(Project? project) => directory is null ? null : Tenants.NotConnected(project, settings.AgentTenantId);
 
     private static TeamTask? Cancel(TeamTask? t) => t is null ? null : t with { State = TeamTaskState.Cancelled };
 

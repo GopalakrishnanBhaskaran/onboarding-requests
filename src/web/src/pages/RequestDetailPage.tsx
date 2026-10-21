@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Badge, Body1, Button, Caption1, Link, Subtitle2, Tab, TabList, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
+  Badge, Body1, Button, Caption1, Link, MessageBar, MessageBarBody, MessageBarTitle, Subtitle2, Tab, TabList, Table, TableBody, TableCell,
+  TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
 import { ArrowClockwise20Regular, Edit20Regular } from '@fluentui/react-icons';
 import { api } from '../lib/api';
 import { href } from '../lib/router';
 import type { CheckResult, Item, ProjectSummary, RequestView, ReviewedScope, ReviewRun } from '../lib/types';
-import { checkColor, checkLabel, dateTime, fieldLabel, statusColor } from '../lib/format';
+import { checkColor, checkLabel, dateTime, fieldLabel, grantsOf, scopeName, statusColor } from '../lib/format';
 import { FLOW_OVERVIEW } from '../lib/flow';
 import { ApprovalPanel } from '../components/ApprovalPanel';
 import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPanel';
@@ -126,10 +127,19 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
         {note && <Caption1 role="status">{note}</Caption1>}
       </section>
 
+      {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} onDone={done} onStale={() => void load()} />}
+      {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} onDone={done} onStale={() => void load()} />}
+      {view.approvalHint && (
+        <MessageBar intent="info" layout="multiline">
+          <MessageBarBody><MessageBarTitle>Waiting for a decision</MessageBarTitle>{view.approvalHint}</MessageBarBody>
+        </MessageBar>
+      )}
+
       <section className={s.section} aria-labelledby="req-h">
         <Subtitle2 as="h2" id="req-h">Request · revision {r.revision}</Subtitle2>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
-          {(['enterpriseId', 'firstName', 'lastName', 'domainId', 'resource', 'accessLevel', 'owner', 'justification'] as const).map((k) => (
+          <dt><Caption1>Tenant</Caption1></dt><dd style={{ margin: 0 }}><Body1>{project.tenantName || project.name}</Body1></dd>
+          {(['enterpriseId', 'firstName', 'lastName', 'domainId', 'resource', 'accessLevel', 'environment', 'owner', 'justification'] as const).map((k) => (
             <div key={k} style={{ display: 'contents' }}>
               <dt><Caption1>{fieldLabel[k]}</Caption1></dt>
               <dd style={{ margin: 0 }} className={s.pre}><Body1>{r[k] || '—'}</Body1></dd>
@@ -138,9 +148,6 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
           <dt><Caption1>{fieldLabel.guest}</Caption1></dt><dd style={{ margin: 0 }}><Body1>{r.guest ? 'Yes' : 'No'}</Body1></dd>
         </dl>
       </section>
-
-      {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" onDone={done} />}
-      {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" onDone={done} />}
 
       {f?.approvals.length ? (
         <section className={s.section} aria-labelledby="decisions-h">
@@ -255,8 +262,12 @@ function ReviewView({ run, runs, scope }: { run: ReviewRun; runs: Item<ReviewRun
           <section className={s.section} aria-labelledby="summary-h">
             <Subtitle2 as="h2" id="summary-h">AI summary for the approvers</Subtitle2>
             <Body1 className={s.pre}>{result.summary}</Body1>
-            {scope?.azureRoleDefinitionId && (
-              <Body1>Azure role in this approval: {scope.azureRoleDefinitionId} at {scope.azureScope} on group {scope.entraGroup}.</Body1>
+            {grantsOf(scope).length > 0 && (
+              <ul aria-label="Azure roles in this review" style={{ margin: 0 }}>
+                {grantsOf(scope).map((g, i) => (
+                  <li key={i}><Body1>{g.roleName} on {g.resourceName ?? scopeName(g.scope)}{g.scope ? '' : ' (scope not resolved: role assignment team)'}</Body1></li>
+                ))}
+              </ul>
             )}
             {result.riskFlags.length > 0 && (
               <div className={s.row}>{result.riskFlags.map((flag) => <Badge key={flag} color="warning">{flag}</Badge>)}</div>
@@ -294,10 +305,19 @@ function Notifications({ view }: { view: RequestView }) {
   if (view.notifications.length === 0) return <Empty>No notifications yet.</Empty>;
   return (
     <div className={s.stack}>
-      <Caption1 className={s.muted}>In the pilot, notifications are kept here (status Recorded); none is mailed.</Caption1>
+      <Caption1 className={s.muted}>
+        The AI agent worker mails pending notifications every 5 minutes when mail is switched on (status Sent); otherwise they are kept here (status Recorded).
+        In a test environment every mail goes to the test address.
+      </Caption1>
       {view.notifications.map((n) => (
         <details key={n.id} className={s.section}>
-          <summary><Body1>{dateTime(n.createdAt)} · <b>{n.kind}</b> · to {n.to.join(', ') || '—'} · {n.status} — {n.subject}</Body1></summary>
+          <summary>
+            <Body1>
+              {dateTime(n.createdAt)} · <b>{n.kind}</b> · to {n.to.join(', ') || '—'} · {n.status}
+              {n.deliveredTo && n.deliveredTo.join(',') !== n.to.join(',') ? ` (test: delivered to ${n.deliveredTo.join(', ')})` : ''}
+              {n.lastError ? ` · ${n.lastError}` : ''} — {n.subject}
+            </Body1>
+          </summary>
           <pre className={s.pre} style={{ margin: 0, fontSize: 12 }}>{n.body}</pre>
         </details>
       ))}

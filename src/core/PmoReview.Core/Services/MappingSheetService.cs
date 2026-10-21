@@ -22,7 +22,16 @@ public sealed record MappingRowInput
     /// <summary>Optional Azure role definition GUID the AI agent assigns after both approvals (with <see cref="AzureScope"/>).</summary>
     public string? AzureRoleDefinitionId { get; init; }
     public string? AzureScope { get; init; }
+    /// <summary>Every Azure role of the group (response document). Null = keep the row's list; empty = clear it.</summary>
+    public IReadOnlyList<AzureRoleGrantInput>? AzureRoles { get; init; }
+    public string? Environment { get; init; }
+    public string? GroupObjectId { get; init; }
+    public string? JobRoles { get; init; }
+    public RowFlag? Flag { get; init; }
+    public string? Notes { get; init; }
 }
+
+public sealed record AzureRoleGrantInput(string? RoleName, string? RoleDefinitionId, string? Scope, string? ResourceName, string? ResourceType);
 
 /// <summary>ID team: records the group it created (or the corrected name) on the mapping sheet.</summary>
 public sealed record MappingGroupInput(string? EntraGroup, GroupState? GroupState);
@@ -125,7 +134,36 @@ public sealed partial class MappingSheetService(DataStores stores, IClock clock,
             throw AppException.Invalid("azureRoleDefinitionId must be a role definition GUID (e.g. acdd72a7-3385-48ef-bd42-f606fba81ae7 for Reader).");
         if (azureScope is not null && !AzureScopeFormat().IsMatch(azureScope))
             throw AppException.Invalid("azureScope must be an Azure scope: /subscriptions/{id}[/resourceGroups/{name}[/providers/…]].");
-        return Fields(row, input) with { AzureRoleDefinitionId = roleId?.ToLowerInvariant(), AzureScope = azureScope };
+        var groupId = RequestService.Text(input.GroupObjectId, "groupObjectId", 36);
+        if (groupId is not null && !Guid.TryParseExact(groupId, "D", out _)) throw AppException.Invalid("groupObjectId must be the group's Entra object id (GUID).");
+        if (input.AzureRoles is { Count: > 50 }) throw AppException.Invalid("At most 50 Azure roles per row.");
+        return Fields(row, input) with
+        {
+            AzureRoleDefinitionId = roleId?.ToLowerInvariant(), AzureScope = azureScope,
+            AzureRoles = input.AzureRoles is null ? row.AzureRoles : input.AzureRoles.Select(Grant).ToList(),
+            Environment = RequestService.Text(input.Environment, "environment", 40),
+            GroupObjectId = groupId?.ToLowerInvariant(),
+            JobRoles = RequestService.Text(input.JobRoles, "jobRoles", 500),
+            Flag = input.Flag ?? RowFlag.None,
+            Notes = RequestService.Text(input.Notes, "notes", 2000),
+        };
+    }
+
+    /// <summary>One response-document line: role name (built-in names resolve to their id), optional id and scope.</summary>
+    private static AzureRoleGrant Grant(AzureRoleGrantInput g)
+    {
+        var name = Required(g.RoleName, "azureRoles.roleName");
+        var id = RequestService.Text(g.RoleDefinitionId, "azureRoles.roleDefinitionId", 36);
+        if (id is not null && !Guid.TryParseExact(id, "D", out _)) throw AppException.Invalid($"Role definition id for {name} must be a GUID.");
+        var scope = RequestService.Text(g.Scope, "azureRoles.scope", 500);
+        if (scope is not null && !AzureScopeFormat().IsMatch(scope)) throw AppException.Invalid($"Scope for {name} must be an Azure scope: /subscriptions/{{id}}[/resourceGroups/{{name}}[/providers/…]].");
+        var resource = RequestService.Text(g.ResourceName, "azureRoles.resourceName", 200);
+        if (scope is null && resource is null) throw AppException.Invalid($"{name} needs a resource name or an Azure scope.");
+        return new AzureRoleGrant
+        {
+            RoleName = name, RoleDefinitionId = (id ?? BuiltInRoles.IdOf(name))?.ToLowerInvariant(), Scope = scope,
+            ResourceName = resource, ResourceType = RequestService.Text(g.ResourceType, "azureRoles.resourceType", 200),
+        };
     }
 
     private static MappingRow Fields(MappingRow row, MappingRowInput input) => row with

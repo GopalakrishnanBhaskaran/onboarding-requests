@@ -19,6 +19,8 @@ public sealed record RequestInput
     public string? LastName { get; init; }
     public string? Resource { get; init; }
     public string? AccessLevel { get; init; }
+    /// <summary>Required when the project lists environments (e.g. Dev, PreProd, Prod).</summary>
+    public string? Environment { get; init; }
     public string? Justification { get; init; }
     public string? Owner { get; init; }
     public bool? Guest { get; init; }
@@ -34,6 +36,7 @@ public static class RequestFields
     public const string AccessLevel = "accessLevel";
     public const string Justification = "justification";
     public const string Owner = "owner";
+    public const string Environment = "environment";
 
     /// <summary>Required at intake, in form order. The domain-specific ID is derived, not typed.</summary>
     public static readonly IReadOnlyList<string> Required = [EnterpriseId, FirstName, LastName, Resource, AccessLevel, Justification, Owner];
@@ -48,6 +51,7 @@ public static class RequestFields
         AccessLevel => "Access level",
         Justification => "Justification",
         Owner => "Owner",
+        Environment => "Environment",
         _ => field,
     };
 }
@@ -77,6 +81,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         caller.Require(projectId, Permission.SubmitRequests);
         var (clean, fixes) = Validate(input);
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
+        var environment = EnvironmentFor(project, input.Environment);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
@@ -90,6 +95,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             DomainId = DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix),
             Resource = clean.Resource,
             AccessLevel = clean.AccessLevel,
+            Environment = environment,
             Justification = clean.Justification,
             Owner = clean.Owner,
             Guest = clean.Guest ?? false,
@@ -118,6 +124,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             throw AppException.Conflict("not_returned", $"Only a returned request can be changed. This one is {StatusText.Label(flow.Status)}.");
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
+        var environment = EnvironmentFor(project, input.Environment);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
         if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
@@ -129,6 +136,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             DomainId = DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix),
             Resource = clean.Resource,
             AccessLevel = clean.AccessLevel,
+            Environment = environment,
             Justification = clean.Justification,
             Owner = clean.Owner,
             Guest = clean.Guest ?? false,
@@ -145,6 +153,19 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         {
             throw AppException.Stale();
         }
+    }
+
+    /// <summary>
+    /// The project's spelling of the requested environment (dev / ppd / prd are understood). Required when the project
+    /// lists environments; a project without environments ignores the field.
+    /// </summary>
+    public static string? EnvironmentFor(Project? project, string? requested)
+    {
+        if (project is null || project.Environments.Count == 0) return null;
+        var text = Text(requested, RequestFields.Environment, 40);
+        if (text is null) throw AppException.Incomplete([RequestFields.Label(RequestFields.Environment)]);
+        return Domain.Environments.Canonical(project, text)
+               ?? throw AppException.Invalid($"Environment must be one of {string.Join(", ", project.Environments)} for {Tenants.Label(project)}.");
     }
 
     internal async Task<Versioned<AccessRequest>> LoadAsync(string projectId, string requestId, CancellationToken ct)
@@ -164,7 +185,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var fixes = new List<string>();
         var clean = new RequestInput
         {
-            EnterpriseId = Fix(Text(input.EnterpriseId, RequestFields.EnterpriseId, 64), s => s.Replace(" ", "").ToLowerInvariant(), RequestFields.EnterpriseId, fixes),
+            EnterpriseId = Fix(Text(input.EnterpriseId, RequestFields.EnterpriseId, 200), s => s.Replace(" ", "").ToLowerInvariant(), RequestFields.EnterpriseId, fixes),
             FirstName = Fix(Text(input.FirstName, RequestFields.FirstName, 100), Name, RequestFields.FirstName, fixes),
             LastName = Fix(Text(input.LastName, RequestFields.LastName, 100), Name, RequestFields.LastName, fixes),
             Resource = Fix(Text(input.Resource, RequestFields.Resource, ShortMax), Spaces, RequestFields.Resource, fixes),
@@ -178,8 +199,8 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var missing = RequestFields.Required.Where(f => Value(clean, f) is null).Select(RequestFields.Label).ToList();
         if (missing.Count > 0) throw AppException.Incomplete(missing);
 
-        if (!EnterpriseIdFormat().IsMatch(clean.EnterpriseId!))
-            throw AppException.Invalid("Enterprise ID may contain only letters, digits, dot, dash and underscore (2-64 characters).");
+        if (!EnterpriseIdFormat().IsMatch(clean.EnterpriseId!) && !EnterpriseMailFormat().IsMatch(clean.EnterpriseId!))
+            throw AppException.Invalid("Enterprise ID must be the joiner's enterprise mail address (jane.doe@company.com) or a user name of letters, digits, dot, dash and underscore (2-64 characters).");
         if (!NameFormat().IsMatch(clean.FirstName!) || !NameFormat().IsMatch(clean.LastName!))
             throw AppException.Invalid("First and last name may contain only letters, spaces, dots, hyphens and apostrophes.");
         if (!SignInFormat().IsMatch(clean.Owner!))
@@ -220,6 +241,9 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
     [GeneratedRegex("^[a-z0-9][a-z0-9._-]{1,63}$")]
     private static partial Regex EnterpriseIdFormat();
 
+    [GeneratedRegex("^[a-z0-9][a-z0-9._'+-]{0,63}@[a-z0-9-]+(\\.[a-z0-9-]+)+$")]
+    private static partial Regex EnterpriseMailFormat();
+
     [GeneratedRegex(@"^[\p{L}][\p{L} .'-]{0,99}$")]
     private static partial Regex NameFormat();
 
@@ -238,12 +262,24 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
     }
 }
 
-public static class DomainIds
+public static partial class DomainIds
 {
-    /// <summary>Domain-specific ID = normalised Enterprise ID + the project's domain suffix (e.g. "@contoso.onmicrosoft.com").</summary>
+    /// <summary>
+    /// Domain-specific ID = normalised Enterprise ID (the part before '@' of an enterprise mail address, without
+    /// characters a sign-in name cannot hold) + the project's domain suffix (e.g. "@contoso.onmicrosoft.com").
+    /// </summary>
     public static string Derive(string enterpriseId, string? suffix)
     {
         var id = enterpriseId.Trim().ToLowerInvariant();
-        return string.IsNullOrWhiteSpace(suffix) ? id : id + suffix.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(suffix)) return id;
+        var local = id.Contains('@') ? UpnUnsafe().Replace(id[..id.IndexOf('@')], "") : id;
+        return local + suffix.Trim().ToLowerInvariant();
     }
+
+    /// <summary>The Enterprise ID when it is a mail address (where the joiner is notified), else null.</summary>
+    public static string? MailOf(string? enterpriseId) =>
+        enterpriseId is not null && enterpriseId.Contains('@') ? enterpriseId.Trim().ToLowerInvariant() : null;
+
+    [GeneratedRegex("[^a-z0-9._'-]")]
+    private static partial Regex UpnUnsafe();
 }
