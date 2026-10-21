@@ -24,12 +24,17 @@ if [[ -n "$W" ]]; then
   az functionapp config appsettings list -g "$RG" -n "$W" \
     --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID'], name)].{name:name, value:value}" -o table
   MI=$(az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv)
-  echo "-- Graph application permissions (v2 expects read only: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All):"
+  echo "-- Graph application permissions (read: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All; v2.1 provisioning adds User.Create, Group.Create, GroupMember.ReadWrite.All):"
   HELD=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
     | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done)
   echo "$HELD"
-  if echo "$HELD" | grep -qE "ReadWrite|EntitlementManagement"; then
+  # Retired Phase 2b/2c roles (same list as deploy_free.sh GRAPH_RETIRED_ROLES). The v2.1 create roles are approved (17 Oct 2026).
+  if echo "$HELD" | grep -qxE "EntitlementManagement.ReadWrite.All|User.ReadWrite.All|LicenseAssignment.ReadWrite.All|UserAuthenticationMethod.ReadWrite.All|Group.ReadWrite.All|EntitlementManagement.Read.All|User.ReadBasic.All"; then
     echo "FLAG: retired Phase 2b/2c write permissions still held. After approval: tools/deploy_free.sh revoke-graph-writes $SUB --approved-by \"<name> <date>\""
+  fi
+  PROV=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv)
+  if echo "$HELD" | grep -qxE "User.Create|Group.Create|GroupMember.ReadWrite.All" && [[ "${PROV,,}" != "true" ]]; then
+    echo "FLAG: v2.1 create permissions held while AGENT_PROVISIONING is off. Remove them (approval): tools/deploy_free.sh provisioning $SUB off --approved-by \"<name> <date>\""
   fi
   COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
   echo "-- Cosmos data-plane roles of the worker identity:"
