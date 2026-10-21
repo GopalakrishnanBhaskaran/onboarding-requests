@@ -8,8 +8,8 @@ SUB=$(az account show --query id -o tsv)
 ALLOWED='^Microsoft\.(Web/staticSites|DocumentDB/databaseAccounts)$'
 # Phase 2 (approved 16 Oct 2026): exactly one Flex plan, one Function App and one storage account (the AI agent worker).
 PHASE2='^Microsoft\.(Web/serverFarms|Web/sites|Storage/storageAccounts)$'
-# Mail (approval-gated, deploy_free.sh email): exactly one Communication Services and one Email Communication Service.
-EMAIL='^Microsoft\.Communication/(CommunicationServices|EmailServices)$'
+# Mail (approved 21 Oct 2026, deploy_free.sh email): exactly one Communication Services, one Email Communication Service and its one Azure-managed domain.
+EMAIL='^Microsoft\.Communication/(CommunicationServices|EmailServices|EmailServices/Domains)$'
 
 echo "== Resources in $RG =="
 az resource list -g "$RG" --query "[].{type:type, name:name, sku:sku.name, location:location}" -o table
