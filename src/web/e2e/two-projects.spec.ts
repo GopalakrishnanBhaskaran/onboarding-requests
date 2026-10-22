@@ -234,6 +234,31 @@ test('PMO sees the mapping sheet and the response document', async ({ browser })
   await paul.ctx.close();
 });
 
+test('contact inventory: PMO edits the team mail lists (semicolon-separated); others read them', async ({ browser }) => {
+  const paul = await as(browser, 'sample-user-paul');
+  await paul.page.goto('/#/contacts');
+  await expect(paul.page.getByRole('heading', { name: 'Contact inventory' })).toBeVisible();
+  const security = paul.page.getByRole('textbox', { name: 'Security', exact: true });
+  await expect(security).toHaveValue(/@/);
+  const team = `sec.${Date.now().toString(36)}@company.example`; // unique per run: the local store outlives a run
+  // A wrong entry is named and nothing can be saved.
+  await security.fill(`${team}; not-an-address`);
+  await expect(paul.page.getByText('Not a mail address: not-an-address')).toBeVisible();
+  await expect(paul.page.getByRole('button', { name: 'Save contacts' })).toBeDisabled();
+  // An Outlook paste works: "Name <address>; …".
+  await security.fill(`Security Team <${team}>; sec2@company.example`);
+  await paul.page.getByRole('button', { name: 'Save contacts' }).click();
+  await expect(paul.page.getByText(/Saved as version \d+\. Security and PMO were mailed what changed/)).toBeVisible();
+  await expect(security).toHaveValue(`${team}; sec2@company.example`);
+  await paul.ctx.close();
+
+  const alice = await as(browser, 'sample-user-alice');
+  await alice.page.goto('/#/contacts');
+  await expect(alice.page.getByRole('textbox', { name: /^Security \(\d+\)$/ })).toHaveValue(`${team}; sec2@company.example`);
+  await expect(alice.page.getByRole('button', { name: 'Save contacts' })).toHaveCount(0);
+  await alice.ctx.close();
+});
+
 test('unregistered user sees their id and no data', async ({ browser }) => {
   const { ctx, page } = await as(browser, 'sample-user-nobody');
   await page.goto('/');

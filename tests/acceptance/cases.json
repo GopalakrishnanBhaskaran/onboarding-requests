@@ -112,7 +112,7 @@
     {
       "id": "AC19",
       "case": "Final verification and notifications",
-      "expected": "Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified",
+      "expected": "Account, membership and exact roles verified -> Completed at once (no wait for the user's sign-in); joiner told access is ready; one completion mail to the requester, Security, PMO and both teams",
       "gate": false
     },
     {

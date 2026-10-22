@@ -23,12 +23,16 @@ public enum Permission
     ViewIssues,
     ViewReports,
     RecoverRuns,
+    /// <summary>Read the contact inventory (where team mails go): everyone in the project.</summary>
+    ViewContacts,
+    /// <summary>Change the contact inventory: PMO and Operators. Never decides who may approve (that stays userAccess).</summary>
+    EditContacts,
 }
 
 /// <summary>Role → permission table. Single place to change who can do what. Nobody but Owner and Security approves.</summary>
 public static class AccessPolicy
 {
-    private static readonly Permission[] Read = [Permission.ViewRequests, Permission.ViewRuns, Permission.ViewMappingSheet, Permission.ViewResponseDocument];
+    private static readonly Permission[] Read = [Permission.ViewRequests, Permission.ViewRuns, Permission.ViewMappingSheet, Permission.ViewResponseDocument, Permission.ViewContacts];
 
     private static readonly Dictionary<AppRole, Permission[]> Table = new()
     {
@@ -37,8 +41,8 @@ public static class AccessPolicy
         [AppRole.Security] = [.. Read, Permission.ApproveAsSecurity, Permission.ViewIssues, Permission.ViewReports],
         [AppRole.IdTeam] = [.. Read, Permission.WorkIdTeamTasks, Permission.UpdateMappingGroup],
         [AppRole.RoleTeam] = [.. Read, Permission.WorkRoleTeamTasks],
-        [AppRole.PMO] = [.. Read, Permission.EditMappingSheet, Permission.ViewReports],
-        [AppRole.Operator] = [.. Read, Permission.ViewIssues, Permission.ViewReports, Permission.RecoverRuns],
+        [AppRole.PMO] = [.. Read, Permission.EditMappingSheet, Permission.ViewReports, Permission.EditContacts],
+        [AppRole.Operator] = [.. Read, Permission.ViewIssues, Permission.ViewReports, Permission.RecoverRuns, Permission.EditContacts],
         // Legacy v1 roles grant nothing.
         [AppRole.Reviewer] = [],
         [AppRole.Maintainer] = [],

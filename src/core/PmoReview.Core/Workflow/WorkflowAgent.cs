@@ -300,8 +300,7 @@ public sealed partial class WorkflowAgent(
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
         RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.IdTeam,
         RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
-        RequestStatus.Verifying => WaitingOn.User,
-        _ => WaitingOn.Agent,
+        _ => WaitingOn.Agent, // Verifying included: the agent checks the access itself, nobody else is waited on
     };
 
     public Task AskApprovalAsync(AccessRequest r, ApprovalStage stage, ReviewedScope scope, WorkflowState flow, Project? project, CancellationToken ct)
@@ -502,7 +501,7 @@ public sealed partial class WorkflowAgent(
             // Back here from final verification: roles were already verified; final verification re-checks them.
             var again = (flow with { IdTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks } })
                 .Log(now, Agent, "id-team-verified", "AI verified the ID team's correction.")
-                .To(RequestStatus.Verifying, WaitingOn.User, now, Agent, "verify-start", "Final verification resumed.");
+                .To(RequestStatus.Verifying, WaitingOn.Agent, now, Agent, "verify-start", "Final verification resumed.");
             return new Step(r with { Flow = again }, [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.VerificationMismatch], c)]);
         }
 
@@ -596,25 +595,26 @@ public sealed partial class WorkflowAgent(
         if (v.Failed) return Returned(r, task with { Checks = v.Checks }, v, project, IssueKind.RoleMismatch, "role-team");
 
         var now = clock.UtcNow;
+        // Straight on to the final access check (same agent run when Entra can be read): no wait for the user's sign-in.
         var next = (flow with { RoleTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks } })
             .Log(now, Agent, "role-team-verified", "AI verified the role assignment matches the approved role exactly.")
-            .To(RequestStatus.Verifying, WaitingOn.User, now, Agent, "verify-start", "Final verification: waiting for the user's sign-in, permanent method and TAP removal.");
-        var (subject, body) = Messages.AccessReady(r, flow.Scope!, project, flow.IdTeamTask?.Agent?.SignInDetailsSentAt is not null);
-        return new Step(r with { Flow = next },
-        [
-            c => notifier.EnqueueAsync(r.ProjectId, r.Id, "access-ready", NotificationKind.AccessReady, Recipients.User(r).Concat(Recipients.Requester(r)), subject, body, c),
-            c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.RoleMismatch, IssueKind.TaskSlaBreached], c),
-        ]);
+            .To(RequestStatus.Verifying, WaitingOn.Agent, now, Agent, "verify-start", "Final verification: the AI agent checks the account, the group membership and the exact roles.");
+        return new Step(r with { Flow = next }, [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.RoleMismatch, IssueKind.TaskSlaBreached], c)]);
     }
 
-    // ---- Stage 6: verify, notify, audit --------------------------------------------------------------------------
+    // ---- Stage 7: verify the access, notify, audit -------------------------------------------------------------
 
+    /// <summary>
+    /// Final verification reads the account, the membership and the roles once and completes the request; it never waits
+    /// for the user's first sign-in (Gokul, 22 Oct 2026). Completed mails: the joiner (access ready) and one completion
+    /// summary to the requester — the person who asked for the account — with Security, PMO, the ID team and the role
+    /// assignment team from the project's contact inventory. The Owner is mailed only to decide.
+    /// </summary>
     private async Task<Step?> FinalAsync(AccessRequest r, CancellationToken ct)
     {
         var flow = r.Flow!;
-        var since = flow.IdTeamTask?.IdReport?.Tap?.IssuedAt ?? flow.IdTeamTask?.ReportedAt ?? flow.StageSince;
         var project = await ProjectAsync(r, ct);
-        var v = await verifier.FinalAsync(r, flow.Scope!, since, ct, NotConnected(project));
+        var v = await verifier.FinalAsync(r, flow.Scope!, ct, NotConnected(project));
         var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();
         var changed = !SameChecks(flow.FinalChecks, v.Checks);
@@ -632,38 +632,27 @@ public sealed partial class WorkflowAgent(
         if (v.Passed)
         {
             var timings = Reports.TimingText(Reports.Timings(r with { Flow = next }, now));
-            var done = next.To(RequestStatus.Completed, WaitingOn.None, now, Agent, "completed", "Verified: sign-in, permanent method, TAP removed. Notifications sent.");
+            var done = next.To(RequestStatus.Completed, WaitingOn.None, now, Agent, "completed",
+                "Verified: account, group membership and roles. Completed; the requester and the joiner were notified.");
             var scope = flow.Scope!;
-            var (s1, b1) = Messages.Completed(r, scope, timings);
-            var (s2, b2) = Messages.PmoInformed(r, scope);
-            var (s3, b3) = Messages.Closure(r);
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.CompletionSummary, Recipients.Owner(r).Concat(Recipients.Security(project)), s1, b1, c));
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.PmoInformed, Recipients.Pmo(project), s2, b2, c));
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.Closure, Recipients.IdTeam(project).Concat(Recipients.RoleTeam(project)), s3, b3, c));
+            var (s1, b1) = Messages.AccessReady(r, scope, project, flow.IdTeamTask?.Agent?.SignInDetailsSentAt is not null);
+            var (s2, b2) = Messages.Completed(r, scope, flow, timings, settings);
+            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "access-ready", NotificationKind.AccessReady, Recipients.User(r), s1, b1, c));
+            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.CompletionSummary, Recipients.Completion(r, project), s2, b2, c));
             // Done: nothing is pending any more, so no wait or mismatch issue of this request stays open.
             effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id,
                 [IssueKind.TapNotDeleted, IssueKind.VerificationMismatch, IssueKind.ApprovalSlaBreached, IssueKind.TaskSlaBreached], c));
             return new Step(r with { Flow = done }, effects);
         }
 
-        // Pending. A TAP left behind after the user signed in and registered a method: the ID team deletes it.
-        var tapLeft = v.Checks.Any(c => c.Code == VerifyCodes.FinalTapDeleted && c.Status == CheckStatus.Pending)
-                      && v.Checks.Any(c => c.Code == VerifyCodes.FinalPermanentMethod && c.Status == CheckStatus.Pass)
-                      && v.Checks.Any(c => c.Code == VerifyCodes.FinalLogin && c.Status == CheckStatus.Pass);
-        if (tapLeft && !flow.Events.Any(e => e.Step == "tap-cleanup"))
-        {
-            var (subject, body) = Messages.TapCleanup(r, settings);
-            next = next.Waiting(WaitingOn.IdTeam, now).Log(now, Agent, "tap-cleanup", "TAP still on the account; asked the ID team to delete it.");
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "tap-cleanup", NotificationKind.TapCleanupNeeded, Recipients.IdTeam(project), subject, body, c));
-            effects.Add(c => issues.RecordAsync(r.ProjectId, r.Id, "tap-cleanup", IssueKind.TapNotDeleted, IssueSeverity.Warning, "Temporary Access Pass not deleted after first sign-in.", null, c));
-            return new Step(r with { Flow = next }, effects);
-        }
-
+        // Pending: only the worker reads Entra. Still pending long after (worker stopped?): tell the Operators once.
         if (now - flow.StageSince > settings.VerifySla && flow.RemindedAt is null)
         {
-            var (subject, body) = Messages.Reminder(r, "first sign-in and sign-in method registration", now - flow.StageSince, settings);
-            next = (next with { RemindedAt = now }).Log(now, Agent, "reminder", "Final verification pending past SLA; reminded the user and the ID team.");
-            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "verify-sla:reminder", NotificationKind.Reminder, Recipients.User(r).Concat(Recipients.IdTeam(project)), subject, body, c));
+            var (subject, body) = Messages.Reminder(r, "the AI agent's final access check (is the worker running?)", now - flow.StageSince, settings);
+            next = (next with { RemindedAt = now }).Log(now, Agent, "reminder", "Final verification pending past SLA; Operators reminded.");
+            effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "verify-sla:reminder", NotificationKind.Reminder, Recipients.Operators(project), subject, body, c));
+            effects.Add(c => issues.RecordAsync(r.ProjectId, r.Id, "verify-sla", IssueKind.DependencyFailure, IssueSeverity.Warning,
+                "Final access verification pending past SLA: the worker (AI agent) has not checked it.", null, c));
             return new Step(r with { Flow = next }, effects);
         }
         return changed ? new Step(r with { Flow = next }, effects) : null;

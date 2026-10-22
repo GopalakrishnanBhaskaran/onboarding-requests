@@ -306,7 +306,7 @@ public static class StatusText
         _ => w.ToString(),
     };
 
-    /// <summary>The 7-step flow, stated to every requester upfront.</summary>
+    /// <summary>The 7-step flow, stated to every requester upfront. Step 7 never waits for the user's sign-in (22 Oct 2026).</summary>
     public static readonly IReadOnlyList<string> FlowOverview =
     [
         "1. Requester submits the request",
@@ -315,6 +315,6 @@ public static class StatusText
         "4. Security approval",
         "5. ID team creates user/group (+ TAP)",
         "6. Role assignment team assigns roles",
-        "7. AI verification, notifications, audit",
+        "7. AI verifies the access, notifies the requester (Completed), audit",
     ];
 }

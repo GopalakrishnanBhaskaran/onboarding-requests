@@ -8,7 +8,7 @@ Onboarding / access requests from submission to verified access:
 4. Security approval
 5. ID team creates user/group (+ TAP)
 6. Role assignment team assigns roles
-7. AI verification, notifications, audit
+7. AI verifies the access, notifies the requester (Completed), audit — no wait for the user's sign-in
 
 The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves.** The named Owner and Security approve; the ID team and the role assignment team make the changes in their own tools and record them here. Optional v2.1 (approval-gated): after both approvals the agent creates the user, group and membership and assigns allow-listed Azure roles. The Temporary Access Pass never enters the app (metadata only) and always comes from the ID team.
 

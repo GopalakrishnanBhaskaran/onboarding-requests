@@ -20,7 +20,7 @@ export const FLOW_OVERVIEW = [
   '4. Security approval',
   '5. ID team creates user/group (+ TAP)',
   '6. Role assignment team assigns roles',
-  '7. AI verification, notifications, audit',
+  '7. AI verifies the access, notifies the requester (Completed), audit',
 ];
 
 export const WHO_DOES_WHAT: [string, string][] = [

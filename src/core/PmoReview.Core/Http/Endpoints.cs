@@ -38,7 +38,7 @@ public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList
 
 public static class Endpoints
 {
-    public static ApiHost MapCore(this ApiHost host, DataStores stores, WorkflowService workflow, MappingSheetService sheet)
+    public static ApiHost MapCore(this ApiHost host, DataStores stores, WorkflowService workflow, MappingSheetService sheet, ContactInventoryService contacts)
     {
         host.Map("GET", "me", async c =>
         {
@@ -104,6 +104,10 @@ public static class Endpoints
             Ok(await sheet.UpdateAsync(c.Caller, c["projectId"], c["rowId"], c.Body<MappingRowInput>(), c.IfMatch, c.Ct)));
         host.Map("POST", "projects/{projectId}/mapping-sheet/{rowId}/group", async c =>
             Ok(await sheet.UpdateGroupAsync(c.Caller, c["projectId"], c["rowId"], c.Body<MappingGroupInput>(), c.IfMatch, c.Ct)));
+        // Contact inventory: where team mails go (semicolon-separated per team on the page).
+        host.Map("GET", "projects/{projectId}/contacts", async c => Ok(await contacts.GetAsync(c.Caller, c["projectId"], c.Ct)));
+        host.Map("PUT", "projects/{projectId}/contacts", async c =>
+            Ok(await contacts.UpdateAsync(c.Caller, c["projectId"], c.Body<ContactInventoryInput>(), c.IfMatch, c.Ct)));
         host.Map("GET", "projects/{projectId}/response-document", async c =>
             Ok(new { items = (await sheet.ListResponseDocumentAsync(c.Caller, c["projectId"], c.Ct)).Select(ToItem) }));
 

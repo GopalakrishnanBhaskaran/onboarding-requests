@@ -282,13 +282,14 @@ public class AcceptanceTests
     {
         var app = TestApp.Create();
         var id = await app.To(RequestStatus.Verifying);
-        app.UserCompletesFirstSignIn();
-        await app.RunWorker();
+        await app.RunWorker(); // no sign-in by the joiner: the access check alone completes it
         var flow = (await app.Request(id)).Flow!;
-        var kinds = (await app.Notifications(id)).Select(n => n.Kind).Distinct().ToList();
+        var notes = await app.Notifications(id);
+        var kinds = notes.Select(n => n.Kind).Distinct().ToList();
         Evidence.Record("AC19", $"{flow.Status}; checks {string.Join(", ", flow.FinalChecks.Select(c => $"{c.Code}={c.Status}"))}", $"notifications: {string.Join(", ", kinds)}");
         Assert.Equal(RequestStatus.Completed, flow.Status);
-        foreach (var k in new[] { NotificationKind.AccessReady, NotificationKind.CompletionSummary, NotificationKind.PmoInformed, NotificationKind.Closure }) Assert.Contains(k, kinds);
+        foreach (var k in new[] { NotificationKind.AccessReady, NotificationKind.CompletionSummary }) Assert.Contains(k, kinds);
+        Assert.Equal(TestApp.SignIn(TestApp.Alice), notes.Single(n => n.Kind == NotificationKind.CompletionSummary).To[0]); // the requester
     }
 
     [Fact]

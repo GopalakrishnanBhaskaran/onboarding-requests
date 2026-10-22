@@ -11,6 +11,57 @@ public sealed class OutboundException(string category, Exception? inner = null) 
     public string Category { get; } = category;
 }
 
+/// <summary>
+/// How many mails the sender may send (F70). Azure Communication Services counts mails per subscription: an Azure-managed
+/// domain 5 a minute and 10 an hour (not raisable), a verified custom domain 30 and 100 to start (raisable on request).
+/// </summary>
+public sealed record MailLimits(int PerMinute, int PerHour)
+{
+    /// <summary>Recipients one mail may have (ACS: 50); a longer list goes out as several mails, each counted.</summary>
+    public const int RecipientsPerMail = 50;
+
+    public static MailLimits AzureManagedDomain => new(5, 10);
+    public static MailLimits None => new(int.MaxValue, int.MaxValue);
+    public bool Unlimited => PerMinute == int.MaxValue && PerHour == int.MaxValue;
+
+    /// <summary>How many mails a notification to <paramref name="recipients"/> addresses takes.</summary>
+    public static int Mails(int recipients) => Math.Max(1, (recipients + RecipientsPerMail - 1) / RecipientsPerMail);
+}
+
+/// <summary>
+/// The room left under <see cref="MailLimits"/>, counted from the outbox itself: every mail that left the app (queued or
+/// sent directly) is a notification with status Sent and its time. Read before sending, so mails wait in the queue
+/// instead of being refused by the service.
+/// </summary>
+public static class MailBudget
+{
+    /// <param name="reserve">Mails per hour kept free for the agent's sign-in details (sent directly, never queued).</param>
+    public static async Task<int> RoomAsync(DataStores stores, IClock clock, MailLimits limits, int reserve, CancellationToken ct)
+    {
+        if (limits.Unlimited) return int.MaxValue;
+        var all = new List<Notification>();
+        foreach (var p in await stores.Projects.ListAllAsync(ct))
+            all.AddRange((await stores.Notifications.ListAsync(p.Value.ProjectId, ct)).Select(n => n.Value));
+        return Room(all, clock.UtcNow, limits, reserve);
+    }
+
+    /// <summary>The same, over notifications already read (the dispatcher reads them once per run).</summary>
+    public static int Room(IEnumerable<Notification> all, DateTimeOffset now, MailLimits limits, int reserve)
+    {
+        if (limits.Unlimited) return int.MaxValue;
+        int minute = 0, hour = 0;
+        foreach (var n in all)
+        {
+            if (n.Status != NotificationStatus.Sent || n.SentAt is not { } at) continue;
+            var mails = MailLimits.Mails(n.DeliveredTo?.Count ?? n.To.Count);
+            if (now - at < TimeSpan.FromHours(1)) hour += mails;
+            if (now - at < TimeSpan.FromMinutes(1)) minute += mails;
+        }
+        // The reserve never takes more than a fifth of the hour, so queued mails always move.
+        return Math.Max(0, Math.Min(limits.PerMinute - minute, limits.PerHour - Math.Min(reserve, limits.PerHour / 5) - hour));
+    }
+}
+
 /// <summary>Delivers a notification. Implementations never log or alter the body.</summary>
 public interface INotificationSender
 {
@@ -57,13 +108,19 @@ public sealed class DirectMail(INotificationSender sender, string? redirectTo = 
 }
 
 /// <summary>
-/// Worker: sends pending notifications. Retries at most 3 times, then marks Failed and logs an issue. In a test
-/// environment with <paramref name="redirectTo"/> every mail goes to that one address, marked as a test and naming the
-/// intended recipients; the notification keeps its real recipients and records where it was delivered.
+/// Worker: sends pending notifications, most urgent first (<see cref="Notification.Priority"/>), within the sender's
+/// <see cref="MailLimits"/>. A mail held back by the limit, or refused by the service as too many (MailThrottled), stays
+/// Pending without using an attempt and goes out on a later run; an hour of backlog raises a Warning issue. Other
+/// failures are retried at most 3 times, then Failed with an issue. In a test environment with
+/// <paramref name="redirectTo"/> every mail goes to that one address, marked as a test and naming the intended
+/// recipients; the notification keeps its real recipients and records where it was delivered.
 /// </summary>
 public sealed class NotificationDispatcher(DataStores stores, INotificationSender sender, IssueLog issues, IClock clock, ILogger<NotificationDispatcher> logger,
-    int maxAttempts = 3, string? redirectTo = null, string environment = "pilot")
+    int maxAttempts = 3, string? redirectTo = null, string environment = "pilot", MailLimits? limits = null, int reserve = 0)
 {
+    /// <summary>The issue step for a mail backlog (project level).</summary>
+    public const string BacklogStep = "mail-queue";
+
     /// <summary>The mail as it leaves the app: unchanged, or redirected to the test address.</summary>
     public Notification Outgoing(Notification n) => Redirect(n, redirectTo, environment);
 
@@ -78,46 +135,86 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
         var handled = 0;
+        var all = new List<Versioned<Notification>>();
+        var projectIds = new List<string>();
         foreach (var project in await stores.Projects.ListAllAsync(ct))
         {
-            foreach (var v in (await stores.Notifications.ListAsync(project.Value.ProjectId, ct)).Where(n => n.Value.Status == NotificationStatus.Pending))
+            projectIds.Add(project.Value.ProjectId);
+            all.AddRange(await stores.Notifications.ListAsync(project.Value.ProjectId, ct));
+        }
+        var pending = all.Where(n => n.Value.Status == NotificationStatus.Pending).ToList();
+        var room = sender.Delivers ? MailBudget.Room(all.Select(n => n.Value), clock.UtcNow, limits ?? MailLimits.None, reserve) : 0;
+        var throttled = false;
+        var waiting = new List<Notification>();
+        foreach (var v in pending.OrderBy(n => Notification.Priority(n.Value.Kind)).ThenBy(n => n.Value.CreatedAt))
+        {
+            var n = v.Value;
+            Notification next;
+            if (!sender.Delivers || n.To.Count == 0)
             {
-                var n = v.Value;
-                Notification next;
-                if (!sender.Delivers || n.To.Count == 0)
-                {
-                    next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow };
-                }
-                else
-                {
-                    try
-                    {
-                        var outgoing = Outgoing(n);
-                        await sender.SendAsync(outgoing, ct);
-                        next = n with { Status = NotificationStatus.Sent, SentAt = clock.UtcNow, Attempts = n.Attempts + 1, LastError = null, DeliveredTo = outgoing.To };
-                    }
-                    catch (OutboundException e)
-                    {
-                        var attempts = n.Attempts + 1;
-                        next = n with { Attempts = attempts, LastError = e.Category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
-                        logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", e.Category, n.Kind, n.RequestId, attempts);
-                        if (attempts >= maxAttempts)
-                            await issues.RecordAsync(n.ProjectId, n.RequestId, $"notify:{n.Id}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
-                                $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({e.Category}).", null, ct);
-                    }
-                }
+                next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow };
+            }
+            else if (throttled || room < MailLimits.Mails(Outgoing(n).To.Count))
+            {
+                waiting.Add(n); // the mail limit: it waits for a later run, no attempt used
+                continue;
+            }
+            else
+            {
                 try
                 {
-                    await stores.Notifications.ReplaceAsync(next, v.ETag, ct);
-                    handled++;
+                    var outgoing = Outgoing(n);
+                    await sender.SendAsync(outgoing, ct);
+                    room -= MailLimits.Mails(outgoing.To.Count);
+                    next = n with { Status = NotificationStatus.Sent, SentAt = clock.UtcNow, Attempts = n.Attempts + 1, LastError = null, DeliveredTo = outgoing.To };
                 }
-                catch (ConcurrencyException)
+                catch (OutboundException e) when (e.Category == "MailThrottled")
                 {
-                    // Another worker instance handled it.
+                    // The service says too many: stop sending this run; this and the rest wait (no attempt used).
+                    throttled = true;
+                    waiting.Add(n);
+                    logger.LogWarning("notify throttled kind={Kind} request={RequestId}: waiting for the next run", n.Kind, n.RequestId);
+                    if (n.LastError == "MailThrottled") continue;
+                    next = n with { LastError = "MailThrottled" };
+                }
+                catch (OutboundException e)
+                {
+                    var attempts = n.Attempts + 1;
+                    next = n with { Attempts = attempts, LastError = e.Category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
+                    logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", e.Category, n.Kind, n.RequestId, attempts);
+                    if (attempts >= maxAttempts)
+                        await issues.RecordAsync(n.ProjectId, n.RequestId, $"notify:{n.Id}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
+                            $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({e.Category}).", null, ct);
                 }
             }
+            try
+            {
+                await stores.Notifications.ReplaceAsync(next, v.ETag, ct);
+                handled++;
+            }
+            catch (ConcurrencyException)
+            {
+                // Another worker instance handled it.
+            }
         }
+        if (sender.Delivers) await BacklogAsync(projectIds, waiting, ct);
         return handled;
+    }
+
+    /// <summary>Mails held back for over an hour: one Warning issue per project (resolved once its queue is clear).</summary>
+    private async Task BacklogAsync(IEnumerable<string> projects, List<Notification> waiting, CancellationToken ct)
+    {
+        var l = limits ?? MailLimits.None;
+        foreach (var projectId in projects)
+        {
+            var mine = waiting.Where(n => n.ProjectId == projectId).ToList();
+            if (mine.Count > 0 && clock.UtcNow - mine.Min(n => n.CreatedAt) > TimeSpan.FromHours(1))
+                await issues.RecordAsync(projectId, null, BacklogStep, IssueKind.DependencyFailure, IssueSeverity.Warning,
+                    $"{mine.Count} mail(s) waiting for over an hour: the mail limit ({l.PerHour} an hour, {l.PerMinute} a minute) is reached. " +
+                    "They go out in order (approvals and team tasks first) and nothing is lost. A verified custom mail domain raises the limit (F70).", null, ct);
+            else if (mine.Count == 0)
+                await issues.ResolveStepAsync(projectId, null, BacklogStep, IssueKind.DependencyFailure, ct);
+        }
     }
 }
 

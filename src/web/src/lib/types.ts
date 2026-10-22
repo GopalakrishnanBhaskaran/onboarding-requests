@@ -230,7 +230,7 @@ export interface Timings {
 export type NotificationKind =
   | 'FlowOverview' | 'ReviewReturned' | 'ApprovalRequested' | 'Reminder' | 'Escalation' | 'Rejected' | 'TeamTask' | 'TaskReturned'
   | 'TapCleanupNeeded' | 'AccessReady' | 'CompletionSummary' | 'PmoInformed' | 'Closure' | 'SecurityAlert' | 'DailySummary' | 'DeveloperReport'
-  | 'ProvisioningSummary';
+  | 'ProvisioningSummary' | 'SignInDetails';
 
 export interface Notification {
   id: string;
@@ -243,6 +243,47 @@ export interface Notification {
   /** Where the mail went (a test environment redirects every mail to one address). */
   deliveredTo?: string[] | null;
   lastError?: string | null;
+  /** Entries left out because they are not mail addresses (the rest are still mailed). */
+  skipped?: string[] | null;
+}
+
+/** Where a project's team mails go (Contact inventory page). */
+export interface ProjectContacts {
+  pmo: string[];
+  security: string[];
+  idTeam: string[];
+  roleTeam: string[];
+  operators: string[];
+  securityManager?: string | null;
+  idTeamManager?: string | null;
+  roleTeamManager?: string | null;
+  ownerManagerFallback?: string | null;
+}
+
+export interface ContactInventory {
+  projectId: string;
+  tenantName?: string | null;
+  contacts: ProjectContacts;
+  version: number;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+  /** PMO and Operators may change it. */
+  canEdit: boolean;
+  /** What will not be mailed as things stand, in plain words. */
+  gaps: string[];
+}
+
+/** What the page sends: each team's addresses separated by semicolons; managers one address each. */
+export interface ContactInventoryInput {
+  security: string;
+  idTeam: string;
+  roleTeam: string;
+  pmo: string;
+  operators: string;
+  securityManager: string;
+  idTeamManager: string;
+  roleTeamManager: string;
+  ownerManagerFallback: string;
 }
 
 export interface Issue {

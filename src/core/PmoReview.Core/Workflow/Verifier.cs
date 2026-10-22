@@ -20,13 +20,14 @@ public static class VerifyCodes
     public const string RoleResponseDoc = "ROLE_RESPONSE_DOC";
     public const string RoleExact = "ROLE_EXACT";
     public const string RoleInAzure = "ROLE_IN_AZURE";
-    public const string FinalLogin = "FINAL_LOGIN";
+    /// <summary>
+    /// Final verification: account, group membership and exact roles. The user's first sign-in, permanent method and TAP
+    /// removal are no longer waited for (Gokul, 22 Oct 2026: the request completes once the access is verified).
+    /// </summary>
     public const string FinalAccess = "FINAL_ACCESS";
-    public const string FinalPermanentMethod = "FINAL_PERMANENT_METHOD";
-    public const string FinalTapDeleted = "FINAL_TAP_DELETED";
 }
 
-/// <summary>Verification outcome. <see cref="Pending"/>: something cannot be checked yet (no Entra reader here, or waiting on the user).</summary>
+/// <summary>Verification outcome. <see cref="Pending"/>: something cannot be checked yet (no Entra reader here: the worker checks it).</summary>
 public sealed record Verification(IReadOnlyList<CheckResult> Checks)
 {
     public bool Failed => Checks.Any(c => c.Status == CheckStatus.Fail);
@@ -229,27 +230,24 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
     private static string Describe(AssignedRole a) => a.Scope is null ? a.Role : $"{a.Role} at {a.Scope}";
 
     /// <summary>Stage 6: login with the assigned access, permanent method registered, TAP deleted.</summary>
-    public async Task<Verification> FinalAsync(AccessRequest r, ReviewedScope scope, DateTimeOffset since, CancellationToken ct, string? notConnected = null)
+    /// <summary>
+    /// Stage 7: the access is in place — the account exists, it is a member of the approved group and the group carries
+    /// exactly the approved roles. Read once, right after the role step is verified; nothing here waits for the user.
+    /// </summary>
+    public async Task<Verification> FinalAsync(AccessRequest r, ReviewedScope scope, CancellationToken ct, string? notConnected = null)
     {
         const string G = CheckGroups.FinalVerification;
         if (directory is null || notConnected is not null)
-            return new Verification([NoEntra(VerifyCodes.FinalLogin, G, notConnected), NoEntra(VerifyCodes.FinalAccess, G, notConnected),
-                NoEntra(VerifyCodes.FinalPermanentMethod, G, notConnected), NoEntra(VerifyCodes.FinalTapDeleted, G, notConnected)]);
+            return new Verification([NoEntra(VerifyCodes.FinalAccess, G, notConnected)]);
 
-        var checks = new List<CheckResult>();
         var user = await directory.FindUserAsync(r.DomainId!, ct);
         if (user is null)
             return new Verification([new CheckResult(VerifyCodes.FinalAccess, G, CheckStatus.Fail, $"No user {r.DomainId} in Entra.")]);
 
-        var signIn = await directory.LastSuccessfulSignInAsync(user.ObjectId, since, ct);
-        checks.Add(signIn is null
-            ? new CheckResult(VerifyCodes.FinalLogin, G, CheckStatus.Pending, "Waiting for the user's first successful sign-in.")
-            : new CheckResult(VerifyCodes.FinalLogin, G, CheckStatus.Pass, $"Signed in successfully at {Messages.Time(signIn.At)}."));
-
         var groups = await directory.FindGroupsAsync(scope.EntraGroup, ct);
         var member = groups.Count == 1 && await directory.IsMemberAsync(groups[0].ObjectId, user.ObjectId, ct);
         var access = member ? CheckStatus.Pass : CheckStatus.Fail;
-        var detail = member ? $"Member of {scope.EntraGroup}" : $"Not a member of {scope.EntraGroup}";
+        var detail = member ? $"{r.DomainId} is a member of {scope.EntraGroup}" : $"{r.DomainId} is not a member of {scope.EntraGroup}";
         if (member && roles is not null)
         {
             var expected = WorkflowAgent.ExpectedRoles(scope);
@@ -262,16 +260,7 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
             }
             else if (actual is not null) detail += $" with {string.Join(", ", expected.Select(Describe))}";
         }
-        checks.Add(new CheckResult(VerifyCodes.FinalAccess, G, access, detail + "."));
-
-        var methods = await directory.GetAuthMethodsAsync(user.ObjectId, ct);
-        checks.Add(methods.HasPermanentMethod
-            ? new CheckResult(VerifyCodes.FinalPermanentMethod, G, CheckStatus.Pass, "A permanent sign-in method is registered.")
-            : new CheckResult(VerifyCodes.FinalPermanentMethod, G, CheckStatus.Pending, "Waiting for the user to register a permanent sign-in method."));
-        checks.Add(methods.Tap is null
-            ? new CheckResult(VerifyCodes.FinalTapDeleted, G, CheckStatus.Pass, "No Temporary Access Pass left on the account.")
-            : new CheckResult(VerifyCodes.FinalTapDeleted, G, CheckStatus.Pending, $"A Temporary Access Pass is still on the account ({methods.Tap.UsabilityReason ?? "present"}); the ID team must delete it."));
-        return new Verification(checks);
+        return new Verification([new CheckResult(VerifyCodes.FinalAccess, G, access, detail + ".")]);
     }
 
     private sealed class RoleComparer : IEqualityComparer<AssignedRole>

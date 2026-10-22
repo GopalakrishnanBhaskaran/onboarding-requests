@@ -126,6 +126,10 @@ public sealed partial class WorkflowAgent
                 if (work.RefusedSince is not { } since || now - since < settings.PermissionWait) throw new DirectoryWriteException("TapForbidden");
                 work = work with { TapLeft = $"the TAP permission had not reached the agent {settings.PermissionWait.TotalHours:0} h after the first try" };
             }
+            // The same goes for the mail limit (F70): a pass the joiner never receives is lost, so the account waits until the
+            // sign-in details can go out in this run. The queue keeps mails an hour free for this; it waits a run at most rarely.
+            if (user is null && work.TapLeft is null && TapByAgent(r) && await MailBudget.RoomAsync(stores, clock, settings.MailLimits, 0, ct) < 1)
+                return MailWait(r, now);
 
             if (work.GroupObjectId is null)
             {
@@ -214,7 +218,8 @@ public sealed partial class WorkflowAgent
         var done = Done(work, r, scope) + PrivilegedNote(row);
         List<Func<CancellationToken, Task>> resolved = work.RefusedSince is null ? []
             : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]; // the permission arrived
-        var informed = Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r));
+        // Security oversees the agent's writes; the requester follows their request. The Owner is mailed only to decide.
+        var informed = Recipients.Requester(r).Concat(Recipients.Security(project));
         if (work.UserCreated && work.SignInDetailsSentAt is null)
         {
             // A new account needs a one-time TAP for the first sign-in: the ID team issues it.
@@ -314,6 +319,14 @@ public sealed partial class WorkflowAgent
         await notifier.RecordSentAsync(r.ProjectId, r.Id, step, NotificationKind.SignInDetails, to, subject, kept, delivered, ct);
         return sent;
     }
+
+    /// <summary>No mail room for the sign-in details now: nothing is created; the trail says so once and the next run retries.</summary>
+    private Step? MailWait(AccessRequest r, DateTimeOffset now) => r.Flow!.Events.LastOrDefault()?.Step == "mail-wait" ? null
+        : new Step(r with
+        {
+            Flow = r.Flow.Waiting(WaitingOn.Agent, now).Log(now, Agent, "mail-wait",
+                $"Waiting for mail capacity ({settings.MailLimits.PerHour} mails an hour): the account is created in the run that can also mail the sign-in details. Retried every run."),
+        }, [], Stop: true);
 
     private static string Done(AgentWork w, AccessRequest r, ReviewedScope scope) =>
         $"AI agent: user {r.DomainId} {(w.UserCreated ? "created" : "exists")}; group {scope.EntraGroup} {(w.GroupCreated ? "created" : "exists")}" +
@@ -478,12 +491,9 @@ public sealed partial class WorkflowAgent
         };
         var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-role-assigned", $"AI agent assigned {grants.Count} Azure role(s) to group {scope.EntraGroup} ({list}) and updated the response document.");
-        var (subject, body) = Messages.RolesAssigned(r, scope, grants, settings);
-        var effects = new List<Func<CancellationToken, Task>>
-        {
-            c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:assigned", NotificationKind.ProvisioningSummary,
-                Recipients.Security(project).Concat(Recipients.Owner(r)), subject, body, c),
-        };
+        // No mail of its own: the agent verifies the access next and the completion mail names the roles and who assigned
+        // them (mail budget, F70). The trail records the assignment now.
+        var effects = new List<Func<CancellationToken, Task>>();
         if (work.RefusedSince is not null) effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)); // the permission arrived
         if (task.Agent?.Manual is not null) effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.NeedsDeveloper], c)); // taken back and done
         return new Step(r with { Flow = next }, effects);

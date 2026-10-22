@@ -83,7 +83,8 @@ public class TenantEnvironmentTests
         Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Flow!.Status, r.Flow.WaitingOn));
         var provisioned = Assert.Single(await app.Notifications(id, TestApp.Pest), n => n.Kind == NotificationKind.ProvisioningSummary);
         Assert.Contains("sample.security.pest@sample.invalid", provisioned.To);
-        Assert.Contains("sample-user-olivia@sample.invalid", provisioned.To);
+        Assert.Contains("sample-user-alice@sample.invalid", provisioned.To); // the requester follows it
+        Assert.DoesNotContain("sample-user-olivia@sample.invalid", provisioned.To); // the Owner is mailed only to decide
         Assert.Contains($"user {JoinerUpn} created", provisioned.Body);
 
         // The ID team issues the one-time TAP in Entra and records metadata only.
@@ -91,22 +92,22 @@ public class TenantEnvironmentTests
         await app.RunWorker();
         Assert.Equal([$"Group {app.Directory.GroupId(DevReaderGroup)} {FakeRoleWriter.Reader} {TestApp.SampleAccessScope}"], app.RoleWriter.Calls);
         r = await app.Request(id, TestApp.Pest);
-        Assert.Equal(RequestStatus.Verifying, r.Flow!.Status);
+        Assert.Equal(RequestStatus.Completed, r.Flow!.Status); // access verified at once: no wait for the joiner's sign-in
         Assert.Equal(CheckStatus.Pass, r.Flow.RoleTeamTask!.Checks.Single(c => c.Code == VerifyCodes.RoleInAzure).Status);
         var record = (await app.Stores.ResponseDocument.GetAsync(TestApp.Pest, id))!.Value;
         Assert.Equal(("Dev", ResponseState.Assigned), (record.Environment, record.State));
         Assert.Equal([new AssignedRole("Reader", TestApp.SampleAccessScope)], record.AssignedRoles);
 
         var notes = await app.Notifications(id, TestApp.Pest);
-        Assert.Contains(notes, n => n.Kind == NotificationKind.ProvisioningSummary && n.Subject.Contains("assigned 1 Azure role"));
+        Assert.Single(notes, n => n.Kind == NotificationKind.ProvisioningSummary); // the role assignment has no mail of its own (mail budget)
         var ready = Assert.Single(notes, n => n.Kind == NotificationKind.AccessReady);
-        Assert.Equal([JoinerMail, "sample-user-alice@sample.invalid"], ready.To);
+        Assert.Equal([JoinerMail], ready.To);
         foreach (var detail in new[] { JoinerUpn, DevReaderGroup, "Environment: Dev", "Tenant: SAMPLE PEST", "Reader on rg-pmo-sample-access", "never sent by mail" })
             Assert.Contains(detail, ready.Body);
-
-        app.UserCompletesFirstSignIn(JoinerUpn);
-        await app.RunWorker();
-        Assert.Equal(RequestStatus.Completed, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+        var done = Assert.Single(notes, n => n.Kind == NotificationKind.CompletionSummary);
+        Assert.Equal("sample-user-alice@sample.invalid", done.To[0]);
+        Assert.Contains("sample.security.pest@sample.invalid", done.To);
+        Assert.Contains("Reader on rg-pmo-sample-access", done.Body);
     }
 
     [Theory]
@@ -208,7 +209,7 @@ public class TenantEnvironmentTests
         };
         Assert.Equal(200, (await app.ReportRoleTeam(id, all, project: TestApp.Pest)).Status);
         await app.RunWorker();
-        Assert.Equal(RequestStatus.Verifying, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+        Assert.Equal(RequestStatus.Completed, (await app.Request(id, TestApp.Pest)).Flow!.Status);
     }
 
     [Fact]

@@ -18,7 +18,10 @@ public interface IDocument
     static virtual int MinReadableSchemaVersion => 0;
 }
 
-/// <summary>Where notifications for a project go. Addresses only (mailboxes or mail-enabled groups); SAMPLE in the pilot.</summary>
+/// <summary>
+/// Where notifications for a project go: the contact inventory (Contact inventory page; PMO and Operators edit it).
+/// Addresses only (mailboxes or mail-enabled groups); SAMPLE in the pilot.
+/// </summary>
 public sealed record ProjectContacts
 {
     public IReadOnlyList<string> Pmo { get; init; } = [];
@@ -59,6 +62,11 @@ public sealed record Project : IDocument
     /// <summary>Entra group naming convention (regex, whole name). Checked in Stage 2 and when the ID team reports.</summary>
     public string? GroupNamePattern { get; init; }
     public ProjectContacts Contacts { get; init; } = new();
+    /// <summary>Contact inventory version: 0 = never saved in the app (seeded or imported), +1 on every saved change.</summary>
+    public int ContactsVersion { get; init; }
+    /// <summary>Who saved the contact inventory last (sign-in name) and when.</summary>
+    public string? ContactsUpdatedBy { get; init; }
+    public DateTimeOffset? ContactsUpdatedAt { get; init; }
     public bool IsSample { get; init; }
     public int SchemaVersion { get; init; } = 2;
     [JsonIgnore] public string PartitionKey => ProjectId;

@@ -1,5 +1,5 @@
 import type {
-  AccessRequest, ActionItem, AssignedRole, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
+  AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
   ResponseRecord, ReviewRun, StatusLine,
 } from './types';
 
@@ -109,6 +109,9 @@ export const api = {
   updateMappingGroup: (projectId: string, rowId: string, entraGroup: string, groupState: string, etag: string) =>
     call<Item<MappingRow>>('POST', `${p(projectId)}/mapping-sheet/${id(rowId)}/group`, { entraGroup, groupState }, etag),
   responseDocument: (projectId: string) => call<{ items: Item<ResponseRecord>[] }>('GET', `${p(projectId)}/response-document`),
+  contacts: (projectId: string) => call<Item<ContactInventory>>('GET', `${p(projectId)}/contacts`),
+  saveContacts: (projectId: string, input: ContactInventoryInput, etag: string) =>
+    call<Item<ContactInventory>>('PUT', `${p(projectId)}/contacts`, input, etag),
 
   issues: (projectId: string) => call<{ items: Issue[] }>('GET', `${p(projectId)}/issues`),
   daily: (projectId: string, date: string) => call<DailySummary>('GET', `${p(projectId)}/reports/daily/${id(date)}`),

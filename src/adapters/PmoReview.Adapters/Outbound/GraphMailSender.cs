@@ -60,7 +60,8 @@ public sealed class GraphMailSender(HttpClient http, TokenCredential credential,
                 throw new OutboundException(res.StatusCode switch
                 {
                     HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "MailForbidden",
-                    HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError => "MailUnavailable",
+                    HttpStatusCode.TooManyRequests => "MailThrottled",
+                    >= HttpStatusCode.InternalServerError => "MailUnavailable",
                     _ => "MailRejected",
                 });
             }

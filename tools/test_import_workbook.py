@@ -123,6 +123,10 @@ def run(write_fixture: bool) -> None:
     assert doc["contacts"]["security"] == ["tester@sample.invalid"] and doc["contacts"]["idTeamManager"] == "tester@sample.invalid"
     kept = iw.project_doc(data, {**doc, "name": "PEST (live name)"}, "", None, None, None)
     assert (kept["name"], kept["contacts"], kept["tenantId"]) == ("PEST (live name)", doc["contacts"], doc["tenantId"])
+    # Contacts saved on the Contact inventory page win over a later --test-contact (unless --replace-contacts).
+    ui = {**doc, "contacts": {"security": ["sec@company.invalid"]}, "contactsVersion": 2}
+    assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid")["contacts"] == {"security": ["sec@company.invalid"]}
+    assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid", True)["contacts"]["security"] == ["tester@sample.invalid"]
     assert iw.users(["sample-user-1=Requester,Owner"], "PEST") == [
         {"id": "sample-user-1:PEST", "userId": "sample-user-1", "projectId": "PEST", "roles": ["Requester", "Owner"], "isSample": False, "schemaVersion": 1}]
     # By sign-in name: stored as "signin:<lower case mail>" (the API matches guest and live.com# forms of it).

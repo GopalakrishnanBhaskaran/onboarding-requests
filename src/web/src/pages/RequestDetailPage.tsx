@@ -307,6 +307,7 @@ function Notifications({ view }: { view: RequestView }) {
     <div className={s.stack}>
       <Caption1 className={s.muted}>
         The AI agent worker mails pending notifications every 5 minutes when mail is switched on (status Sent); otherwise they are kept here (status Recorded).
+        Over the mail limit a mail stays Pending and goes out on a later run, most urgent first. Team addresses come from the Contact inventory.
         In a test environment every mail goes to the test address.
       </Caption1>
       {view.notifications.map((n) => (
@@ -315,7 +316,8 @@ function Notifications({ view }: { view: RequestView }) {
             <Body1>
               {dateTime(n.createdAt)} · <b>{n.kind}</b> · to {n.to.join(', ') || '—'} · {n.status}
               {n.deliveredTo && n.deliveredTo.join(',') !== n.to.join(',') ? ` (test: delivered to ${n.deliveredTo.join(', ')})` : ''}
-              {n.lastError ? ` · ${n.lastError}` : ''} — {n.subject}
+              {n.lastError ? ` · ${n.lastError === 'MailThrottled' ? 'waiting: mail limit' : n.lastError === 'NoRecipients' ? 'no address: see Contact inventory' : n.lastError}` : ''}
+              {n.skipped?.length ? ` · not mailed (not a mail address): ${n.skipped.join(', ')}` : ''} — {n.subject}
             </Body1>
           </summary>
           <pre className={s.pre} style={{ margin: 0, fontSize: 12 }}>{n.body}</pre>

@@ -1,70 +1,25 @@
-# Next session — handoff (updated 22 Oct 2026, end of day)
+# Next session — handoff (updated 22 Oct 2026, evening: go-live release)
 
-Read first: `CLAUDE.md` (hard rules 4–6, 11 changed on 22 Oct), `SCOPE.md` (22 Oct additions), `workflows/09-onboarding-flow-v2.md` (sections *Agent TAP, request form, real tenants*, *Agent privileged rows*, *Hand back to the AI agent*), last rows of `docs/DEPLOYMENT_LOG.md`.
-Branch **`claude/great-goodall-j4ozev`**, latest commit **`4b12afc`**, pushed. No PR.
+Read first: `docs/GO_LIVE.md` (steps for 23 Oct), `CLAUDE.md`, `SCOPE.md` (22 Oct go-live additions), `workflows/09-onboarding-flow-v2.md` (section *Notifications and the contact inventory*), last rows of `docs/DEPLOYMENT_LOG.md`.
+Branch **`claude/eager-ride-lx6he8`** (on top of `13ca4b9` from `claude/great-goodall-j4ozev`), pushed. No PR.
 
-## Goal still open
-Live end-to-end test to **Completed**, logged in `DEPLOYMENT_LOG.md`, on the **real PEST data**. The request in flight is **34456531**: PEST / Dev / Central hub / platform (ph) / **Data Engineer**, a privileged row (Storage Blob Data Contributor, Key Vault Secrets Officer, Reader on `rg-pmo-sample-access`).
+## State
+- **Live end-to-end test: Completed** (Gokul, 22 Oct, in chat; no command output seen). Two findings: the completion mail went to the Owner, and step 7 waited for the joiner's sign-in.
+- **This release (code only, not deployed yet):**
+  - completion mail to the **requester** (with Security, PMO, ID team, role assignment team), never the Owner; provisioning summaries to the requester and Security;
+  - step 7 checks account, membership and roles once and completes (no sign-in, no TAP removal wait; requests already waiting complete on the next run);
+  - **Contact inventory** page per tenant (semicolon-separated team lists + escalation managers; PMO and Operators save; versioned; changes mailed to Security and PMO);
+  - mail within the ACS limit (Azure-managed domain 10 an hour, F70), most urgent first, throttled mail waits instead of failing, backlog issue; 50-recipient batches; agent creates an account only when its sign-in mail can go out in the same run;
+  - bad addresses skipped per mail, guest sign-in names mailed at the mailbox, High issue when an approval or team task reaches nobody;
+  - `import_workbook.py --test-contact` keeps contacts saved in the app (`--replace-contacts` to force); `verify_features` lines 6c (contacts), 14 (mail queue), 15 (go-live mail).
+- Tests on this branch: .NET 381 (380 pass, 1 opt-in Cosmos-emulator skip), acceptance 27/27, Playwright 8/8, SPA 10/10, Python tool tests pass.
 
-## Live state (from Gokul's messages in chat; no command output seen since live check M)
-- Request 34456531 passed the AI review, the Owner and Security approvals and the agent's ID step. The agent did the ID step after the privileged rows switch, so `privileged … on` was applied (inferred).
-- It now sits **With Role Team**: *"2 of 3 Azure role(s) are not on the agent's allow-list (role or scope): Storage Blob Data Contributor …; Key Vault Secrets Officer …"*.
-- So the agent's allow-list is still Reader + Storage Blob Data Reader. The earlier `provisioning … $ROLES --approved-by` did not take effect: not run, or the `ROLES` variable was lost in a Cloud Shell reset.
-- Unknown:
-  - which commit the worker and the app run (check line 1 of `verify_features`);
-  - whether the agent mailed the sign-in details for 34456531 (check the Gmail test mailbox and line 10d).
-- Mac route parked:
-  - On Gokul's Intel Mac, Homebrew compiled python@3.15 from source and looked frozen: Intel is Tier 3, so no new prebuilt packages (F69).
-  - `mac_setup.sh` now installs ready-built pieces only (`a80f895`), but has not been run again.
-  - Use **Azure Cloud Shell** (Bash) for now.
-
-## Next steps (Cloud Shell, Bash; this container cannot reach Azure)
-```bash
-SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; az account set --subscription $SUB
-cd ~ && rm -rf onboarding-requests && git clone -q -b claude/great-goodall-j4ozev https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests
-git log --oneline -1                     # 4b12afc or later
-tools/deploy_free.sh params $SUB
-tools/deploy_free.sh worker $SUB         # no approval (code only)
-tools/deploy_free.sh app $SUB            # no approval (code only); ends "Deployed commit … to https://icy-smoke-…"
-```
-1. **Allow-list from the mapping sheet** (security change):
-   ```bash
-   tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access --from-sheet PEST
-   ```
-   - The dry run lists each role under *allow* and what stays with people:
-     - the never-list (Owner, Contributor, …);
-     - roles not in the agent's role catalogue;
-     - roles outside the scope.
-   - Expect *allow*: Storage Blob Data Contributor, Key Vault Secrets Officer, Reader, Storage Blob Data Reader.
-   - Wait for "approved". Then re-run with `--approved-by "Gokul <date>"`. That replaces the constrained RBAC Administrator assignment on `rg-pmo-sample-access` with the longer role list and sets `ROLE_ASSIGN_ALLOWED_ROLES`.
-2. **Nothing to click afterwards.** On its next run (every 5 min) the agent takes the role task back on its own (`agent-resumed`), if nobody picked it up. It then assigns the roles, verifies them and closes the High issue.
-   - If someone picked it up: request page → **Hand back to the AI agent**.
-   - A just-granted Azure right can take minutes; a refused write is retried every run for up to 24 h.
-3. **Check:**
-   - `bash tools/workflow_diag.sh $SUB`: for each open request, why the agent left it and whether it was picked up.
-   - `bash tools/verify_features.sh $SUB | tee .local/verify.txt`: line 5c covers privileged rows.
-4. **Finish the test**, as the joiner, from the sign-in details mail in the Gmail test mailbox (InPrivate window):
-   1. aka.ms/mysecurityinfo → TAP;
-   2. add Microsoft Authenticator within 10 min;
-   3. delete the TAP entry;
-   4. sign in at myapps.microsoft.com with the temporary password and set a new one.
-
-   The agent then completes the request after the sign-in shows in the logs. If no sign-in mail came, the ID team issued or must issue the TAP; see the request's ID team section.
-5. Re-run step 3 until every line is PASS. Log the run in `DEPLOYMENT_LOG.md` (no TAP, no password, no user ids). Commit and push.
-
-## What changed on 22 Oct (all pushed; deploy = `worker` + `app`)
-| Commit | Change |
-|---|---|
-| `16fc4e0` … `83301b4` | Agent TAP mail; dropdown-only request form; real PEST/Vestacy import; SAMPLE removal; registration by sign-in name; importer flags privileged rows with the review's rule; PMO can **Edit** a mapping row (e.g. group object id). |
-| `c5870dc` | **Privileged rows by the agent** (`AGENT_PRIVILEGED`, `deploy_free.sh privileged`, approval). Never Owner, Contributor, User Access Administrator, RBAC Administrator, Reservations Administrator or Key Vault Data Access Administrator (`BuiltInRoles.NeverByAgent`, F68), in code and in the RBAC condition. `mac_setup.sh` + `docs/MAC_DEPLOY.md`. |
-| `80cb9be`, `a80f895` | `tools/tool_path.sh`: the scripts find Homebrew's `az`, or say how to install it. `mac_setup.sh` installs ready-built pieces only: the `az` cask, Node 22 from nodejs.org, the Mac's python3. |
-| `36d2319` | **Hand back to the AI agent** (ID / role team, request page; `POST …/tasks/{team}/handback`). It works whether or not the task was picked up and is not an approval: the agent re-checks everything. `workflow_diag` shows why each task was left. |
-| `4b12afc` | `provisioning … --from-sheet <PROJECT>` (`tools/sheet_roles.py`) adds the sheet's roles to the allow-list. The agent takes back a role task left "not on the allow-list" once every approved role is allowed. |
-
-Tests at `4b12afc`: .NET 352 (351 pass, 1 opt-in Cosmos-emulator skip), acceptance 27/27, Playwright 7/7, SPA 8/8, Python tool tests pass.
+## Next steps
+Follow `docs/GO_LIVE.md`: deploy `worker` + `app` (no approval), fill the Contact inventory for PEST and Vestacy, smoke test in test mode, `tools/deploy_free.sh environment $SUB prod`, `verify_features.sh` lines 6c / 14 / 15 PASS, send the go-live mail. Log each step in `DEPLOYMENT_LOG.md`.
 
 ## Decisions / checks still open (each Azure change needs approval)
-- Step 1 above.
+- Mail volume: a verified custom mail domain for ACS (Azure + DNS change, approval) if more than about one request an hour is expected (F70).
+- `AuditLog.Read.All` on the worker is unused now; removing it is optional (permission change, approval).
 - Re-import (`import_workbook.py … --update`) only if needed. It overwrites row edits made in the app, e.g. the corrected object id of `PH-DATAENGINEERS-DEV` (`cf10a737-…`, the pilot tenant's group).
 - Production:
   - import with the real scopes (`--resolve` / `--scope-map`, not `--test-scope`), the real tenant ids and real contacts, no `--test-contact`;
@@ -77,7 +32,7 @@ Tests at `4b12afc`: .NET 352 (351 pass, 1 opt-in Cosmos-emulator skip), acceptan
 - Dates:
   - Phase 2 expiries 29 Oct, 5 Nov, 6 Nov;
   - before **10 Nov**: SWA API .NET 9 → 10 retest (F21);
-  - ~15 Nov: P2 trial ends (F48; the final sign-in check needs the sign-in logs).
+  - ~15 Nov: P2 trial ends (F48). No longer blocks completion: the sign-in check is gone (22 Oct).
 
 ## Reference: import and registration (done on 22 Oct; repeat only after changes)
 Upload the two workbooks (Cloud Shell → *Manage files* → *Upload*), then `mv ~/Entra-Group-Classification-*.xlsx ~/Data_Response_document*.xlsx ~/onboarding-requests/.local/`.
@@ -113,4 +68,4 @@ Register later without re-importing: `COSMOS_CONNECTION_STRING="$CS" $PY tools/r
   - No approval needed: `app`, `worker`, `environment`, the imports and the SAMPLE removal.
 - The agent never extends its own rights or approves. Teams hand tasks back; the agent re-checks.
 - Never paste or log a TAP, password or connection string. Never record personal user ids in docs. Real workbooks stay out of git (`*.xlsx` ignored).
-- Commit trailers: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`. Push to `claude/great-goodall-j4ozev`. No PR unless asked.
+- Commit trailers: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`. Push to `claude/eager-ride-lx6he8`. No PR unless asked.

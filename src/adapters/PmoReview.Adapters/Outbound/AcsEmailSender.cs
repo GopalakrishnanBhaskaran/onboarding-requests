@@ -22,23 +22,32 @@ public sealed class AcsEmailSender(EmailClient client, string senderAddress) : I
     {
     }
 
+    /// <summary>
+    /// One mail per 50 recipients (the service's limit, F70). Every recipient is in To, as before; a list over 50 (the
+    /// completion mail to several team lists) goes out as several identical mails.
+    /// </summary>
     public async Task SendAsync(Notification n, CancellationToken ct)
     {
-        var message = new EmailMessage(senderAddress, new EmailRecipients(n.To.Select(a => new EmailAddress(a)).ToList()),
-            new EmailContent(n.Subject) { PlainText = n.Body, Html = Html(n.Body) })
-        {
-            UserEngagementTrackingDisabled = true,
-        };
         try
         {
-            await client.SendAsync(WaitUntil.Started, message, ct);
+            foreach (var batch in n.To.Chunk(MailLimits.RecipientsPerMail))
+            {
+                var message = new EmailMessage(senderAddress, new EmailRecipients(batch.Select(a => new EmailAddress(a)).ToList()),
+                    new EmailContent(n.Subject) { PlainText = n.Body, Html = Html(n.Body) })
+                {
+                    UserEngagementTrackingDisabled = true,
+                };
+                await client.SendAsync(WaitUntil.Started, message, ct);
+            }
         }
         catch (RequestFailedException e)
         {
             throw new OutboundException(e.Status switch
             {
                 (int)HttpStatusCode.Unauthorized or (int)HttpStatusCode.Forbidden => "MailForbidden",
-                (int)HttpStatusCode.TooManyRequests or >= 500 or 0 => "MailUnavailable",
+                // Over the sending limit (F70): the dispatcher keeps the mail queued for a later run, no attempt used.
+                (int)HttpStatusCode.TooManyRequests => "MailThrottled",
+                >= 500 or 0 => "MailUnavailable",
                 _ => "MailRejected",
             }, e);
         }

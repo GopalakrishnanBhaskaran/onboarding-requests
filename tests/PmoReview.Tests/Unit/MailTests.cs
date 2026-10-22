@@ -152,9 +152,24 @@ public class MailTests
         Assert.True(m.UserEngagementTrackingDisabled);
     }
 
+    [Fact]
+    public async Task Over_50_recipients_the_acs_sender_sends_one_mail_per_50_and_the_budget_counts_each()
+    {
+        var client = new FakeEmailClient();
+        var many = Sample() with { To = Enumerable.Range(0, 120).Select(i => $"u{i}@company.example").ToList() };
+        await new AcsEmailSender(client, "DoNotReply@sample.azurecomm.net").SendAsync(many, CancellationToken.None);
+        Assert.Equal([50, 50, 20], client.Messages.Select(m => m.Recipients.To.Count));
+        Assert.Equal(120, client.Messages.SelectMany(m => m.Recipients.To).Select(a => a.Address).Distinct().Count());
+
+        var sent = many with { Status = NotificationStatus.Sent, SentAt = DateTimeOffset.UnixEpoch, DeliveredTo = many.To };
+        Assert.Equal(7, MailBudget.Room([sent], DateTimeOffset.UnixEpoch.AddMinutes(30), new MailLimits(100, 10), 0)); // 10 an hour - 3 mails
+        Assert.Equal(2, MailBudget.Room([sent], DateTimeOffset.UnixEpoch.AddSeconds(30), MailLimits.AzureManagedDomain, 0)); // 5 a minute - 3
+        Assert.Equal(4, MailBudget.Room([], DateTimeOffset.UnixEpoch, new MailLimits(5, 4), reserve: 2)); // a reserve never takes over a fifth of the hour
+    }
+
     [Theory]
     [InlineData(403, "MailForbidden")]
-    [InlineData(429, "MailUnavailable")]
+    [InlineData(429, "MailThrottled")] // over the sending limit: queued for a later run, no attempt used (F70)
     [InlineData(503, "MailUnavailable")]
     [InlineData(400, "MailRejected")]
     public async Task The_acs_sender_reports_a_failure_as_a_category(int status, string category)

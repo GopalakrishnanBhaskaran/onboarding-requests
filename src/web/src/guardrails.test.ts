@@ -100,7 +100,7 @@ describe('router', () => {
   it('round-trips routes', () => {
     for (const r of [
       { page: 'requests' }, { page: 'new' }, { page: 'request', requestId: 'abc.r1' },
-      { page: 'edit', requestId: 'x' }, { page: 'queue' }, { page: 'sheet' }, { page: 'operator' },
+      { page: 'edit', requestId: 'x' }, { page: 'queue' }, { page: 'sheet' }, { page: 'contacts' }, { page: 'operator' },
     ] as const) {
       expect(parse(href(r))).toEqual(r);
     }

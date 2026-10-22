@@ -75,7 +75,7 @@ public sealed record PilotSettings
                 SecuritySla = Hours("SECURITY_SLA_HOURS", 24),
                 IdTeamSla = Hours("ID_TEAM_SLA_HOURS", 24),
                 RoleTeamSla = Hours("ROLE_TEAM_SLA_HOURS", 24),
-                VerifySla = Hours("VERIFY_SLA_HOURS", 72),
+                VerifySla = Hours("VERIFY_SLA_HOURS", 2),
                 TapMaxLifetimeMinutes = Math.Clamp(int.TryParse(get("TAP_MAX_LIFETIME_MINUTES"), out var t) ? t : 60, 10, 480),
                 AllowUnverifiedEntra = unverified,
                 AppUrl = Uri.TryCreate(get("APP_URL"), UriKind.Absolute, out var app) && app.Scheme == Uri.UriSchemeHttps ? app.AbsoluteUri : null,
@@ -92,6 +92,10 @@ public sealed record PilotSettings
                 AppEnvironment = environment,
                 MailEnabled = get("NOTIFY_SENDER") is "GraphMail" or "AcsEmail",
                 MailRedirectTo = redirect,
+                // ACS Azure-managed domain by default (5 a minute, 10 an hour, F70); a custom domain: e.g. 30 / 100.
+                MailLimits = new MailLimits(
+                    Math.Clamp(int.TryParse(get("MAIL_MAX_PER_MINUTE"), out var mpm) ? mpm : MailLimits.AzureManagedDomain.PerMinute, 1, 100_000),
+                    Math.Clamp(int.TryParse(get("MAIL_MAX_PER_HOUR"), out var mph) ? mph : MailLimits.AzureManagedDomain.PerHour, 1, 1_000_000)),
             },
         };
     }
@@ -107,7 +111,8 @@ public sealed record WorkflowParts(
     WorkflowService Service,
     MappingSheetService MappingSheet,
     Notifier Notifier,
-    IssueLog Issues);
+    IssueLog Issues,
+    ContactInventoryService Contacts);
 
 /// <summary>Composition root shared by the Functions hosts and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
@@ -121,7 +126,7 @@ public static class PilotApp
     {
         var parts = BuildWorkflow(stores, settings, clock, loggers, model, queue, directory, roles);
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
-        host.MapCore(stores, parts.Service, parts.MappingSheet);
+        host.MapCore(stores, parts.Service, parts.MappingSheet, parts.Contacts);
         host.MapRuns(parts.Runs);
         return host;
     }
@@ -141,13 +146,14 @@ public static class PilotApp
         var processor = new ReviewProcessor(stores, engine, clock, budget, loggers.CreateLogger<ReviewProcessor>());
         var dispatcher = DispatcherFactory.Create(settings, processor, queue);
         var runs = new RunService(stores, dispatcher, reviewer.Info, clock, TimeSpan.FromMinutes(settings.StuckRunMinutes));
-        var notifier = new Notifier(stores, clock, loggers.CreateLogger<Notifier>());
         var issues = new IssueLog(stores, clock, loggers.CreateLogger<IssueLog>());
+        var notifier = new Notifier(stores, clock, loggers.CreateLogger<Notifier>(), issues, settings.Workflow.MailEnabled);
         var verifier = new Verifier(directory, roles, settings.Workflow);
         var agent = new WorkflowAgent(stores, sources, runs, notifier, issues, verifier, settings.Workflow, policy, clock,
             loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
-        return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues);
+        return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
+            new ContactInventoryService(stores, notifier, clock));
     }
 }

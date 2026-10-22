@@ -311,8 +311,10 @@ def users(pairs: list[str], project: str) -> list[dict]:
     return out
 
 
-def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None) -> dict:
-    """Pure: the project document after the import (keeps what was set live unless given again)."""
+def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None,
+                replace_contacts: bool = False) -> dict:
+    """Pure: the project document after the import (keeps what was set live unless given again). Contacts saved on the
+    app's Contact inventory page (contactsVersion > 0) are never overwritten by --test-contact unless replace_contacts."""
     p = data["project"]
     doc = dict(live) if live else {"id": p["projectId"], "projectId": p["projectId"], "contacts": {}, "schemaVersion": 2}
     doc.update({"name": project_name or doc.get("name") or f"{p['tenantName']} data platform", "tenantName": p["tenantName"],
@@ -322,7 +324,9 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
         doc["domainIdSuffix"] = domain_suffix.lower()
     if tenant_id:
         doc["tenantId"] = tenant_id.lower()
-    if test_contact:
+    if test_contact and int(doc.get("contactsVersion") or 0) > 0 and not replace_contacts:
+        print(f"  contacts kept: saved on the Contact inventory page (version {doc['contactsVersion']}); --replace-contacts to overwrite them")
+    elif test_contact:
         c = dict(doc.get("contacts") or {})
         for k in CONTACT_LISTS:
             c[k] = [test_contact.lower()]
@@ -333,7 +337,7 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
 
 
 def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: str | None, update: bool, database: str,
-          test_contact: str | None = None, register: list[dict] | None = None) -> None:
+          test_contact: str | None = None, register: list[dict] | None = None, replace_contacts: bool = False) -> None:
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
         raise SystemExit("COSMOS_CONNECTION_STRING is not set")
@@ -346,7 +350,7 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
         live = projects.read_item(p["projectId"], partition_key=p["projectId"])
     except CosmosResourceNotFoundError:
         live = None
-    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact)
+    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact, replace_contacts)
     projects.upsert_item(doc)
     sheet = db.get_container_client("mappingSheet")
     created = updated = kept = 0
@@ -365,7 +369,8 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
     for u in register or []:
         access.upsert_item(u)
         print(f"  registered {u['userId']} on {u['projectId']}: {', '.join(u['roles'])}")
-    contacts = "test contact " + test_contact if test_contact else ("contacts kept" if doc.get("contacts") else "NO contacts (no mail goes out)")
+    contacts = ("test contact " + test_contact if test_contact and doc.get("contacts", {}).get("security") == [test_contact.lower()]
+                else "contacts kept" if (doc.get("contacts") or {}).get("security") else "NO contacts: fill the Contact inventory page (no team mail goes out)")
     print(f"project {p['projectId']} ({p['tenantName']}, {doc.get('tenantId') or 'agent tenant'}, {doc.get('domainIdSuffix') or 'no domain'}, {contacts}): "
           f"{created} rows created, {updated} updated, {kept} kept (use --update to replace)")
 
@@ -386,7 +391,9 @@ def main() -> int:
     ap.add_argument("--domain-suffix")
     ap.add_argument("--tenant-id", help="Entra tenant GUID of this project (the agent's own tenant for a pilot test)")
     ap.add_argument("--test-scope", help="pilot test: every Azure role in this one resource group (/subscriptions/<id>/resourceGroups/<name>)")
-    ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox")
+    ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox "
+                                           "(never over contacts saved on the Contact inventory page, unless --replace-contacts)")
+    ap.add_argument("--replace-contacts", action="store_true", help="with --test-contact: overwrite contacts saved on the Contact inventory page")
     ap.add_argument("--register-user", action="append", default=[], metavar="USER=Role,Role",
                     help="register a person on the project by sign-in name (jane@contoso.com) or user id (repeatable)")
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
@@ -414,7 +421,7 @@ def main() -> int:
           f"{sum(r['groupState'] == 'ToBeCreated' for r in rows)} to be created, "
           f"{sum(len(r['azureRoles']) for r in rows)} Azure roles ({unresolved} without a resolved scope). Wrote {out}")
     if args.apply:
-        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register)
+        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register, args.replace_contacts)
     return 0
 
 

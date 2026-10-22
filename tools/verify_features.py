@@ -68,7 +68,9 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
 
     # 2. Environment settings
     env, redirect = s.get("APP_ENVIRONMENT", ""), s.get("NOTIFY_REDIRECT_TO", "")
-    ok_env = env in ("dev", "test") and bool(redirect) and str(s.get("AGENT_TENANT_ID", "")).lower() == tenant and tenant != ""
+    # A test environment redirects every mail to the tester; production (go-live) mails the real people, never redirected.
+    ok_env = ((env in ("dev", "test") and bool(redirect)) or (env == "prod" and not redirect)) \
+        and str(s.get("AGENT_TENANT_ID", "")).lower() == tenant and tenant != ""
     same_swa = swa.get("APP_ENVIRONMENT") == env and swa.get("NOTIFY_REDIRECT_TO", "") == redirect
     out.append(Result("2. Environment-specific settings (test env, mail redirect, agent tenant)",
                       PASS if ok_env and same_swa else WAIT,
@@ -149,6 +151,16 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                                             f"{per.get(k, 0)} rows, contacts {'set' if (v.get('contacts') or {}).get('security') else 'none'}" if v else "missing")
                                 for k, v in have.items()),
                       "" if tenants_ok else "python3 tools/import_workbook.py --tenant PEST --project PEST … --apply (docs/NEXT_SESSION.md)"))
+    # 6c. Contact inventory: the teams that approval requests and tasks are mailed to (Contact inventory page).
+    def gaps(v: dict) -> list[str]:
+        c = v.get("contacts") or {}
+        return [label for key, label in (("security", "Security"), ("idTeam", "ID team"), ("roleTeam", "role assignment team")) if not c.get(key)]
+    missing = {k: gaps(v) for k, v in real.items() if gaps(v)}
+    out.append(Result("6c. Contact inventory: Security, ID team and role assignment team have mail addresses", PASS if real and not missing else WAIT,
+                      "; ".join(f"{k}: {'missing ' + ', '.join(m) if (m := gaps(v)) else 'set'}"
+                                f"{' (saved in the app, v' + str(v.get('contactsVersion')) + ')' if v.get('contactsVersion') else ' (imported)'}"
+                                for k, v in sorted(real.items())) or "no real project",
+                      "" if real and not missing else "PMO: Contact inventory page → each team's addresses, separated by semicolons → Save contacts"))
     sample = sorted(k for k in p if str(k).startswith("SAMPLE-") or p[k].get("isSample"))
     sample_rows = sum(1 for r in rows if r.get("isSample") or str(r.get("projectId", "")).startswith("SAMPLE-"))
     out.append(Result("6b. No SAMPLE projects or mappings left in the live app", PASS if not sample and not sample_rows else WAIT,
@@ -197,6 +209,30 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     if prod_returned:
         out.append(Result("12c. PEST Prod request returned (red row)", PASS, f"requests {prod_returned}"))
 
+    # 14. Mail queue: nothing failed, nothing held back for over an hour (the Azure-managed domain sends 10 an hour, F70)
+    from datetime import datetime, timedelta, timezone
+    now = ctx.get("now") or datetime.now(timezone.utc).isoformat()
+    def older(n: dict, hours: float) -> bool:
+        try:
+            return datetime.fromisoformat(str(n.get("createdAt")).replace("Z", "+00:00")) < datetime.fromisoformat(str(now).replace("Z", "+00:00")) - timedelta(hours=hours)
+        except ValueError:
+            return False
+    failed = [n for n in notes if n.get("status") == "Failed"]
+    backlog = [n for n in notes if n.get("status") == "Pending" and older(n, 1)]
+    out.append(Result("14. Mail queue: no failed mail, none waiting over an hour", FAIL if failed else WAIT if backlog else PASS,
+                      f"failed {len(failed)} ({sorted({str(n.get('lastError')) for n in failed}) or '-'}), waiting > 1 h {len(backlog)}, "
+                      f"limit {s.get('MAIL_MAX_PER_HOUR') or '10 (Azure-managed domain)'} an hour",
+                      "workflow_diag.sh: mail errors; MailForbidden = sender role; NoRecipients = Contact inventory" if failed
+                      else "the queue drains at the mail limit; a verified custom mail domain raises it (F70)" if backlog else ""))
+
+    # 15. Go-live: mails reach the real people (production: no redirect) and no team list is still only the test mailbox
+    test_only = sorted(k for k, v in real.items() if redirect and (v.get("contacts") or {}).get("security") == [redirect.lower()])
+    live_mail = env == "prod" and not redirect and swa.get("APP_ENVIRONMENT") == "prod" and not swa.get("NOTIFY_REDIRECT_TO")
+    out.append(Result("15. Go-live: every mail goes to the real requester, joiner and teams (prod, no redirect)", PASS if live_mail and not missing else WAIT,
+                      f"worker {env or '-'} redirect {redirect or 'none'}; website {swa.get('APP_ENVIRONMENT', '-')}; "
+                      f"projects whose Security list is only the test mailbox: {test_only or 'none'}",
+                      "" if live_mail and not missing else "fill the Contact inventory, then tools/deploy_free.sh environment <sub> prod (docs/GO_LIVE.md)"))
+
     # 13. Open high issues
     high = [i for i in issues if i.get("status") == "Open" and i.get("severity") == "High"]
     out.append(Result("13. No open High issues", PASS if not high else WAIT,
@@ -227,10 +263,10 @@ def load() -> tuple:
             print(f"  ({container} not readable: {type(e).__name__})")
             return []
 
-    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts FROM c"),
+    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion FROM c"),
             q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.entraGroup, c.azureRoles, c.isSample FROM c"),
             q("requests", "SELECT c.id, c.projectId, c.environment, c.flow.status, c.flow.waitingOn, c.flow.events FROM c"),
-            q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind FROM c"),
+            q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind, c.createdAt FROM c"),
             q("issues", "SELECT c.requestId, c.kind, c.severity, c.status, c.summary FROM c"))
 
 
@@ -253,8 +289,9 @@ def self_test() -> None:
                                "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
                                "ROLE_ASSIGN_SCOPES": allowed},
            "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"}}
-    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": {"security": ["x@y.z"]}},
-                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"]}]
+    team = {"security": ["sec@company.example"], "idTeam": ["id@company.example"], "roleTeam": ["roles@company.example"]}
+    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1},
+                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team}]
     rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
              "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
             {"projectId": "PEST", "rowId": PRIVILEGED_ROW, "privileged": True,
@@ -265,7 +302,22 @@ def self_test() -> None:
     requests = [{"id": "bbbbbbbbbbbb", "projectId": "PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
     notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}, {"status": "Sent", "kind": "SignInDetails", "deliveredTo": ["x@y.z"]}]
     res = evaluate(ctx, projects, rows, requests, notes, [])
-    assert all(r.status == PASS for r in res), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
+    # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
+    assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
+    go = next(r for r in res if r.feature.startswith("15."))
+    assert go.status == WAIT and "environment <sub> prod" in go.next, (go.detail, go.next)
+    prod = json.loads(json.dumps(ctx))
+    for k in ("worker_settings", "swa_settings"):
+        prod[k].update({"APP_ENVIRONMENT": "prod", "NOTIFY_REDIRECT_TO": ""})
+    assert all(r.status == PASS for r in evaluate(prod, projects, rows, requests, notes, [])), \
+        [(r.feature, r.status, r.detail) for r in evaluate(prod, projects, rows, requests, notes, []) if r.status != PASS]
+    # A team list left empty, a failed mail and an hour of backlog are named.
+    empty = [dict(projects[0], contacts={"security": ["sec@company.example"]}), projects[1]]
+    got6 = next(r for r in evaluate(prod, empty, rows, requests, notes, []) if r.feature.startswith("6c."))
+    assert got6.status == WAIT and "missing ID team, role assignment team" in got6.detail and "Contact inventory" in got6.next, got6.detail
+    q = [{"status": "Pending", "createdAt": "2026-10-23T08:00:00+00:00"}, {"status": "Failed", "lastError": "MailForbidden"}]
+    mail = lambda n: next(r for r in evaluate({**prod, "now": "2026-10-23T09:30:00+00:00"}, projects, rows, requests, n, []) if r.feature.startswith("14."))  # noqa: E731
+    assert mail(q).status == FAIL and mail(q[:1]).status == WAIT and mail([]).status == PASS
 
     # The state after this commit is deployed, before the steps: SAMPLE data still there, no tenants, TAP off, Reader only.
     ctx2 = json.loads(json.dumps(ctx))

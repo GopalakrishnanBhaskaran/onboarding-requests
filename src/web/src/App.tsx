@@ -12,6 +12,7 @@ import { RequestFormPage } from './pages/RequestFormPage';
 import { RequestDetailPage } from './pages/RequestDetailPage';
 import { QueuePage } from './pages/QueuePage';
 import { MappingSheetPage } from './pages/MappingSheetPage';
+import { ContactsPage } from './pages/ContactsPage';
 import { OperatorPage } from './pages/OperatorPage';
 import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
@@ -134,6 +135,7 @@ function Shell() {
           <Link href={href({ page: 'requests' })}>Requests</Link>
           <Link href={href({ page: 'queue' })}>My actions</Link>
           <Link href={href({ page: 'sheet' })}>Mapping sheet</Link>
+          <Link href={href({ page: 'contacts' })}>Contact inventory</Link>
           {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (
             <Link href={href({ page: 'operator' })}>Issues and reports</Link>
           )}
@@ -171,6 +173,8 @@ function Page({ route, project, projects, onOpenProject, agent, tap, privileged 
       return <QueuePage onOpen={onOpenProject} />;
     case 'sheet':
       return <MappingSheetPage key={project.projectId} project={project} />;
+    case 'contacts':
+      return <ContactsPage key={project.projectId} project={project} />;
     case 'operator':
       return <OperatorPage project={project} />;
     default:

@@ -82,13 +82,9 @@ public class PrivilegedProvisioningTests
         Assert.Equal([$"Group {group} {BlobContributor} {Scope}", $"Group {group} {SecretsOfficer} {Scope}", $"Group {group} {FakeRoleWriter.Reader} {Scope}"],
             app.RoleWriter.Calls);
         r = (await app.Request(id)).Flow!;
-        Assert.Equal(RequestStatus.Verifying, r.Status);
+        Assert.Equal(RequestStatus.Completed, r.Status);
         Assert.Equal(WorkflowAgent.AgentName, r.RoleTeamTask!.ReportedBy);
         Assert.Contains("privileged access row", r.RoleTeamTask.RoleReport!.Notes);
-
-        app.UserCompletesFirstSignIn(Joiner);
-        await app.RunWorker();
-        Assert.Equal(RequestStatus.Completed, await app.Status(id));
     }
 
     [Fact]

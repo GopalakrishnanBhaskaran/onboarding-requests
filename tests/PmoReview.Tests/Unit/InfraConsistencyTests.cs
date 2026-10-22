@@ -19,6 +19,15 @@ public partial class InfraConsistencyTests
     private static string Read(params string[] path) => File.ReadAllText(Path.Combine([Repo(), .. path]));
 
     private static string Pilot() => Read("infra", "modules", "pilot.bicep");
+
+    [Fact]
+    public void The_flow_stated_on_the_website_is_the_flow_the_server_mails_and_step_7_never_waits_for_the_sign_in()
+    {
+        var web = Read("src", "web", "src", "lib", "flow.ts");
+        foreach (var step in PmoReview.Core.Workflow.StatusText.FlowOverview) Assert.Contains($"'{step}'", web);
+        Assert.DoesNotContain("sign", PmoReview.Core.Workflow.StatusText.FlowOverview[6], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requester", PmoReview.Core.Workflow.StatusText.FlowOverview[6]);
+    }
     private static string Worker() => Read("infra", "modules", "worker.bicep");
     private static string MainBicep() => Read("infra", "main.bicep");
 

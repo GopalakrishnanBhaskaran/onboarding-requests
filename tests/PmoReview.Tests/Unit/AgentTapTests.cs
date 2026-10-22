@@ -66,6 +66,28 @@ public class AgentTapTests
     }
 
     [Fact]
+    public async Task At_the_mail_limit_the_agent_creates_nothing_until_the_sign_in_details_can_go_out_in_the_same_run()
+    {
+        var (app, id) = await Approved(On());
+        // 10 mails already left this hour (Azure-managed domain: 10 an hour, F70).
+        for (var i = 0; i < 10; i++)
+            await app.Worker.Notifier.RecordSentAsync(TestApp.Alpha, $"other-{i}", "s", NotificationKind.FlowOverview, ["x@contoso.com"], "s", "b", ["x@contoso.com"], CancellationToken.None);
+
+        await app.RunWorker();
+        await app.RunWorker();
+        Assert.Empty(app.Writer.Calls); // no account without a way to hand over its pass
+        Assert.Empty(app.Mail.Sent);
+        var flow = (await app.Request(id)).Flow!;
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.Agent), (flow.Status, flow.WaitingOn));
+        Assert.Single(flow.Events, e => e.Step == "mail-wait"); // said once, retried every run
+
+        app.Clock.Advance(TimeSpan.FromMinutes(61));
+        await app.RunWorker();
+        Assert.Contains($"create-user {Upn}", app.Writer.Calls);
+        Assert.Single(app.Mail.Sent);
+    }
+
+    [Fact]
     public async Task The_agent_mails_the_new_account_its_password_and_one_time_pass_once_and_keeps_neither()
     {
         var (app, id) = await Approved(On());
@@ -107,18 +129,17 @@ public class AgentTapTests
         Assert.Contains($"mailed the sign-in details", summary.Body);
         Assert.Contains(EnterpriseMail, summary.Body);
 
-        // Next run: the agent verifies its own ID step (8-hour pass allowed for a mailed pass), assigns the role, access ready.
+        // Next run: the agent verifies its own ID step (8-hour pass allowed for a mailed pass), assigns the role, verifies the
+        // access and completes (the joiner's sign-in is not waited for).
         await app.RunWorker();
         r = await app.Request(id);
-        Assert.Equal(RequestStatus.Verifying, r.Flow!.Status);
+        Assert.Equal(RequestStatus.Completed, r.Flow!.Status);
         Assert.Contains(r.Flow.IdTeamTask!.Checks, c => c.Code == VerifyCodes.Tap && c.Status == CheckStatus.Pass);
         Assert.Contains(r.Flow.IdTeamTask.Checks, c => c.Code == VerifyCodes.EntraTap && c.Status == CheckStatus.Pass);
         var ready = Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.AccessReady);
         Assert.Contains("sign-in details mailed to you earlier", ready.Body);
 
-        app.UserCompletesFirstSignIn(Upn);
         await app.RunWorker();
-        Assert.Equal(RequestStatus.Completed, await app.Status(id));
         Assert.Single(app.Mail.Sent); // once
         Assert.Single(app.Writer.Passes);
     }
