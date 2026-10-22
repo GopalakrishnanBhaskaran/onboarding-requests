@@ -29,6 +29,8 @@ cd ~/onboarding-requests && SUB=5b9f9810-0512-49e5-b7f7-0159bc488570 && az accou
 git pull -q origin claude/great-goodall-j4ozev && git log --oneline -1
 ```
 
+If a command says `az (Azure CLI) not found` or `az: command not found`, the set-up has not run on this Mac yet. Run `bash tools/mac_setup.sh $SUB`, open a **new** Terminal window, type `bash` and start again. The tools find Homebrew's `az` themselves once it is installed.
+
 ## Redeploy the code (no approval)
 ```bash
 tools/deploy_free.sh worker $SUB

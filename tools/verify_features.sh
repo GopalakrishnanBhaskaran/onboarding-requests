@@ -5,6 +5,7 @@
 # Vestacy tenants from the workbooks (no SAMPLE data left), the test row, approvals, agent-created user/group/role,
 # sign-in details mailed, end to end.
 set -uo pipefail
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
 SUB="${1:?subscriptionId}"
 RG=rg-pmo-review-pilot
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

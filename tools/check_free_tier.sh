@@ -3,6 +3,7 @@
 #   tools/check_free_tier.sh <subscriptionId>
 # Exit 0 = OK to proceed to what-if; 2 = STOP and ask Gokul.
 set -euo pipefail
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
 SUB="${1:?usage: check_free_tier.sh <subscriptionId>}"
 az account set --subscription "$SUB"
 echo "Subscription: $(az account show --query '{name:name,id:id,tenant:tenantId}' -o tsv)"

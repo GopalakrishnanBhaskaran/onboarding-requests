@@ -3,6 +3,7 @@
 #   bash tools/workflow_diag.sh <subscriptionId>
 # Prints no secrets: the Cosmos key is used in memory only; requests are shown as status lines (no justification).
 set -uo pipefail
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
 SUB="${1:?subscriptionId}"
 RG=rg-pmo-review-pilot
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
