@@ -85,6 +85,10 @@ def run(write_fixture: bool) -> None:
         ("Storage Blob Data Contributor", "samplestddevdaiweu01"), ("Reader", "pes-rg-data-dev-dai-weu-001"), ("Reader", "pes-rg-data-dev-acq-weu-001")]
     assert [g["scope"] for g in support["azureRoles"]] == [None, scope, None]
 
+    # Privileged exactly as the review reads the role ("CONTRIBUTOR - whole platform"): flagged, so requests are not returned for it.
+    assert support["privileged"] is True and rows["azr-pes-rg-data-dev-fin-weu-powerbidevelopers"]["privileged"] is False
+    assert iw.has_word("CONTRIBUTOR - data read/write", iw.PRIVILEGED_WORDS) and not iw.has_word("Support Reader", iw.PRIVILEGED_WORDS)
+    assert iw.has_word("Full Control of the vault", iw.PRIVILEGED_WORDS) and not iw.has_word("Storage Blob Data Contributors list", ["contributor"])
     assert rows["azr-pes-rg-data-dev-fin-weu-powerbidevelopers"]["azureRoles"] == []
     typo = rows["azr-pes-rg-data-dev-sup-weu-powerbideveloper"]
     assert (typo["flag"], typo["groupObjectId"], typo["resource"]) == ("Red", None, "SAMPLE PEST Supply (sup)")
@@ -119,9 +123,18 @@ def run(write_fixture: bool) -> None:
     assert doc["contacts"]["security"] == ["tester@sample.invalid"] and doc["contacts"]["idTeamManager"] == "tester@sample.invalid"
     kept = iw.project_doc(data, {**doc, "name": "PEST (live name)"}, "", None, None, None)
     assert (kept["name"], kept["contacts"], kept["tenantId"]) == ("PEST (live name)", doc["contacts"], doc["tenantId"])
+    # Contacts saved on the Contact inventory page win over a later --test-contact (unless --replace-contacts).
+    ui = {**doc, "contacts": {"security": ["sec@company.invalid"]}, "contactsVersion": 2}
+    assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid")["contacts"] == {"security": ["sec@company.invalid"]}
+    assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid", True)["contacts"]["security"] == ["tester@sample.invalid"]
     assert iw.users(["sample-user-1=Requester,Owner"], "PEST") == [
         {"id": "sample-user-1:PEST", "userId": "sample-user-1", "projectId": "PEST", "roles": ["Requester", "Owner"], "isSample": False, "schemaVersion": 1}]
-    for bad in (["sample-user-1=Approver"], ["bad id!=Requester"], ["sample-user-1="]):
+    # By sign-in name: stored as "signin:<lower case mail>" (the API matches guest and live.com# forms of it).
+    assert iw.users(["Sample.Tester@Sample.invalid=Security"], "PEST") == [
+        {"id": "signin:sample.tester@sample.invalid:PEST", "userId": "signin:sample.tester@sample.invalid", "projectId": "PEST", "roles": ["Security"],
+         "isSample": False, "schemaVersion": 1}]
+    for bad in (["sample-user-1=Approver"], ["bad id!=Requester"], ["sample-user-1="], ["live.com#a@sample.invalid=Owner"],
+                ["a_sample.invalid#EXT#@t.invalid=Owner"], ["signin:x=Owner"], ["not a mail@x=Owner"]):
         try:
             iw.users(bad, "PEST")
             raise AssertionError(f"accepted {bad}")

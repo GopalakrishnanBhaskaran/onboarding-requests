@@ -3,6 +3,7 @@
 #   bash tools/workflow_diag.sh <subscriptionId>
 # Prints no secrets: the Cosmos key is used in memory only; requests are shown as status lines (no justification).
 set -uo pipefail
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
 SUB="${1:?subscriptionId}"
 RG=rg-pmo-review-pilot
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,7 +23,7 @@ if [[ -n "$W" ]]; then
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
   echo "-- settings:"
   az functionapp config appsettings list -g "$RG" -n "$W" \
-    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES'], name)].{name:name, value:value}" -o table
+    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED'], name)].{name:name, value:value}" -o table
   MI=$(az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv)
   echo "-- Graph application permissions (read: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All; v2.1 provisioning adds User.Create, Group.Create, GroupMember.ReadWrite.All; agent TAP adds UserAuthMethod-TAP.ReadWrite.All):"
   HELD=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
@@ -33,11 +34,11 @@ if [[ -n "$W" ]]; then
     echo "FLAG: retired Phase 2b/2c write permissions still held. After approval: tools/deploy_free.sh revoke-graph-writes $SUB --approved-by \"<name> <date>\""
   fi
   PROV=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv)
-  if echo "$HELD" | grep -qxE "User.Create|Group.Create|GroupMember.ReadWrite.All" && [[ "${PROV,,}" != "true" ]]; then
+  if echo "$HELD" | grep -qxE "User.Create|Group.Create|GroupMember.ReadWrite.All" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$PROV")" != "true" ]]; then
     echo "FLAG: v2.1 create permissions held while AGENT_PROVISIONING is off. Remove them (approval): tools/deploy_free.sh provisioning $SUB off --approved-by \"<name> <date>\""
   fi
   TAPON=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='AGENT_TAP'].value | [0]" -o tsv)
-  if echo "$HELD" | grep -qx "UserAuthMethod-TAP.ReadWrite.All" && [[ "${TAPON,,}" != "true" ]]; then
+  if echo "$HELD" | grep -qx "UserAuthMethod-TAP.ReadWrite.All" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$TAPON")" != "true" ]]; then
     echo "FLAG: the TAP write permission is held while AGENT_TAP is off. Remove it (approval): tools/deploy_free.sh tap $SUB off --approved-by \"<name> <date>\""
   fi
   COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
@@ -64,12 +65,17 @@ for p in q("projects", "SELECT c.projectId, c.domainIdSuffix, c.tenantName, c.te
     print(f"  project {p['projectId']}: tenant {p.get('tenantName') or '-'} ({p.get('tenantId') or 'agent tenant'}), "
           f"environments {', '.join(p.get('environments') or []) or '-'}, domain-specific IDs end with {p.get('domainIdSuffix')}, "
           f"Security contacts {', '.join(p.get('security') or []) or '-'}")
-reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt FROM c ORDER BY c.updatedAt DESC")
+reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt, "
+              "c.flow.idTeamTask.agent.manual AS idLeft, c.flow.idTeamTask.pickedUpAt AS idPicked, "
+              "c.flow.roleTeamTask.agent.manual AS roleLeft, c.flow.roleTeamTask.pickedUpAt AS rolePicked FROM c ORDER BY c.updatedAt DESC")
 for r in reqs:
     print(f"  {r['id'][:8]} {r.get('projectId')} {r.get('status') or 'legacy-v1'} waiting={r.get('waitingOn')} r{r.get('revision')} {r.get('domainId')} '{r.get('accessLevel')}' on '{r.get('resource')}' updated={r.get('updatedAt')}")
     if r.get("events"):
         last = r["events"][-1]
         print(f"      last step: {last.get('step')} by {last.get('actor')} at {last.get('at')}")
+    for team, left, picked in (("ID team", r.get("idLeft"), r.get("idPicked")), ("role team", r.get("roleLeft"), r.get("rolePicked"))):
+        if left and r.get("status") in ("WithIdTeam", "WithRoleTeam"):
+            print(f"      agent left it to the {team}: {left}; picked up: {'yes, ' + picked if picked else 'no'} (Hand back to the AI agent on the request page once fixed)")
 issues = q("issues", "SELECT c.requestId, c.kind, c.status, c.severity, c.step, c.detail, c.occurrences, c.lastSeenAt FROM c")
 print("  open issues:", dict(Counter((i["kind"], i["severity"]) for i in issues if i.get("status") == "Open")) or "none")
 for i in issues:

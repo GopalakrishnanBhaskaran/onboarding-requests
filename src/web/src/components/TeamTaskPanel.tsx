@@ -5,6 +5,38 @@ import type { AccessRequest, RequestView, TeamTask } from '../lib/types';
 import { checkColor, checkLabel, dateTime, grantsOf, localInput, taskLabel } from '../lib/format';
 import { ErrorBar, useStyles } from './common';
 
+/**
+ * A task the AI agent left to the team can go back to it, picked up or not (e.g. after privileged rows were switched
+ * on or the mapping row was corrected). Not an approval: the agent runs every check again and may leave it again.
+ */
+export function HandBack({ request, team, onDone }: { request: AccessRequest; team: 'id-team' | 'role-team'; onDone: (v: RequestView) => void }) {
+  const s = useStyles();
+  const task = team === 'id-team' ? request.flow?.idTeamTask : request.flow?.roleTeamTask;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  if (!task?.agent?.manual || task.state !== 'Open') return null;
+  async function handBack() {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await api.handBack(request.projectId, request.id, team));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={s.stack}>
+      <ErrorBar error={error} />
+      <div className={s.row}>
+        <Button onClick={() => void handBack()} disabled={busy}>Hand back to the AI agent</Button>
+        <Caption1 className={s.muted}>If the reason above no longer holds. The agent checks everything again on its next run (within about 5 minutes).</Caption1>
+      </div>
+    </div>
+  );
+}
+
 /** Task view for both teams: instructions, state, the AI verification and the last difference. */
 export function TaskSummary({ task, title }: { task: TeamTask; title: string }) {
   const s = useStyles();
@@ -111,6 +143,7 @@ export function IdTeamForm({ request, onDone }: { request: AccessRequest; onDone
   return (
     <form className={s.stack} onSubmit={(e) => { e.preventDefault(); void record(); }} aria-label="ID team completion">
       <ErrorBar error={error} />
+      <HandBack request={request} team="id-team" onDone={onDone} />
       {!request.flow?.idTeamTask?.pickedUpAt && <div><Button onClick={() => void pickUp()}>Pick up task</Button></div>}
       {byAgent ? (
         <Body1>User {request.domainId} and group {scope?.entraGroup} are done by the AI agent. Issue the one-time pass in Entra, then record its metadata here.</Body1>
@@ -183,6 +216,7 @@ export function RoleTeamForm({ request, onDone }: { request: AccessRequest; onDo
   return (
     <form className={s.stack} onSubmit={(e) => { e.preventDefault(); void record(); }} aria-label="Role assignment completion">
       <ErrorBar error={error} />
+      <HandBack request={request} team="role-team" onDone={onDone} />
       {!request.flow?.roleTeamTask?.pickedUpAt && <div><Button onClick={() => void pickUp()}>Pick up task</Button></div>}
       <Field label="Roles in place (one per line: role | scope)" hint="Prefilled with the approved roles; change it to exactly what is in place.">
         <Textarea value={lines} onChange={(_, d) => setLines(d.value)} rows={Math.max(2, approved.length)} resize="vertical" />

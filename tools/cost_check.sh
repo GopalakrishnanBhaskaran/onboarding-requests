@@ -3,6 +3,7 @@
 #   tools/cost_check.sh [resourceGroup]       (default rg-pmo-review-pilot)
 # Cost data lags 24-48 h: a zero on day 0 is not proof. Re-run after 24-48 h.
 set -euo pipefail
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
 RG="${1:-rg-pmo-review-pilot}"
 SUB=$(az account show --query id -o tsv)
 ALLOWED='^Microsoft\.(Web/staticSites|DocumentDB/databaseAccounts)$'

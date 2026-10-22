@@ -236,6 +236,30 @@ public sealed partial class WorkflowService(
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
+    /// <summary>
+    /// The team gives a task the AI agent left to it back to the agent (e.g. once privileged rows are switched on, the
+    /// group object id is corrected or a permission arrived), picked up or not. Not an approval: the agent runs every
+    /// check again on its next run (both approvals, the row, the never-list) and, if a reason still holds, leaves it again.
+    /// </summary>
+    public async Task<RequestView> HandBackAsync(CallerContext caller, string projectId, string requestId, AppRole team, CancellationToken ct)
+    {
+        caller.Require(projectId, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
+        var current = await requests.LoadAsync(projectId, requestId, ct);
+        var (flow, task) = OpenTask(current.Value, team);
+        if (!(team == AppRole.IdTeam ? settings.AgentProvisioning : settings.AgentRoleAssignment))
+            throw AppException.Conflict("agent_off", $"The AI agent's {(team == AppRole.IdTeam ? "provisioning" : "role assignment")} is switched off: your team does this task.");
+        if (task.State != TeamTaskState.Open || task.Agent?.Manual is not { } reason)
+            throw AppException.Conflict("not_left_by_agent", $"The AI agent did not leave this {Messages.Team(team)} task to your team, so there is nothing to hand back.");
+        var now = clock.UtcNow;
+        var back = task with { PickedUpAt = null, PickedUpBy = null, Agent = task.Agent with { Manual = null, RefusedSince = null } };
+        var next = (team == AppRole.IdTeam ? flow with { IdTeamTask = back } : flow with { RoleTeamTask = back })
+            .Waiting(WaitingOn.Agent, now)
+            .Log(now, caller.UserId, $"{Route(team)}-handed-back",
+                $"{Messages.Team(team)} handed the task back to the AI agent ({caller.DisplayName}); it runs every check again on its next run. It had left it because: {reason}.");
+        await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
+        return await ViewAsync(caller, projectId, requestId, ct);
+    }
+
     public async Task<RequestView> ReportIdTeamAsync(CallerContext caller, string projectId, string requestId, IdTeamReportInput input, string cid, CancellationToken ct)
     {
         caller.Require(projectId, Permission.WorkIdTeamTasks);

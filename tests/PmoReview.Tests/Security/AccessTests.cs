@@ -57,6 +57,57 @@ public class IdentityTests
     }
 }
 
+/// <summary>Registration by sign-in name (22 Oct 2026): a userAccess row "signin:&lt;name&gt;" counts for whoever signs in under that name.</summary>
+public class SignInRegistrationTests
+{
+    private static async Task Register(TestApp app, string signIn, string project, params AppRole[] roles)
+    {
+        var userId = AccessService.SignInUserId(signIn);
+        await app.Stores.UserAccess.CreateAsync(new UserAccess { Id = UserAccess.MakeId(userId, project), UserId = userId, ProjectId = project, Roles = roles });
+    }
+
+    private static string[] Roles(Resp me, string project) =>
+        me.Json.GetProperty("projects").EnumerateArray().Single(p => p.GetProperty("projectId").GetString() == project)
+            .GetProperty("roles").EnumerateArray().Select(x => x.GetString()!).Order().ToArray();
+
+    [Theory]
+    [InlineData("sample.joiner@sample-mail.invalid")]
+    [InlineData("Sample.Joiner@Sample-Mail.invalid")]                       // case
+    [InlineData("sample.joiner_sample-mail.invalid#EXT#@sample.onmicrosoft.com")] // guest UPN
+    [InlineData("live.com#sample.joiner@sample-mail.invalid")]               // Microsoft account prefix
+    public async Task A_user_registered_by_sign_in_name_gets_the_roles_under_every_form_of_that_name(string signedInAs)
+    {
+        var app = TestApp.Create();
+        await Register(app, "sample.joiner@sample-mail.invalid", TestApp.Alpha, AppRole.Requester, AppRole.Owner);
+        var me = await app.CallAs("sample-user-unregistered-1", signedInAs, "GET", "me");
+        Assert.Equal(["Owner", "Requester"], Roles(me, TestApp.Alpha));
+        Assert.Equal(200, (await app.CallAs("sample-user-unregistered-1", signedInAs, "GET", $"projects/{TestApp.Alpha}/requests")).Status);
+    }
+
+    [Fact]
+    public async Task Another_sign_in_name_gets_nothing_and_roles_by_id_and_by_name_add_up()
+    {
+        var app = TestApp.Create();
+        await Register(app, "sample.joiner@sample-mail.invalid", TestApp.Alpha, AppRole.Security);
+        var other = await app.CallAs("sample-user-unregistered-2", "sample.joiner2@sample-mail.invalid", "GET", "me");
+        Assert.Equal(0, other.Json.GetProperty("projects").GetArrayLength());
+        Assert.Equal(404, (await app.CallAs("sample-user-unregistered-2", "sample.joiner2@sample-mail.invalid", "GET", $"projects/{TestApp.Alpha}/requests")).Status);
+
+        // Alice is registered by id as Requester; a sign-in registration of her name adds Security.
+        await Register(app, TestApp.SignIn(TestApp.Alice), TestApp.Alpha, AppRole.Security);
+        Assert.Equal(["Requester", "Security"], Roles(await app.Call(TestApp.Alice, "GET", "me"), TestApp.Alpha));
+    }
+
+    [Fact]
+    public async Task A_principal_whose_id_looks_like_a_sign_in_registration_gets_nothing()
+    {
+        var app = TestApp.Create();
+        await Register(app, "sample.joiner@sample-mail.invalid", TestApp.Alpha, AppRole.Owner);
+        var forged = await app.CallAs(AccessService.SignInUserId("sample.joiner@sample-mail.invalid"), "someone@sample-mail.invalid", "GET", "me");
+        Assert.Equal(0, forged.Json.GetProperty("projects").GetArrayLength());
+    }
+}
+
 public class PermissionTests
 {
     [Theory]
@@ -114,6 +165,7 @@ public class CrossProjectTests
                  {
                      ("GET", $"projects/{TestApp.Alpha}/requests/{id}"), ("GET", $"projects/{TestApp.Alpha}/requests/{id}/runs"),
                      ("GET", $"projects/{TestApp.Alpha}/requests/{id}/trail"), ("POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/pickup"),
+                     ("POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/handback"),
                      ("GET", $"projects/{TestApp.Alpha}/mapping-sheet"), ("GET", $"projects/{TestApp.Alpha}/issues"),
                  })
             Assert.Equal(404, (await app.Call(TestApp.Bob, method, path, method == "POST" ? new { } : null)).Status);

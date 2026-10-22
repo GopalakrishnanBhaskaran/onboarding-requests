@@ -1,13 +1,13 @@
 # Pilot Report — PMO onboarding flow (v2)
 
-Generated 2026-10-22 01:33 UTC from commit `06658b7` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
+Generated 2026-10-22 08:55 UTC from commit `667e4d7` by `tools/run_acceptance.sh`. Environment: **local, in-process, SAMPLE data only** (in-memory store with Cosmos semantics; RuleOnly reviewer; Azure OpenAI path exercised only through a mocked HTTP handler). Nothing here was run against Azure.
 
 ## Verdict
 
 - Acceptance cases: **27/27 passed**.
 - Critical gates: **12/12 passed**.
-- Unit, contract and security tests: **301/302 passed** (0 failed, 1 skipped).
-- Browser end-to-end: not included in this run (run with `E2E=1` while `tools/run_local.sh` is up).
+- Unit, contract and security tests: **350/351 passed** (0 failed, 1 skipped).
+- Browser end-to-end (Playwright via SWA CLI emulator, one mock user per role): **8 passed, 0 failed**.
 
 ## Critical gates
 
@@ -48,11 +48,11 @@ Generated 2026-10-22 01:33 UTC from commit `06658b7` by `tools/run_acceptance.sh
 | AC16 | Different group returned to the ID team | Task Returned with the exact difference; GroupNameMismatch issue | Returned | - Expected group SAMPLE-GRP-ALPHA-DBW-ENG-USER (reviewed and approved), reported SAMPLE-GRP-ALPHA-OTHER. Fix the group name, or update the mapping sheet — the request is then reviewed again and needs new approvals. | **PASS** |
 | AC17 | Role mismatch returned to the role team | Task Returned (missing/extra role); RoleMismatch issue | Returned | - Reported and recorded: missing SAMPLE Workspace User at SAMPLE dbw-alpha-dev; extra SAMPLE Workspace Admin at SAMPLE dbw-alpha-dev. Correct the assignment or revoke the extra role. | **PASS** |
 | AC18 | Mapping change after review re-runs the review **(gate)** | mapping-changed event, new review, continues only if group and role are unchanged | AwaitingSecurity; events mapping-changed > review-start > review-pass | — | **PASS** |
-| AC19 | Final verification and notifications | Login, permanent method, TAP deleted -> Completed; user, Owner, Security, PMO, teams notified | Completed; checks FINAL_LOGIN=Pass, FINAL_ACCESS=Pass, FINAL_PERMANENT_METHOD=Pass, FINAL_TAP_DELETED=Pass | notifications: FlowOverview, ApprovalRequested, TeamTask, AccessReady, CompletionSummary, PmoInformed, Closure | **PASS** |
-| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-663725f5255845bbba2d33993f3dc7f4 | Onboarding 663725f5: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
+| AC19 | Final verification and notifications | Account, membership and exact roles verified -> Completed at once (no wait for the user's sign-in); joiner told access is ready; one completion mail to the requester, Security, PMO and both teams | Completed; checks FINAL_ACCESS=Pass | notifications: FlowOverview, ApprovalRequested, TeamTask, AccessReady, CompletionSummary | **PASS** |
+| AC20 | ADO work item with full trail | Work item linked to the request id; description has review, approvals, ID team, role, justification | work item 1000; tag pmo-request-3bcc1da41c4d4322adde40513153e288 | Onboarding 3bcc1da4: sample.e1001@sample.invalid — User on SAMPLE Databricks Engineering [With Role Team] | **PASS** |
 | AC21 | Status line and time per stage | Request ID \| Requester \| stage \| waiting on \| done \| next \| time in stage \| ADO link; wait per team | Awaiting Owner \| waiting Owner \| 5h 0m | Owner=5h 0m; AI agent=0m | **PASS** |
 | AC22 | Auto-fix limit then Failed-Needs-Dev | At most 3 retries per step; Failed-Needs-Dev with developer report | FailedNeedsDev; attempts r1=3 | — | **PASS** |
-| AC23 | Agent never approves; it writes only through the worker's approved writers **(gate)** | No grant/assign/provision route; no access-package or licence call in source; the one TAP create call only in the worker's Graph writer | 24 routes, none grant/assign/provision; package/licence write calls in source: 0; TAP create call sites: 1 (worker's Graph writer) | — | **PASS** |
+| AC23 | Agent never approves; it writes only through the worker's approved writers **(gate)** | No grant/assign/provision route; no access-package or licence call in source; the one TAP create call only in the worker's Graph writer | 27 routes, none grant/assign/provision; package/licence write calls in source: 0; TAP create call sites: 1 (worker's Graph writer) | — | **PASS** |
 | AC24 | Prompt injection **(gate)** | REQ_TEXT_CLEAN fails; text not echoed; nothing followed | Fail; REQ_TEXT_CLEAN=Fail | Request text in Justification contains instruction-like text or claims an approval. Approvals come only from the Owner and Security in this app; rewrite it. | **PASS** |
 | AC25 | Cross-project isolation **(gate)** | Other project gets 404 for view and approval | view 404; approve 404 | — | **PASS** |
 | AC26 | Daily summary with wait time per team | Once per day to Operators, PMO, Security; includes wait time per team | to sample.operator.alpha@sample.invalid,sample.pmo.alpha@sample.invalid,sample.security.alpha@sample.invalid | Daily summary SAMPLE-ALPHA — 2026-10-17 (UTC); Submitted 1 · Completed 0 · Rejected 0 · Returned 0 · Failed-Needs-Dev 0; Open by status: Awaiting Security 1; Waiting on: Security 1; Wait time per team today: Security 15h 0m; Average time per stage (completed today): —; SLA breaches today: 0 · Open issues: none;  | **PASS** |

@@ -98,18 +98,19 @@ public class ProvisioningTests
         var report = (await app.Request(id)).Flow!.IdTeamTask!.IdReport!;
         Assert.Equal((FinanceUser, FinanceGroup, true, true, true), (report.UserPrincipalName, report.GroupName, report.UserCreated, report.AddedToGroup, report.MappingSheetUpdated));
 
-        await app.RunWorker(); // verifies the ID step, then assigns the role and verifies it
+        await app.RunWorker(); // verifies the ID step, assigns the role, verifies it and the access: completed (no sign-in wait)
         r = await app.Request(id);
-        Assert.Equal(RequestStatus.Verifying, r.Flow!.Status);
+        Assert.Equal(RequestStatus.Completed, r.Flow!.Status);
         Assert.Equal([$"Group {app.Directory.GroupId(FinanceGroup)} {FakeRoleWriter.Reader} {Scope}"], app.RoleWriter.Calls);
         Assert.Equal(WorkflowAgent.AgentName, r.Flow.RoleTeamTask!.ReportedBy);
         Assert.Contains(r.Flow.RoleTeamTask.Checks, c => c.Code == VerifyCodes.RoleInAzure && c.Status == CheckStatus.Pass);
         var record = (await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, id))!.Value;
         Assert.Equal((ResponseState.Assigned, WorkflowAgent.AgentName), (record.State, record.AssignedBy));
+        var done = Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.CompletionSummary);
+        Assert.Contains("Roles: the AI agent", done.Body);
+        Assert.Contains("User, group and membership: the AI agent", done.Body);
 
-        app.UserCompletesFirstSignIn(FinanceUser);
         await app.RunWorker();
-        Assert.Equal(RequestStatus.Completed, await app.Status(id));
         Assert.Single(app.RoleWriter.Calls);
     }
 
@@ -224,7 +225,7 @@ public class ProvisioningTests
         app.RoleWriter.FailWith = null;
         app.Clock.Advance(TimeSpan.FromHours(1));
         await app.RunWorker();
-        Assert.Equal(RequestStatus.Verifying, await app.Status(id));
+        Assert.Equal(RequestStatus.Completed, await app.Status(id));
         Assert.Single(app.RoleWriter.Calls);
     }
 
@@ -248,7 +249,7 @@ public class ProvisioningTests
 
     [Theory]
     [InlineData(null, false)] // no Azure role on the row (e.g. a Databricks role): the role team, no issue
-    [InlineData("8e3af657-a8ff-443c-a75c-2fe8c4bcb635", true)] // Owner: not on the allow-list
+    [InlineData("b7e6dc6d-f1e8-4753-8033-0f276bb0955b", true)] // Storage Blob Data Owner: not on the allow-list (Owner itself: PrivilegedProvisioningTests)
     public async Task Roles_outside_the_allow_list_or_without_an_azure_role_go_to_the_role_team(string? roleId, bool issue)
     {
         var app = App();

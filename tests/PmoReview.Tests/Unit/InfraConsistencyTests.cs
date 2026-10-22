@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PmoReview.Adapters.Storage;
+using PmoReview.Core.Domain;
 using Xunit;
 
 namespace PmoReview.Tests.Unit;
@@ -18,6 +19,15 @@ public partial class InfraConsistencyTests
     private static string Read(params string[] path) => File.ReadAllText(Path.Combine([Repo(), .. path]));
 
     private static string Pilot() => Read("infra", "modules", "pilot.bicep");
+
+    [Fact]
+    public void The_flow_stated_on_the_website_is_the_flow_the_server_mails_and_step_7_never_waits_for_the_sign_in()
+    {
+        var web = Read("src", "web", "src", "lib", "flow.ts");
+        foreach (var step in PmoReview.Core.Workflow.StatusText.FlowOverview) Assert.Contains($"'{step}'", web);
+        Assert.DoesNotContain("sign", PmoReview.Core.Workflow.StatusText.FlowOverview[6], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("requester", PmoReview.Core.Workflow.StatusText.FlowOverview[6]);
+    }
     private static string Worker() => Read("infra", "modules", "worker.bicep");
     private static string MainBicep() => Read("infra", "main.bicep");
 
@@ -123,6 +133,12 @@ public partial class InfraConsistencyTests
         foreach (var r in new[] { "EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All", "UserAuthenticationMethod.ReadWrite.All", "Group.ReadWrite.All" })
             Assert.Contains(r, retired);
         Assert.Contains("Would remove: $perm (dry run; pass --approved-by after explicit approval)", deploy);
+        // The importer flags rows privileged with the review's own word list, or every request for them is returned.
+        var importer = Read("tools", "import_workbook.py");
+        var words = Regex.Match(importer, @"PRIVILEGED_WORDS = \[(?<w>[^\]]*)\]").Groups["w"].Value.Split(',').Select(w => w.Trim().Trim('"')).ToArray();
+        Assert.Equal(new PmoReview.Core.Review.ReviewPolicy().PrivilegedWords, words);
+        // Registration by sign-in name: the tools write the same user id prefix the API reads.
+        Assert.Contains($"SIGN_IN_PREFIX = \"{PmoReview.Core.Security.AccessService.SignInPrefix}\"", Read("tools", "import_workbook.py"));
         // `-o tsv` prints a list's elements on separate lines: a "[0].[a, b]" query fed one value per line into a delete (live 22 Oct 2026).
         Assert.DoesNotMatch(@"--query ""\[0\]\.\[", deploy);
         Assert.DoesNotContain("setup_entra", deploy);
@@ -176,6 +192,28 @@ public partial class InfraConsistencyTests
         Assert.Contains("--condition-version 2.0", deploy);
         Assert.Contains("StringEqualsIgnoreCase $types", deploy);
         Assert.Contains("RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168", deploy);
+    }
+
+    [Fact]
+    public void Privileged_rows_are_off_by_default_and_privileged_administrator_roles_never_reach_the_agents_allow_list()
+    {
+        var bicep = MainBicep() + Worker();
+        Assert.Contains("param agentPrivileged bool = false", bicep);
+        Assert.Contains("{ name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }", bicep);
+        var deploy = Read("tools", "deploy_free.sh");
+        var never = Regex.Match(deploy, "NEVER_BY_AGENT=\"(?<ids>[^\"]*)\"").Groups["ids"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(BuiltInRoles.NeverByAgent.Values.Order(), never.Order()); // same list as the code (F68)
+        Assert.Contains("check_role_ids \"$roles\" || return 1", deploy); // provisioning refuses them in the RBAC condition
+        Assert.Contains("agent_privileged \"$MODE\"", deploy);
+        Assert.Contains("\"AGENT_PRIVILEGED=${priv:-false}\"", deploy); // the website follows the worker
+
+        // --from-sheet: the Python catalogue and never-list are the code's (tools/sheet_roles.py).
+        Assert.Contains("\"$ROOT/tools/sheet_roles.py\" \"$FROM_SHEET\" \"$scope\"", deploy);
+        var py = Read("tools", "sheet_roles.py");
+        Dictionary<string, string> Dict(string name) => Regex.Matches(Regex.Match(py, name + @" = \{(?<b>[^}]*)\}").Groups["b"].Value, "\"(?<k>[^\"]+)\": \"(?<v>[0-9a-f-]{36})\"")
+            .ToDictionary(m => m.Groups["k"].Value, m => m.Groups["v"].Value);
+        Assert.Equal(BuiltInRoles.Ids.ToDictionary(p => p.Key.ToLowerInvariant(), p => p.Value).OrderBy(p => p.Key), Dict("CATALOGUE").OrderBy(p => p.Key));
+        Assert.Equal(BuiltInRoles.NeverByAgent.ToDictionary(p => p.Key.ToLowerInvariant(), p => p.Value).OrderBy(p => p.Key), Dict("NEVER").OrderBy(p => p.Key));
     }
 
     [Fact]

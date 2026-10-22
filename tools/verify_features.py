@@ -22,6 +22,11 @@ READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 # The roles of the PEST Dev Support Reader row (response document), by lower-case name: the end-to-end test needs both.
 TEST_ROLES = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"}
 TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
+# Built-in role ids by lower-case name (BuiltInRoles.Ids) and the ones the agent never assigns (BuiltInRoles.NeverByAgent).
+from sheet_roles import CATALOGUE as ROLE_IDS, NEVER  # noqa: E402  (tools/ is the script's folder)
+NEVER_BY_AGENT = set(NEVER)
+# The privileged PEST row of the live test (Data Engineer, Dev).
+PRIVILEGED_ROW = "PH-DATAENGINEERS-DEV"
 
 
 @dataclass
@@ -63,7 +68,9 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
 
     # 2. Environment settings
     env, redirect = s.get("APP_ENVIRONMENT", ""), s.get("NOTIFY_REDIRECT_TO", "")
-    ok_env = env in ("dev", "test") and bool(redirect) and str(s.get("AGENT_TENANT_ID", "")).lower() == tenant and tenant != ""
+    # A test environment redirects every mail to the tester; production (go-live) mails the real people, never redirected.
+    ok_env = ((env in ("dev", "test") and bool(redirect)) or (env == "prod" and not redirect)) \
+        and str(s.get("AGENT_TENANT_ID", "")).lower() == tenant and tenant != ""
     same_swa = swa.get("APP_ENVIRONMENT") == env and swa.get("NOTIFY_REDIRECT_TO", "") == redirect
     out.append(Result("2. Environment-specific settings (test env, mail redirect, agent tenant)",
                       PASS if ok_env and same_swa else WAIT,
@@ -113,6 +120,24 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
                       "" if tap_ok else "tools/deploy_free.sh tap <sub> on (dry run → approval), then tools/deploy_free.sh app <sub>"))
 
+    # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
+    prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
+    pnames = sorted({str(g.get("roleName", "")).strip().lower() for g in ((prow or {}).get("azureRoles") or []) if g.get("roleName")})
+    never = [n for n in pnames if n in NEVER_BY_AGENT]
+    missing = [n for n in pnames if n not in NEVER_BY_AGENT and ROLE_IDS.get(n, n) not in allowed_roles]
+    priv_ok = on("AGENT_PRIVILEGED") and str(swa.get("AGENT_PRIVILEGED", "")).lower() == "true" and prow is not None and not never and not missing
+    flagged = f", flagged privileged: {bool(prow.get('privileged'))}" if prow else ""
+    out.append(Result(f"5c. Agent provisions privileged rows too ({PRIVILEGED_ROW}: user, group, membership and its roles)", PASS if priv_ok else WAIT,
+                      f"AGENT_PRIVILEGED={s.get('AGENT_PRIVILEGED') or 'false'} (website {swa.get('AGENT_PRIVILEGED') or 'false'}); row {'found' if prow else 'missing'}"
+                      f"{flagged}; "
+                      f"roles {pnames or '-'}; not on the allow-list {missing or 'none'}; never by the agent {never or 'none'}",
+                      "" if priv_ok else
+                      f"row {PRIVILEGED_ROW} has {', '.join(never)}: people assign it (the agent never does)" if never else
+                      ("tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --from-sheet PEST (dry run → approval; "
+                       f"adds {', '.join(missing)})" if missing else "") +
+                      ("; " if missing and not on("AGENT_PRIVILEGED") else "") +
+                      ("tools/deploy_free.sh privileged <sub> on (dry run → approval)" if not on("AGENT_PRIVILEGED") else "")))
+
     # 6. Real tenants (from the shared workbooks), no SAMPLE data left
     p = {x.get("projectId"): x for x in projects}
     real = {k: v for k, v in p.items() if not str(k).startswith("SAMPLE-") and not v.get("isSample")}
@@ -126,6 +151,16 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                                             f"{per.get(k, 0)} rows, contacts {'set' if (v.get('contacts') or {}).get('security') else 'none'}" if v else "missing")
                                 for k, v in have.items()),
                       "" if tenants_ok else "python3 tools/import_workbook.py --tenant PEST --project PEST … --apply (docs/NEXT_SESSION.md)"))
+    # 6c. Contact inventory: the teams that approval requests and tasks are mailed to (Contact inventory page).
+    def gaps(v: dict) -> list[str]:
+        c = v.get("contacts") or {}
+        return [label for key, label in (("security", "Security"), ("idTeam", "ID team"), ("roleTeam", "role assignment team")) if not c.get(key)]
+    missing = {k: gaps(v) for k, v in real.items() if gaps(v)}
+    out.append(Result("6c. Contact inventory: Security, ID team and role assignment team have mail addresses", PASS if real and not missing else WAIT,
+                      "; ".join(f"{k}: {'missing ' + ', '.join(m) if (m := gaps(v)) else 'set'}"
+                                f"{' (saved in the app, v' + str(v.get('contactsVersion')) + ')' if v.get('contactsVersion') else ' (imported)'}"
+                                for k, v in sorted(real.items())) or "no real project",
+                      "" if real and not missing else "PMO: Contact inventory page → each team's addresses, separated by semicolons → Save contacts"))
     sample = sorted(k for k in p if str(k).startswith("SAMPLE-") or p[k].get("isSample"))
     sample_rows = sum(1 for r in rows if r.get("isSample") or str(r.get("projectId", "")).startswith("SAMPLE-"))
     out.append(Result("6b. No SAMPLE projects or mappings left in the live app", PASS if not sample and not sample_rows else WAIT,
@@ -174,6 +209,30 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     if prod_returned:
         out.append(Result("12c. PEST Prod request returned (red row)", PASS, f"requests {prod_returned}"))
 
+    # 14. Mail queue: nothing failed, nothing held back for over an hour (the Azure-managed domain sends 10 an hour, F70)
+    from datetime import datetime, timedelta, timezone
+    now = ctx.get("now") or datetime.now(timezone.utc).isoformat()
+    def older(n: dict, hours: float) -> bool:
+        try:
+            return datetime.fromisoformat(str(n.get("createdAt")).replace("Z", "+00:00")) < datetime.fromisoformat(str(now).replace("Z", "+00:00")) - timedelta(hours=hours)
+        except ValueError:
+            return False
+    failed = [n for n in notes if n.get("status") == "Failed"]
+    backlog = [n for n in notes if n.get("status") == "Pending" and older(n, 1)]
+    out.append(Result("14. Mail queue: no failed mail, none waiting over an hour", FAIL if failed else WAIT if backlog else PASS,
+                      f"failed {len(failed)} ({sorted({str(n.get('lastError')) for n in failed}) or '-'}), waiting > 1 h {len(backlog)}, "
+                      f"limit {s.get('MAIL_MAX_PER_HOUR') or '10 (Azure-managed domain)'} an hour",
+                      "workflow_diag.sh: mail errors; MailForbidden = sender role; NoRecipients = Contact inventory" if failed
+                      else "the queue drains at the mail limit; a verified custom mail domain raises it (F70)" if backlog else ""))
+
+    # 15. Go-live: mails reach the real people (production: no redirect) and no team list is still only the test mailbox
+    test_only = sorted(k for k, v in real.items() if redirect and (v.get("contacts") or {}).get("security") == [redirect.lower()])
+    live_mail = env == "prod" and not redirect and swa.get("APP_ENVIRONMENT") == "prod" and not swa.get("NOTIFY_REDIRECT_TO")
+    out.append(Result("15. Go-live: every mail goes to the real requester, joiner and teams (prod, no redirect)", PASS if live_mail and not missing else WAIT,
+                      f"worker {env or '-'} redirect {redirect or 'none'}; website {swa.get('APP_ENVIRONMENT', '-')}; "
+                      f"projects whose Security list is only the test mailbox: {test_only or 'none'}",
+                      "" if live_mail and not missing else "fill the Contact inventory, then tools/deploy_free.sh environment <sub> prod (docs/GO_LIVE.md)"))
+
     # 13. Open high issues
     high = [i for i in issues if i.get("status") == "Open" and i.get("severity") == "High"]
     out.append(Result("13. No open High issues", PASS if not high else WAIT,
@@ -204,10 +263,10 @@ def load() -> tuple:
             print(f"  ({container} not readable: {type(e).__name__})")
             return []
 
-    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts FROM c"),
+    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion FROM c"),
             q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.entraGroup, c.azureRoles, c.isSample FROM c"),
             q("requests", "SELECT c.id, c.projectId, c.environment, c.flow.status, c.flow.waitingOn, c.flow.events FROM c"),
-            q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind FROM c"),
+            q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind, c.createdAt FROM c"),
             q("issues", "SELECT c.requestId, c.kind, c.severity, c.status, c.summary FROM c"))
 
 
@@ -226,24 +285,43 @@ def self_test() -> None:
            "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE}), "rbac_admin_scopes": [allowed],
            "worker_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "AGENT_TENANT_ID": "T1", "NOTIFY_SENDER": "AcsEmail",
                                "ACS_ENDPOINT": "https://a", "NOTIFY_FROM": "DoNotReply@d", "AGENT_PROVISIONING": "true", "AGENT_ROLE_ASSIGNMENT": "true",
-                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480",
-                               "ROLE_ASSIGN_ALLOWED_ROLES": ",".join(TEST_ROLES.values()), "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true"}}
-    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": {"security": ["x@y.z"]}},
-                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"]}]
+                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "AGENT_PRIVILEGED": "true",
+                               "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
+                               "ROLE_ASSIGN_SCOPES": allowed},
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"}}
+    team = {"security": ["sec@company.example"], "idTeam": ["id@company.example"], "roleTeam": ["roles@company.example"]}
+    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1},
+                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team}]
     rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
              "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
+            {"projectId": "PEST", "rowId": PRIVILEGED_ROW, "privileged": True,
+             "azureRoles": [{"roleName": n, "scope": allowed} for n in ("Storage Blob Data Contributor", "Key Vault Secrets Officer", "Reader")]},
             {"projectId": "VESTACY", "rowId": "PH-SUPPORT-DEV", "azureRoles": []}]
     ev = lambda *s: [{"step": x, "note": ""} for x in s]  # noqa: E731
     all_steps = ev("owner-approved", "security-approved", "agent-provisioned", "agent-role-assigned", "completed")
     requests = [{"id": "bbbbbbbbbbbb", "projectId": "PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
     notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}, {"status": "Sent", "kind": "SignInDetails", "deliveredTo": ["x@y.z"]}]
     res = evaluate(ctx, projects, rows, requests, notes, [])
-    assert all(r.status == PASS for r in res), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
+    # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
+    assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
+    go = next(r for r in res if r.feature.startswith("15."))
+    assert go.status == WAIT and "environment <sub> prod" in go.next, (go.detail, go.next)
+    prod = json.loads(json.dumps(ctx))
+    for k in ("worker_settings", "swa_settings"):
+        prod[k].update({"APP_ENVIRONMENT": "prod", "NOTIFY_REDIRECT_TO": ""})
+    assert all(r.status == PASS for r in evaluate(prod, projects, rows, requests, notes, [])), \
+        [(r.feature, r.status, r.detail) for r in evaluate(prod, projects, rows, requests, notes, []) if r.status != PASS]
+    # A team list left empty, a failed mail and an hour of backlog are named.
+    empty = [dict(projects[0], contacts={"security": ["sec@company.example"]}), projects[1]]
+    got6 = next(r for r in evaluate(prod, empty, rows, requests, notes, []) if r.feature.startswith("6c."))
+    assert got6.status == WAIT and "missing ID team, role assignment team" in got6.detail and "Contact inventory" in got6.next, got6.detail
+    q = [{"status": "Pending", "createdAt": "2026-10-23T08:00:00+00:00"}, {"status": "Failed", "lastError": "MailForbidden"}]
+    mail = lambda n: next(r for r in evaluate({**prod, "now": "2026-10-23T09:30:00+00:00"}, projects, rows, requests, n, []) if r.feature.startswith("14."))  # noqa: E731
+    assert mail(q).status == FAIL and mail(q[:1]).status == WAIT and mail([]).status == PASS
 
     # The state after this commit is deployed, before the steps: SAMPLE data still there, no tenants, TAP off, Reader only.
     ctx2 = json.loads(json.dumps(ctx))
-    ctx2["worker_settings"].update({"AGENT_TAP": "false", "ROLE_ASSIGN_ALLOWED_ROLES": READER})
+    ctx2["worker_settings"].update({"AGENT_TAP": "false", "AGENT_PRIVILEGED": "false", "ROLE_ASSIGN_ALLOWED_ROLES": READER})
     ctx2["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES)
     sample_projects = [{"projectId": "SAMPLE-PEST", "isSample": True}, {"projectId": "SAMPLE-ALPHA", "isSample": True}]
     sample_rows = [{"projectId": "SAMPLE-PEST", "rowId": "P-PH-SUPPORT-READER-DEV", "isSample": True, "azureRoles": [{"roleName": "Reader", "scope": allowed}]}]
@@ -251,6 +329,14 @@ def self_test() -> None:
     assert {k: got[k].status for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")} == {k: WAIT for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")}, \
         {k: v.status for k, v in got.items()}
     assert "2a2b9908" in got["5."].next and "tap <sub> on" in got["5b."].next and "--remove-sample" in got["6b."].next and "--test-scope" in got["7."].next
+    # Privileged rows on, but the Data Engineer roles are not on the allow-list (Reader + Storage Blob Data Reader only).
+    ctx4 = json.loads(json.dumps(ctx))
+    ctx4["worker_settings"]["ROLE_ASSIGN_ALLOWED_ROLES"] = ",".join(TEST_ROLES.values())
+    p4 = next(r for r in evaluate(ctx4, projects, rows, requests, notes, []) if r.feature.startswith("5c."))
+    assert p4.status == WAIT and "--from-sheet PEST" in p4.next and "key vault secrets officer" in p4.next and "privileged <sub> on" not in p4.next, (p4.detail, p4.next)
+    rows5 = [dict(r, azureRoles=[{"roleName": "Owner", "scope": allowed}]) if r["rowId"] == PRIVILEGED_ROW else r for r in rows]
+    p5 = next(r for r in evaluate(ctx, projects, rows5, requests, notes, []) if r.feature.startswith("5c."))
+    assert p5.status == WAIT and "never does" in p5.next, (p5.detail, p5.next)
     ctx3 = json.loads(json.dumps(ctx))
     ctx3["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES | {"Group.ReadWrite.All"})
     assert next(r for r in evaluate(ctx3, projects, rows, requests, notes, []) if r.feature.startswith("5.")).status == FAIL

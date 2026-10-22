@@ -163,6 +163,8 @@ public sealed class TestApp
         if (target == RequestStatus.WithRoleTeam) return Expect(id, await Status(id), target);
         Roles.Assign(Directory.GroupId(DefaultGroup), DefaultRole, DefaultScope);
         Ok(await ReportRoleTeam(id, RoleReport()));
+        // Verifying is where the API leaves it: the worker's next run checks the access and completes it.
+        if (target == RequestStatus.Verifying) return Expect(id, await Status(id), target);
         await RunWorker();
         return Expect(id, await Status(id), target);
     }

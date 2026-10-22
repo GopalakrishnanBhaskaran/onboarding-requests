@@ -23,7 +23,7 @@ public enum NotificationKind
     SecurityAlert,
     DailySummary,
     DeveloperReport,
-    /// <summary>What the AI agent created or assigned after both approvals (Security, Owner, requester).</summary>
+    /// <summary>What the AI agent created after both approvals (requester, Security; the ID team when the pass was mailed).</summary>
     ProvisioningSummary,
     /// <summary>
     /// Agent TAP: the joiner's sign-in name, initial password, one-time TAP and MFA set-up steps, sent once to the
@@ -56,10 +56,30 @@ public sealed record Notification : IDocument
     /// <summary>Where the mail actually went (differs from <see cref="To"/> only in a test environment's redirect).</summary>
     public IReadOnlyList<string>? DeliveredTo { get; init; }
     public string? LastError { get; init; }
+    /// <summary>Entries left out because they are not mail addresses (e.g. a sign-in name without a mailbox), masked.</summary>
+    public IReadOnlyList<string>? Skipped { get; init; }
     public int SchemaVersion { get; init; } = 1;
     [JsonIgnore] public string PartitionKey => ProjectId;
 
     public static string MakeId(string idempotencyKey, NotificationKind kind) => Ids.Hash($"{idempotencyKey}|{kind}");
+
+    /// <summary>
+    /// Send order when the mail limit holds mails back (F70): asks for a decision or an action first, then outcomes, then
+    /// information. Lower goes first; equal kinds go oldest first.
+    /// </summary>
+    public static int Priority(NotificationKind kind) => kind switch
+    {
+        NotificationKind.SecurityAlert or NotificationKind.ApprovalRequested or NotificationKind.TeamTask or NotificationKind.TaskReturned
+            or NotificationKind.Escalation or NotificationKind.SignInDetails => 0,
+        NotificationKind.AccessReady or NotificationKind.CompletionSummary or NotificationKind.Rejected or NotificationKind.ReviewReturned
+            or NotificationKind.Reminder or NotificationKind.DeveloperReport => 1,
+        NotificationKind.FlowOverview or NotificationKind.ProvisioningSummary => 2,
+        _ => 3,
+    };
+
+    /// <summary>Kinds that ask a team or approver to act: without any address they are a gap in the contact inventory.</summary>
+    public static bool NeedsAction(NotificationKind kind) => kind is NotificationKind.ApprovalRequested or NotificationKind.TeamTask
+        or NotificationKind.TaskReturned or NotificationKind.Escalation or NotificationKind.SecurityAlert;
 }
 
 public enum IssueKind

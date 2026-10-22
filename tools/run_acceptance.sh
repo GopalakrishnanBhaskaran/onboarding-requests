@@ -29,7 +29,7 @@ python3 -I "$ROOT/tools/export_pilot_report.py" \
   --results "$OUT/acceptance.ctrf.json" \
   --unit "$OUT/unit.ctrf.json" \
   --commit "$(git -C "$ROOT" rev-parse --short HEAD)" \
-  "${E2E_ARG[@]}" \
+  ${E2E_ARG[@]+"${E2E_ARG[@]}"} \
   --out "$ROOT/docs/PILOT_REPORT.md"
 
 echo "acceptance exit=$ACC_RC unit exit=$UNIT_RC"

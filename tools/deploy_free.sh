@@ -31,11 +31,13 @@
 #       Removes the retired Phase 2b/2c Graph permissions (access packages, ReadWrite.All roles) from the worker
 #       identity. Security change: without --approved-by it only lists what it would remove.
 #
-#   tools/deploy_free.sh provisioning <subscriptionId> on <scope> [<roleIds>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh provisioning <subscriptionId> on <scope> [<roleIds> | --from-sheet <PROJECT>] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh provisioning <subscriptionId> off [--approved-by "<name> <date>"]
 #       v2.1 agent provisioning after both approvals. "on": Graph User.Create, Group.Create, GroupMember.ReadWrite.All;
 #       Role Based Access Control Administrator on <scope> constrained to <roleIds> (default Reader) and user/group
 #       principals; worker + SWA settings; creates the empty resource group <scope> if it is missing (free).
+#       --from-sheet <PROJECT>: the roles are every Azure role on the project's mapping sheet that the agent can resolve at
+#       <scope> (tools/sheet_roles.py; never a privileged administrator role), added to the roles already allowed.
 #       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
 #
@@ -46,6 +48,13 @@
 #       "on": Graph application permission UserAuthMethod-TAP.ReadWrite.All + worker/SWA AGENT_TAP=true. Needs agent
 #       provisioning and mail on. Shows the tenant's TAP policy. Security change: dry run without --approved-by.
 #       "off": AGENT_TAP=false at once (the ID team issues passes again); removing the permission needs --approved-by.
+#
+#   tools/deploy_free.sh privileged <subscriptionId> on|off [--approved-by "<name> <date>"]
+#       Agent privileged rows (requested by Gokul 22 Oct 2026): the agent also provisions and assigns mapping rows flagged
+#       privileged (e.g. Data Engineer: Storage Blob Data Contributor, Key Vault Secrets Officer), after both approvals, with
+#       the same checks; never Owner, Contributor, User Access Administrator, RBAC Administrator, Reservations Administrator
+#       or Key Vault Data Access Administrator. Settings only (AGENT_PRIVILEGED); the roles still need the allow-list
+#       (provisioning ... on <scope> <roleIds>). "on" is a security change: dry run without --approved-by. "off" any time.
 #
 #   tools/deploy_free.sh environment <subscriptionId> <pilot|dev|test|prod> [--redirect <mail>]
 #       Settings only (worker + SWA): APP_ENVIRONMENT, NOTIFY_REDIRECT_TO (test environments: every mail goes to that
@@ -58,7 +67,8 @@
 #       to NOTIFY_SENDER=AcsEmail.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -186,6 +196,20 @@ revoke_graph_writes() {
 GRAPH_PROVISION_ROLES=(User.Create Group.Create GroupMember.ReadWrite.All)
 READER_ROLE_ID=acdd72a7-3385-48ef-bd42-f606fba81ae7
 RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168
+# Never on the agent's allow-list (BuiltInRoles.NeverByAgent, VERIFIED_FACTS F68): Owner, Contributor, Reservations
+# Administrator, Role Based Access Control Administrator, User Access Administrator, Key Vault Data Access Administrator.
+NEVER_BY_AGENT="8e3af657-a8ff-443c-a75c-2fe8c4bcb635 b24988ac-6180-42a0-ab88-20f7382dd24c a8889054-8d42-49c9-bc1c-52486c10e7cd f58310d9-a9f6-439a-9e8d-f62e7b41a168 18d7d88d-d35e-4fb5-a5c3-7773c20a72d9 8b54135c-b56d-4d72-a534-26097cfdc8d8"
+
+# Refuses a role list with a privileged administrator role or anything that is not a role GUID.
+check_role_ids() {
+  local id never
+  for id in ${1//,/ }; do
+    [[ "$id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || { echo "Not a role definition id: $id"; return 1; }
+    for never in $NEVER_BY_AGENT; do
+      [[ "$(tr '[:upper:]' '[:lower:]' <<<"$id")" != "$never" ]] || { echo "Refusing: $id is a privileged administrator role; the agent never assigns it."; return 1; }
+    done
+  done
+}
 
 # Condition from Learn (F60): only these roles, only user or group principals, for both assign and remove.
 rbac_condition() {
@@ -221,6 +245,18 @@ provisioning() {
 
   [[ "$scope" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]+$ ]] \
     || { echo "Scope must be a resource group: /subscriptions/<id>/resourceGroups/<name>"; return 1; }
+  if [[ -n "${FROM_SHEET:-}" ]]; then
+    local cosmos sheet_ids current
+    cosmos=$(az cosmosdb list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+    sheet_ids=$(COSMOS_CONNECTION_STRING="$(az cosmosdb keys list -g "$RG_DEFAULT" -n "$cosmos" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)" \
+      "$("$ROOT/tools/cosmos_python.sh")" "$ROOT/tools/sheet_roles.py" "$FROM_SHEET" "$scope") \
+      || { echo "No Azure role on the $FROM_SHEET mapping sheet that the agent may assign at $scope."; return 1; }
+    current=$(worker_setting "$name" ROLE_ASSIGN_ALLOWED_ROLES)
+    # Additive: the roles already approved stay, the sheet's roles are added.
+    roles=$(printf '%s\n' ${current//,/ } ${sheet_ids//,/ } | tr '[:upper:]' '[:lower:]' | sort -u | paste -sd, -)
+    echo "Allow-list from the $FROM_SHEET mapping sheet plus the roles already allowed: $roles"
+  fi
+  check_role_ids "$roles" || return 1
   rg_name="${scope##*/}"; rg_sub=$(cut -d/ -f3 <<<"$scope")
   rg_loc=$(az group show -n "$RG_DEFAULT" --query location -o tsv)
   rg_new=false
@@ -354,6 +390,46 @@ agent_tap() {
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
 }
 
+# Agent privileged rows (requested by Gokul 22 Oct 2026, approval-gated): a setting only. What the agent may assign stays
+# the allow-list + the RBAC condition (provisioning ... on); privileged administrator roles are refused in code and here.
+agent_privileged() {
+  local mode="$1" name swa prov roles id rname
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_PRIVILEGED=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PRIVILEGED=false -o none
+    echo "Agent privileged rows switched off on $name and $swa: rows flagged privileged go to the ID and role assignment teams again."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "privileged on|off"; return 1; }
+  prov=$(worker_setting "$name" AGENT_PROVISIONING); roles=$(worker_setting "$name" ROLE_ASSIGN_ALLOWED_ROLES)
+  echo "Checks:"
+  echo "  Agent provisioning: ${prov:-false} (must be true)"
+  echo "  Roles the agent may assign (ROLE_ASSIGN_ALLOWED_ROLES, same as the RBAC condition) at $(worker_setting "$name" ROLE_ASSIGN_SCOPES):"
+  for id in ${roles//,/ }; do
+    rname=$(az role definition list --name "$id" --query "[0].roleName" -o tsv 2>/dev/null || true)
+    echo "    $id ${rname:-(name not found)}"
+  done
+  echo "  A privileged row whose roles are not all in that list: the agent creates the user, group and membership; the"
+  echo "  role assignment team assigns its roles. To let the agent assign them too, add them with:"
+  echo "    tools/deploy_free.sh provisioning <subscriptionId> on <scope> --from-sheet <PROJECT>   (approval; reads the roles from the mapping sheet)"
+  echo "Plan for $name and $swa, expected cost 0, no permission change:"
+  echo "  Settings: AGENT_PRIVILEGED=true (worker + SWA)"
+  echo "  Effect: after the Owner and then Security approved, the agent also provisions rows flagged privileged (same checks,"
+  echo "  same allow-list). Never: Owner, Contributor, User Access Administrator, Role Based Access Control Administrator,"
+  echo "  Reservations Administrator, Key Vault Data Access Administrator (always people)."
+  echo "  Open tasks the agent left to a team only because the row was privileged, and that nobody has picked up, go back to the agent."
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  [[ "$prov" == "true" ]] || { echo "Switch agent provisioning on first (tools/deploy_free.sh provisioning ...)."; return 1; }
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_PRIVILEGED=true -o none
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PRIVILEGED=true -o none
+  echo "Agent privileged rows on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
+}
+
 # Per-environment settings (no resource or permission change). A test environment may send every mail to one address.
 set_environment() {
   local env="$1" redirect="${2:-}" name swa tenant
@@ -456,15 +532,16 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap
+  local env sender redirect tenant tap priv
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
+  priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -558,7 +635,7 @@ case "$CMD" in
     W=$(worker_name); echo "  worker: ${W:-not deployed}"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     if [[ -n "$W" ]]; then
-      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER NOTIFY_FROM NOTIFY_REDIRECT_TO APP_ENVIRONMENT AGENT_TENANT_ID AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT AGENT_TAP AGENT_TAP_LIFETIME_MINUTES ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
+      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER NOTIFY_FROM NOTIFY_REDIRECT_TO APP_ENVIRONMENT AGENT_TENANT_ID AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT AGENT_TAP AGENT_TAP_LIFETIME_MINUTES AGENT_PRIVILEGED ROLE_ASSIGN_ALLOWED_ROLES ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
         V=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='$k'].value | [0]" -o tsv 2>/dev/null)
         echo "  $k: ${V:-not set}"
       done
@@ -591,6 +668,8 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      # Agent TAP as it is live (deploy_free.sh tap, approved separately).
      "agentTap": v(live.get("AGENT_TAP", "").lower() == "true"),
      "agentTapLifetimeMinutes": v(int(live.get("AGENT_TAP_LIFETIME_MINUTES") or 480)),
+     # Agent privileged rows as they are live (deploy_free.sh privileged, approved separately).
+     "agentPrivileged": v(live.get("AGENT_PRIVILEGED", "").lower() == "true"),
      # Mail and environment as they are live (deploy_free.sh email / environment).
      "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
      "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
@@ -619,6 +698,8 @@ PY
     while [[ $# -gt 0 ]]; do
       if [[ "$1" == "--approved-by" && -n "${2:-}" ]]; then
         APPROVED_BY="$2"; echo "Approval recorded (provisioning $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2
+      elif [[ "$1" == "--from-sheet" && -n "${2:-}" ]]; then
+        FROM_SHEET="$2"; shift 2
       else
         ARGS+=("$1"); shift
       fi
@@ -635,6 +716,13 @@ PY
       esac
     done
     agent_tap "$MODE" "$LIFETIME"
+    ;;
+  privileged)
+    MODE="${3:?on|off}"
+    if [[ "${4:-}" == "--approved-by" && -n "${5:-}" ]]; then
+      APPROVED_BY="$5"; echo "Approval recorded (privileged $MODE): $5" | tee -a "$ROOT/.local/approval.txt"
+    fi
+    agent_privileged "$MODE"
     ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
@@ -669,5 +757,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email ..."; exit 1 ;;
 esac

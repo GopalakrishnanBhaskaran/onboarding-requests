@@ -246,22 +246,47 @@ public class TeamTaskTests
     }
 
     [Fact]
-    public async Task Final_verification_waits_and_asks_the_id_team_to_delete_a_leftover_tap()
+    public async Task Final_verification_does_not_wait_for_the_sign_in_a_permanent_method_or_the_tap_removal()
     {
         var app = TestApp.Create();
         var id = await app.To(RequestStatus.Verifying);
-        app.Directory.SignInNow(TestApp.DefaultUser, app.Clock.UtcNow);
-        app.Directory.SetMethods(TestApp.DefaultUser, ["password", "microsoftAuthenticator", "temporaryAccessPass"]);
+        // The joiner has not signed in, has no permanent method and the TAP is still on the account.
+        app.Directory.SetMethods(TestApp.DefaultUser, ["password", "temporaryAccessPass"]);
         await app.RunWorker();
         var flow = (await app.Request(id)).Flow!;
-        Assert.Equal(RequestStatus.Verifying, flow.Status);
-        Assert.Contains(flow.FinalChecks, c => c.Code == VerifyCodes.FinalTapDeleted && c.Status == CheckStatus.Pending);
-        Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.TapCleanupNeeded);
-        Assert.Contains(await app.Issues(id), i => i.Kind == IssueKind.TapNotDeleted);
+        Assert.Equal(RequestStatus.Completed, flow.Status);
+        Assert.Equal(WaitingOn.None, flow.WaitingOn);
+        Assert.DoesNotContain(await app.Notifications(id), n => n.Kind is NotificationKind.TapCleanupNeeded or NotificationKind.Reminder);
+        Assert.DoesNotContain(await app.Issues(id), i => i.Kind == IssueKind.TapNotDeleted && i.Status == IssueStatus.Open);
+        Assert.False(app.Directory.SignInRead);
+    }
 
-        app.Directory.SetTap(TestApp.DefaultUser, null);
+    [Fact]
+    public async Task A_request_already_waiting_for_the_new_users_sign_in_completes_on_the_next_agent_run()
+    {
+        // Requests the earlier code left in Verifying, waiting on the new user: the next worker run checks the access and completes.
+        var app = TestApp.Create();
+        var id = await app.To(RequestStatus.Verifying);
+        var stored = (await app.Stores.Requests.GetAsync(TestApp.Alpha, id))!;
+        await app.Stores.Requests.ReplaceAsync(stored.Value with { Flow = stored.Value.Flow!.Waiting(WaitingOn.User, app.Clock.UtcNow) }, stored.ETag, CancellationToken.None);
+        app.Clock.Advance(TimeSpan.FromDays(3));
         await app.RunWorker();
         Assert.Equal(RequestStatus.Completed, await app.Status(id));
+        Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.CompletionSummary);
+    }
+
+    [Fact]
+    public async Task Final_verification_still_pending_past_its_sla_reminds_the_operators_once_not_the_user()
+    {
+        var app = TestApp.Create();
+        var id = await app.To(RequestStatus.Verifying);
+        app.Clock.Advance(TimeSpan.FromHours(3)); // the worker has not run (only the API, without the Entra reader)
+        for (var i = 0; i < 2; i++)
+            Assert.Equal(200, (await app.Call(TestApp.Oscar, "POST", $"projects/{TestApp.Alpha}/requests/{id}/advance")).Status);
+        var reminder = Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.Reminder);
+        Assert.DoesNotContain("sample.e1001@sample-corp.invalid", reminder.To);
+        Assert.Contains("sample.operator.alpha@sample.invalid", reminder.To);
+        Assert.Equal(RequestStatus.Verifying, await app.Status(id));
     }
 
     [Fact]
@@ -278,6 +303,6 @@ public class TeamTaskTests
         app.Directory.AddMember(TestApp.DefaultGroup, TestApp.DefaultUser);
         await app.ReportIdTeam(id, app.IdReport());
         await app.RunWorker();
-        Assert.Equal(RequestStatus.Verifying, await app.Status(id)); // roles already verified: straight back to final verification
+        Assert.Equal(RequestStatus.Completed, await app.Status(id)); // roles already verified: straight back to final verification, which passes
     }
 }

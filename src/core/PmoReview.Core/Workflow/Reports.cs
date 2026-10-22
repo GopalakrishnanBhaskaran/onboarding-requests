@@ -96,7 +96,7 @@ public static class Reports
         RequestStatus.AwaitingSecurity => "Security approves or rejects risk and access level",
         RequestStatus.WithIdTeam => f.IdTeamTask?.State == TeamTaskState.Reported ? "AI verifies the ID team's work" : "ID team creates user/group, adds membership, issues TAP",
         RequestStatus.WithRoleTeam => f.RoleTeamTask?.State == TeamTaskState.Reported ? "AI verifies the role assignment" : "Role assignment team assigns the role",
-        RequestStatus.Verifying => "User signs in and registers a method; AI verifies; TAP removed",
+        RequestStatus.Verifying => "AI agent verifies the account, membership and roles, then completes and notifies the requester",
         RequestStatus.FailedNeedsDev => "Developer investigates (see developer report)",
         _ => "—",
     };

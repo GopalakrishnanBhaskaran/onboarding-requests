@@ -1,5 +1,5 @@
 import type {
-  AccessRequest, ActionItem, AssignedRole, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
+  AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
   ResponseRecord, ReviewRun, StatusLine,
 } from './types';
 
@@ -92,6 +92,9 @@ export const api = {
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/approvals`, { decision, remarks: remarks || null, reviewRunId }),
   pickUp: (projectId: string, requestId: string, team: 'id-team' | 'role-team') =>
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/${team}/pickup`, {}),
+  /** A task the AI agent left to the team goes back to the agent (it runs every check again). */
+  handBack: (projectId: string, requestId: string, team: 'id-team' | 'role-team') =>
+    call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/${team}/handback`, {}),
   reportIdTeam: (projectId: string, requestId: string, report: IdTeamReportInput) =>
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/id-team/report`, report),
   reportRoleTeam: (projectId: string, requestId: string, assignedRoles: AssignedRole[], notes: string) =>
@@ -106,6 +109,9 @@ export const api = {
   updateMappingGroup: (projectId: string, rowId: string, entraGroup: string, groupState: string, etag: string) =>
     call<Item<MappingRow>>('POST', `${p(projectId)}/mapping-sheet/${id(rowId)}/group`, { entraGroup, groupState }, etag),
   responseDocument: (projectId: string) => call<{ items: Item<ResponseRecord>[] }>('GET', `${p(projectId)}/response-document`),
+  contacts: (projectId: string) => call<Item<ContactInventory>>('GET', `${p(projectId)}/contacts`),
+  saveContacts: (projectId: string, input: ContactInventoryInput, etag: string) =>
+    call<Item<ContactInventory>>('PUT', `${p(projectId)}/contacts`, input, etag),
 
   issues: (projectId: string) => call<{ items: Issue[] }>('GET', `${p(projectId)}/issues`),
   daily: (projectId: string, date: string) => call<DailySummary>('GET', `${p(projectId)}/reports/daily/${id(date)}`),

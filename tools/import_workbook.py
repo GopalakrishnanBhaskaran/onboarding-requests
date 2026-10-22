@@ -21,7 +21,7 @@ Inputs
 
 With --apply the project (one per tenant) is created or updated in Cosmos: tenant name, environments, group naming
 pattern, and optionally --domain-suffix, --tenant-id, --test-contact (every project contact = one tester mailbox) and
---register-user USERID=Role,Role (repeatable; userId from /.auth/me).
+--register-user USER=Role,Role (repeatable; USER = the person's sign-in name, or the userId from /.auth/me).
 
 Groups the response document names but the classification does not list are rows "to be created" (amber); in an
 environment the classification says has no groups (e.g. Prod) they are red.
@@ -33,7 +33,7 @@ Examples
   # pilot test in the agent's own tenant: roles land in the approved test resource group, every mail to the tester
   COSMOS_CONNECTION_STRING=... python3 tools/import_workbook.py --tenant PEST --project PEST ... \\
       --test-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --tenant-id <agent tenant guid> \\
-      --domain-suffix @contoso.onmicrosoft.com --test-contact tester@example.com --register-user <userId>=Requester,Owner --apply
+      --domain-suffix @contoso.onmicrosoft.com --test-contact tester@example.com --register-user tester@example.com=Requester,Owner --apply
 """
 from __future__ import annotations
 
@@ -58,6 +58,9 @@ LEVELS = {
     "analysts": "Analyst", "datagovernance": "Data Governance", "support": "Support", "support-reader": "Support Reader",
     "support-writer": "Support Writer",
 }
+# Same words and matching as the AI review (ReviewPolicy.PrivilegedWords, ReviewChecks.HasWord): a row whose role reads
+# as privileged must be flagged, or the review returns every request for it ("PMO must flag it").
+PRIVILEGED_WORDS = ["owner", "admin", "administrator", "contributor", "user access administrator", "global", "privileged", "elevated", "full control", "manage"]
 RESOURCE_TYPES = {"rg": "Microsoft.Resources/resourceGroups", "st": "Microsoft.Storage/storageAccounts", "kv": "Microsoft.KeyVault/vaults"}
 
 
@@ -86,6 +89,14 @@ def clean_domain(label: str, code: str) -> str:
 
 def text(v) -> str:
     return "" if v is None else str(v).strip()
+
+
+def has_word(text: str, words: list[str]) -> bool:
+    """ReviewChecks.HasWord: whole words of the lower-cased text (letters, digits, dashes), or a multi-word phrase."""
+    if not text or not text.strip():
+        return False
+    t = " " + re.sub(r"[^a-z0-9-]+", " ", text.lower()) + " "
+    return any(f" {w} " in t or (" " in w and w in t) for w in words)
 
 
 def level_of(role: str) -> str:
@@ -246,7 +257,7 @@ def build(tenant: str, project: str, classification: Path | None, responses: lis
 
 def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, notes, jobs, oid, state, source, now, prefix) -> dict:
     row_id = re.sub(r"[^A-Za-z0-9_.:-]", "-", f"{g['domain']}-{g['role']}-{env}".upper())[:64]
-    privileged = g["role"].lower() == "admins" or role.upper().startswith("ADMIN")
+    privileged = g["role"].lower() == "admins" or has_word(role, PRIVILEGED_WORDS)
     return {
         "id": row_id, "projectId": project, "rowId": row_id, "resource": f"{prefix}{tenant} {domain_label}".strip(),
         "accessLevel": level_of(g["role"]), "environment": env, "entraGroup": name, "groupObjectId": oid, "role": role[:200],
@@ -264,20 +275,46 @@ CONTACT_LISTS = ("pmo", "security", "idTeam", "roleTeam", "operators")
 CONTACT_ONE = ("securityManager", "idTeamManager", "roleTeamManager", "ownerManagerFallback")
 
 
+SIGN_IN_PREFIX = "signin:"  # same as AccessService.SignInPrefix
+
+
+def user_key(user: str) -> str:
+    """The userAccess user id: the app's user id (/.auth/me userId) as is, or a sign-in name (mail form, e.g.
+    jane@contoso.com) as "signin:<lower case>" — the API matches it like the named Owner (guest #EXT# and live.com# forms
+    of that mail count as the same person)."""
+    u = user.strip()
+    if "@" in u:
+        if "#" in u or not MAIL.match(u):
+            raise SystemExit(f"{user}: give the sign-in name as a plain mail address (e.g. jane@contoso.com), not the #EXT# or live.com# form")
+        return SIGN_IN_PREFIX + u.lower()
+    if not SAFE_ID.match(u) or u.lower().startswith(SIGN_IN_PREFIX):
+        raise SystemExit(f"{user}: not a user id (letters, digits, . _ : -) or a sign-in name")
+    return u
+
+
+def user_doc(user: str, project: str, roles: list[str]) -> dict:
+    if not roles or set(roles) - ROLES:
+        raise SystemExit(f"roles must be from {sorted(ROLES)}")
+    key = user_key(user)
+    return {"id": f"{key}:{project}", "userId": key, "projectId": project, "roles": roles, "isSample": False, "schemaVersion": 1}
+
+
 def users(pairs: list[str], project: str) -> list[dict]:
-    """--register-user USERID=Role,Role -> userAccess documents for the project (not sample data)."""
+    """--register-user USER=Role,Role (USER = sign-in name or user id) -> userAccess documents (not sample data)."""
     out = []
     for pair in pairs:
         user, _, roles = pair.partition("=")
         wanted = [r.strip() for r in roles.split(",") if r.strip()]
-        if not SAFE_ID.match(user) or not wanted or set(wanted) - ROLES:
-            raise SystemExit(f"--register-user must be USERID=Role,Role with roles from {sorted(ROLES)}")
-        out.append({"id": f"{user}:{project}", "userId": user, "projectId": project, "roles": wanted, "isSample": False, "schemaVersion": 1})
+        if not user or not wanted:
+            raise SystemExit(f"--register-user must be USER=Role,Role (USER = sign-in name or user id) with roles from {sorted(ROLES)}")
+        out.append(user_doc(user, project, wanted))
     return out
 
 
-def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None) -> dict:
-    """Pure: the project document after the import (keeps what was set live unless given again)."""
+def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None,
+                replace_contacts: bool = False) -> dict:
+    """Pure: the project document after the import (keeps what was set live unless given again). Contacts saved on the
+    app's Contact inventory page (contactsVersion > 0) are never overwritten by --test-contact unless replace_contacts."""
     p = data["project"]
     doc = dict(live) if live else {"id": p["projectId"], "projectId": p["projectId"], "contacts": {}, "schemaVersion": 2}
     doc.update({"name": project_name or doc.get("name") or f"{p['tenantName']} data platform", "tenantName": p["tenantName"],
@@ -287,7 +324,9 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
         doc["domainIdSuffix"] = domain_suffix.lower()
     if tenant_id:
         doc["tenantId"] = tenant_id.lower()
-    if test_contact:
+    if test_contact and int(doc.get("contactsVersion") or 0) > 0 and not replace_contacts:
+        print(f"  contacts kept: saved on the Contact inventory page (version {doc['contactsVersion']}); --replace-contacts to overwrite them")
+    elif test_contact:
         c = dict(doc.get("contacts") or {})
         for k in CONTACT_LISTS:
             c[k] = [test_contact.lower()]
@@ -298,7 +337,7 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
 
 
 def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: str | None, update: bool, database: str,
-          test_contact: str | None = None, register: list[dict] | None = None) -> None:
+          test_contact: str | None = None, register: list[dict] | None = None, replace_contacts: bool = False) -> None:
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
         raise SystemExit("COSMOS_CONNECTION_STRING is not set")
@@ -311,7 +350,7 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
         live = projects.read_item(p["projectId"], partition_key=p["projectId"])
     except CosmosResourceNotFoundError:
         live = None
-    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact)
+    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact, replace_contacts)
     projects.upsert_item(doc)
     sheet = db.get_container_client("mappingSheet")
     created = updated = kept = 0
@@ -330,7 +369,8 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
     for u in register or []:
         access.upsert_item(u)
         print(f"  registered {u['userId']} on {u['projectId']}: {', '.join(u['roles'])}")
-    contacts = "test contact " + test_contact if test_contact else ("contacts kept" if doc.get("contacts") else "NO contacts (no mail goes out)")
+    contacts = ("test contact " + test_contact if test_contact and doc.get("contacts", {}).get("security") == [test_contact.lower()]
+                else "contacts kept" if (doc.get("contacts") or {}).get("security") else "NO contacts: fill the Contact inventory page (no team mail goes out)")
     print(f"project {p['projectId']} ({p['tenantName']}, {doc.get('tenantId') or 'agent tenant'}, {doc.get('domainIdSuffix') or 'no domain'}, {contacts}): "
           f"{created} rows created, {updated} updated, {kept} kept (use --update to replace)")
 
@@ -351,8 +391,11 @@ def main() -> int:
     ap.add_argument("--domain-suffix")
     ap.add_argument("--tenant-id", help="Entra tenant GUID of this project (the agent's own tenant for a pilot test)")
     ap.add_argument("--test-scope", help="pilot test: every Azure role in this one resource group (/subscriptions/<id>/resourceGroups/<name>)")
-    ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox")
-    ap.add_argument("--register-user", action="append", default=[], metavar="USERID=Role,Role", help="register a signed-in user on the project (repeatable)")
+    ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox "
+                                           "(never over contacts saved on the Contact inventory page, unless --replace-contacts)")
+    ap.add_argument("--replace-contacts", action="store_true", help="with --test-contact: overwrite contacts saved on the Contact inventory page")
+    ap.add_argument("--register-user", action="append", default=[], metavar="USER=Role,Role",
+                    help="register a person on the project by sign-in name (jane@contoso.com) or user id (repeatable)")
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
     args = ap.parse_args()
     if not args.classification and not args.response:
@@ -378,7 +421,7 @@ def main() -> int:
           f"{sum(r['groupState'] == 'ToBeCreated' for r in rows)} to be created, "
           f"{sum(len(r['azureRoles']) for r in rows)} Azure roles ({unresolved} without a resolved scope). Wrote {out}")
     if args.apply:
-        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register)
+        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register, args.replace_contacts)
     return 0
 
 

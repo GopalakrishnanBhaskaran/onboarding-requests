@@ -95,6 +95,9 @@ param agentTap bool = false
 @description('Lifetime in minutes of an agent-issued TAP.')
 param agentTapLifetimeMinutes int = 480
 
+@description('Agent privileged rows: the agent also provisions rows flagged privileged (never privileged administrator roles). Approval-gated: deploy_free.sh privileged.')
+param agentPrivileged bool = false
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -149,6 +152,7 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     roleAssignScopes: roleAssignScopes
     agentTap: agentTap
     agentTapLifetimeMinutes: agentTapLifetimeMinutes
+    agentPrivileged: agentPrivileged
   }
 }
 

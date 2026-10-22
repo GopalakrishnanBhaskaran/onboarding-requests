@@ -19,7 +19,18 @@ export const useStyles = makeStyles({
   tableWrap: { overflowX: 'auto' },
   muted: { color: tokens.colorNeutralForeground3 },
   pre: { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
+  /** A cell with long unbroken text (a mail address, an id): it wraps inside its column instead of running into the next one. */
+  wrap: { overflowWrap: 'anywhere' },
+  /** A table whose columns keep the widths their header cells set; narrower windows scroll it sideways (tableWrap). */
+  fixedTable: { tableLayout: 'fixed', minWidth: '960px' },
 });
+
+/** A mail address or sign-in name that may break after the @ (and anywhere else only if it must). */
+export function Breakable({ text }: { text: string | null | undefined }) {
+  if (!text) return <>—</>;
+  const at = text.indexOf('@');
+  return at < 0 ? <>{text}</> : <>{text.slice(0, at + 1)}<wbr />{text.slice(at + 1)}</>;
+}
 
 /** Page heading that receives focus on navigation, so screen readers announce the new page. */
 export function PageTitle({ children }: { children: string }) {

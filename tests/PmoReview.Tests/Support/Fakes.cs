@@ -45,9 +45,9 @@ public sealed class FakeDirectory : IDirectoryReader
         return u;
     }
 
-    public DirectoryGroup AddGroup(string name, bool security = true)
+    public DirectoryGroup AddGroup(string name, bool security = true, string? objectId = null)
     {
-        var g = new DirectoryGroup(Guid.NewGuid().ToString("D"), name, security);
+        var g = new DirectoryGroup(objectId ?? Guid.NewGuid().ToString("D"), name, security);
         _groups.AddOrUpdate(name, [g], (_, list) => [.. list, g]);
         return g;
     }
@@ -118,8 +118,12 @@ public sealed class FakeDirectory : IDirectoryReader
         return Task.FromResult(new AuthMethods(m.Types, m.Tap));
     }
 
+    /// <summary>The sign-in logs were read (the flow no longer waits for the user's first sign-in, so it should not).</summary>
+    public bool SignInRead { get; private set; }
+
     public Task<SignInSummary?> LastSuccessfulSignInAsync(string userObjectId, DateTimeOffset since, CancellationToken ct)
     {
+        SignInRead = true;
         Read();
         var upn = _users.Values.First(u => u.ObjectId == userObjectId).UserPrincipalName;
         return Task.FromResult(_signIns.TryGetValue(upn, out var at) && at >= since ? new SignInSummary(at, true) : null);

@@ -69,25 +69,33 @@ public class FlowTests
         record = (await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, id))!.Value;
         Assert.Equal(ResponseState.Assigned, record.State);
         Assert.Equal(TestApp.SignIn(TestApp.Rose), record.AssignedBy);
-        Assert.Equal(RequestStatus.Verifying, await app.Status(id));
-        // The joiner is mailed at the Enterprise ID (always a mail address), and the requester.
-        Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.AccessReady && n.To.SequenceEqual(["sample.e1001@sample-corp.invalid", TestApp.SignIn(TestApp.Alice)])
-                                                          && n.Body.Contains(TestApp.DefaultUser) && n.Body.Contains(TestApp.DefaultGroup));
-
-        // 7. Verify: waits for the user's sign-in and permanent method, and the TAP removal.
-        await app.RunWorker();
         r = await app.Request(id);
-        Assert.Equal(RequestStatus.Verifying, r.Flow!.Status);
-        Assert.Contains(r.Flow.FinalChecks, c => c.Code == VerifyCodes.FinalLogin && c.Status == CheckStatus.Pending);
-        app.UserCompletesFirstSignIn();
+        Assert.Equal(RequestStatus.Verifying, r.Flow!.Status); // the API cannot read Entra: the worker checks the access
+        Assert.Equal(WaitingOn.Agent, r.Flow.WaitingOn); // never the new user: the first sign-in is not waited for
+        Assert.DoesNotContain(await app.Notifications(id), n => n.Kind is NotificationKind.AccessReady or NotificationKind.CompletionSummary);
+
+        // 7. The agent verifies the access (account, membership, exact role) and completes at once: no sign-in, no TAP removal.
         await app.RunWorker();
         r = await app.Request(id);
         Assert.Equal(RequestStatus.Completed, r.Flow!.Status);
-        Assert.All(r.Flow.FinalChecks, c => Assert.Equal(CheckStatus.Pass, c.Status));
+        var final = Assert.Single(r.Flow.FinalChecks);
+        Assert.Equal((VerifyCodes.FinalAccess, CheckStatus.Pass), (final.Code, final.Status));
+        Assert.False(app.Directory.SignInRead); // the sign-in logs are never read
 
-        var kinds = (await app.Notifications(id)).Select(n => n.Kind).ToList();
-        foreach (var k in new[] { NotificationKind.FlowOverview, NotificationKind.CompletionSummary, NotificationKind.PmoInformed, NotificationKind.Closure })
-            Assert.Contains(k, kinds);
+        var notes = await app.Notifications(id);
+        // The joiner is mailed at the Enterprise ID (always a mail address) that the access is ready.
+        Assert.Contains(notes, n => n.Kind == NotificationKind.AccessReady && n.To.SequenceEqual(["sample.e1001@sample-corp.invalid"])
+                                    && n.Body.Contains(TestApp.DefaultUser) && n.Body.Contains(TestApp.DefaultGroup));
+        // One completion mail: the requester (who asked for the account) first, then Security, PMO and both teams; never the Owner.
+        var done = Assert.Single(notes, n => n.Kind == NotificationKind.CompletionSummary);
+        Assert.Equal(TestApp.SignIn(TestApp.Alice), done.To[0]);
+        Assert.Contains("sample.security.alpha@sample.invalid", done.To);
+        Assert.Contains("sample.pmo.alpha@sample.invalid", done.To);
+        Assert.DoesNotContain("sample-user-olivia@sample.invalid", done.To);
+        Assert.Contains(TestApp.DefaultUser, done.Body);
+        Assert.Contains("Requested by: " + TestApp.SignIn(TestApp.Alice), done.Body);
+        Assert.DoesNotContain(notes, n => n.Kind is NotificationKind.PmoInformed or NotificationKind.Closure);
+        Assert.Contains(NotificationKind.FlowOverview, notes.Select(n => n.Kind));
         Assert.All(await app.Notifications(id), n => Assert.NotEqual(NotificationStatus.Pending, n.Status)); // dispatched (pilot: Recorded)
 
         // Audit: ADO work item linked to the request id with the full trail; time per stage and per team.

@@ -55,9 +55,9 @@ stateDiagram-v2
   WithIdTeam --> WithIdTeam: mismatch → task returned with the exact difference
   WithRoleTeam --> Verifying: exact roles verified
   WithRoleTeam --> WithRoleTeam: mismatch → task returned
-  Verifying --> Completed: sign-in, permanent method, TAP deleted, access present
+  Verifying --> Completed: account, membership and exact roles verified (no wait for the sign-in, 22 Oct 2026)
   Verifying --> WithIdTeam: access not in place
-  Verifying --> FailedNeedsDev: past VERIFY_SLA_HOURS
+  Verifying --> Verifying: pending past VERIFY_SLA_HOURS, Operators reminded once
   AwaitingOwner --> AiReview: mapping sheet changed (also from AwaitingSecurity, WithIdTeam, WithRoleTeam)
   FailedNeedsDev --> Submitted: Operator resumes after the fix (failed review → new review; other stages resume where they failed)
 ```

@@ -20,7 +20,7 @@ export const FLOW_OVERVIEW = [
   '4. Security approval',
   '5. ID team creates user/group (+ TAP)',
   '6. Role assignment team assigns roles',
-  '7. AI verification, notifications, audit',
+  '7. AI verifies the access, notifies the requester (Completed), audit',
 ];
 
 export const WHO_DOES_WHAT: [string, string][] = [
@@ -32,16 +32,20 @@ export const WHO_DOES_WHAT: [string, string][] = [
   ['PMO', 'Source of the mapping sheet. Informed only.'],
 ];
 
-/** Who does what, true to the deployment (v2.1 agent provisioning on or off; agent TAP on or off). */
-export function whoDoesWhat(agent: boolean, tap = false): [string, string][] {
+/** Who does what, true to the deployment (v2.1 agent provisioning on or off; agent TAP on or off; privileged rows on or off). */
+export function whoDoesWhat(agent: boolean, tap = false, privileged = false): [string, string][] {
   if (!agent) return WHO_DOES_WHAT;
+  const left = privileged ? 'guests, privileged administrator roles, exceptions' : 'guests, privileged access, exceptions';
   return WHO_DOES_WHAT.map(([who, what]): [string, string] => {
     if (who === 'AI agent') return [who, 'Reviews, validates, summarises, routes, tracks, verifies, reports. Never approves. Only after both approvals: creates the user ID, group and membership and assigns the approved role where the mapping sheet allows it' +
+      (privileged ? ' (privileged rows too, never Owner, Contributor, User Access Administrator or the like)' : '') +
       (tap ? '; mails a new joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps (once, to the Enterprise ID mail).' : '.')];
     if (who === 'ID team') return [who, tap
-      ? 'Does the user/group work and Temporary Access Pass the agent leaves to it (guests, privileged access, exceptions).'
-      : 'Issues the Temporary Access Pass; does the user/group work the agent leaves to it (guests, privileged access, exceptions).'];
-    if (who === 'Role assignment team') return [who, 'Assigns the roles the agent cannot (e.g. Databricks or privileged roles).'];
+      ? `Does the user/group work and Temporary Access Pass the agent leaves to it (${left}).`
+      : `Issues the Temporary Access Pass; does the user/group work the agent leaves to it (${left}).`];
+    if (who === 'Role assignment team') return [who, privileged
+      ? 'Assigns the roles the agent cannot (e.g. Databricks roles, privileged administrator roles, roles off its allow-list).'
+      : 'Assigns the roles the agent cannot (e.g. Databricks or privileged roles).'];
     return [who, what];
   });
 }

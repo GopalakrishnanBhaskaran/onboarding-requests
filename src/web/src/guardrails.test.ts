@@ -64,9 +64,16 @@ describe('scope guardrails', () => {
     // Agent TAP on: the agent mails the joiner's pass; still never approves; the ID team takes what the agent leaves.
     expect(whoDoesWhat(true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*one-time Temporary Access Pass.*MFA/);
     expect(AGENT_TAP_BANNER).toMatch(/never approves.*Only after both approvals.*one-time Temporary Access Pass/);
+    // Privileged rows on: still never approves, never privileged administrator roles.
+    expect(whoDoesWhat(true, true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*privileged rows too, never Owner, Contributor, User Access Administrator/);
+    expect(whoDoesWhat(true, true, true).find(([who]) => who === 'ID team')?.[1]).toMatch(/privileged administrator roles/);
+    // A task the agent left can be handed back by the team (picked up or not); the agent re-checks everything.
+    const panel = readFileSync(join(__dirname, 'components', 'TeamTaskPanel.tsx'), 'utf8');
+    expect(panel).toContain('Hand back to the AI agent');
+    expect(panel).toContain("!task?.agent?.manual || task.state !== 'Open'");
     const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
     expect(form).toContain('FLOW_OVERVIEW.map');
-    expect(form).toContain('whoDoesWhat(agent, tap).map');
+    expect(form).toContain('whoDoesWhat(agent, tap, privileged).map');
   });
 
   it('offers resource and access level as dropdowns only, and a justification template that must be filled in', () => {
@@ -93,7 +100,7 @@ describe('router', () => {
   it('round-trips routes', () => {
     for (const r of [
       { page: 'requests' }, { page: 'new' }, { page: 'request', requestId: 'abc.r1' },
-      { page: 'edit', requestId: 'x' }, { page: 'queue' }, { page: 'sheet' }, { page: 'operator' },
+      { page: 'edit', requestId: 'x' }, { page: 'queue' }, { page: 'sheet' }, { page: 'contacts' }, { page: 'operator' },
     ] as const) {
       expect(parse(href(r))).toEqual(r);
     }

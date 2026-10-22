@@ -11,8 +11,11 @@ public sealed record WorkflowSettings
     public TimeSpan SecuritySla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan IdTeamSla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan RoleTeamSla { get; init; } = TimeSpan.FromHours(24);
-    /// <summary>Stage 6: how long to wait for the user's first sign-in before a reminder.</summary>
-    public TimeSpan VerifySla { get; init; } = TimeSpan.FromHours(72);
+    /// <summary>
+    /// Stage 7: how long the final access check may stay pending before the Operators are reminded. The worker checks within
+    /// minutes; the user's first sign-in is not waited for (22 Oct 2026).
+    /// </summary>
+    public TimeSpan VerifySla { get; init; } = TimeSpan.FromHours(2);
     /// <summary>"Shortest lifetime": a recorded TAP may not live longer than this.</summary>
     public int TapMaxLifetimeMinutes { get; init; } = 60;
     /// <summary>Auto-fix retries per idempotency key (request id + step).</summary>
@@ -38,6 +41,12 @@ public sealed record WorkflowSettings
     /// <summary>Lifetime of an agent-issued TAP in minutes (the joiner reads it from mail; within the tenant's TAP policy maximum).</summary>
     public int AgentTapLifetimeMinutes { get; init; } = 480;
     /// <summary>
+    /// Agent privileged rows (<c>AGENT_PRIVILEGED</c>; Gokul, 22 Oct 2026; off until approved): the agent also provisions and
+    /// assigns rows flagged privileged, after both approvals, with the same checks and allow-list. Never the roles in
+    /// <see cref="Domain.BuiltInRoles.NeverByAgent"/>. Off: privileged rows go to the teams.
+    /// </summary>
+    public bool AgentPrivileged { get; init; }
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>
@@ -53,6 +62,11 @@ public sealed record WorkflowSettings
     public bool MailEnabled { get; init; }
     /// <summary>Non-production only: every mail goes to this address instead of the real recipients (listed in the mail).</summary>
     public string? MailRedirectTo { get; init; }
+    /// <summary>
+    /// The mail sender's limits (<c>MAIL_MAX_PER_MINUTE</c> / <c>MAIL_MAX_PER_HOUR</c>). Default: the ACS Azure-managed domain,
+    /// 5 a minute and 10 an hour per subscription, not raisable (F70); a verified custom domain starts at 30 / 100.
+    /// </summary>
+    public MailLimits MailLimits { get; init; } = MailLimits.AzureManagedDomain;
 
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {
@@ -68,11 +82,27 @@ public sealed record WorkflowSettings
 /// Writes notifications to the outbox. One per idempotency key (request id + step) and kind; repeats are ignored.
 /// Everything is masked first. The worker's sender delivers them (pilot: kept in the app as "Recorded").
 /// </summary>
-public sealed class Notifier(DataStores stores, IClock clock, ILogger<Notifier> logger)
+public sealed class Notifier(DataStores stores, IClock clock, ILogger<Notifier> logger, IssueLog? issues = null, bool mailEnabled = false)
 {
+    /// <summary>
+    /// Plain mail addresses only (<see cref="MailAddresses.Normalize"/>: guest sign-in forms become the mailbox), each once.
+    /// Anything else is left out and listed as skipped: one bad entry must not stop the mail for everyone else.
+    /// </summary>
+    public static (List<string> To, List<string> Skipped) Addresses(IEnumerable<string?> to)
+    {
+        var valid = new List<string>();
+        var skipped = new List<string>();
+        foreach (var t in to.Where(t => !string.IsNullOrWhiteSpace(t)))
+        {
+            if (MailAddresses.Normalize(t) is { } a) { if (!valid.Contains(a)) valid.Add(a); }
+            else if (SecretMasker.Apply(t!.Trim())! is var shown && !skipped.Contains(shown)) skipped.Add(shown);
+        }
+        return (valid, skipped);
+    }
+
     public async Task EnqueueAsync(string projectId, string? requestId, string step, NotificationKind kind, IEnumerable<string?> to, string subject, string body, CancellationToken ct)
     {
-        var recipients = to.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t!.Trim().ToLowerInvariant()).Distinct().ToList();
+        var (recipients, skipped) = Addresses(to);
         var key = Ids.Key(requestId ?? projectId, step);
         var n = new Notification
         {
@@ -88,16 +118,22 @@ public sealed class Notifier(DataStores stores, IClock clock, ILogger<Notifier> 
             Status = NotificationStatus.Pending,
             // No address configured: keep it in the app so the trail still shows it.
             LastError = recipients.Count == 0 ? "NoRecipients" : null,
+            Skipped = skipped.Count == 0 ? null : skipped,
         };
         try
         {
             await stores.Notifications.CreateAsync(n, ct);
-            logger.LogInformation("notify {Kind} request={RequestId} step={Step} recipients={Count}", kind, requestId, step, recipients.Count);
+            logger.LogInformation("notify {Kind} request={RequestId} step={Step} recipients={Count} skipped={Skipped}", kind, requestId, step, recipients.Count, skipped.Count);
         }
         catch (DocumentConflictException)
         {
-            // Same request + step + kind already queued: idempotent.
+            return; // Same request + step + kind already queued: idempotent.
         }
+        // A request for a decision or an action that reaches nobody is a gap in the contact inventory: say so, never silently.
+        if (recipients.Count == 0 && mailEnabled && issues is not null && Notification.NeedsAction(kind))
+            await issues.RecordAsync(projectId, requestId, $"no-recipients:{kind}", IssueKind.NeedsDeveloper, IssueSeverity.High,
+                $"The {kind} mail reached nobody: no mail address for it. PMO: fill in the team on the Contact inventory page; the mail stays in the app.",
+                skipped.Count == 0 ? null : $"Not mail addresses: {string.Join("; ", skipped)}", ct);
     }
 
     /// <summary>
@@ -115,7 +151,7 @@ public sealed class Notifier(DataStores stores, IClock clock, ILogger<Notifier> 
             RequestId = requestId,
             Kind = kind,
             IdempotencyKey = key,
-            To = to.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t!.Trim().ToLowerInvariant()).Distinct().ToList(),
+            To = Addresses(to).To,
             Subject = SecretMasker.Apply(subject)!,
             Body = SecretMasker.Apply(maskedBody)!,
             CreatedAt = clock.UtcNow,
@@ -180,6 +216,21 @@ public sealed class IssueLog(DataStores stores, IClock clock, ILogger<IssueLog> 
             {
                 // Recorded concurrently; re-read and count it.
             }
+        }
+    }
+
+    /// <summary>Marks one open issue (request or project level, by step and kind) as resolved, e.g. once the mail queue is clear.</summary>
+    public async Task ResolveStepAsync(string projectId, string? requestId, string step, IssueKind kind, CancellationToken ct)
+    {
+        var v = await stores.Issues.GetAsync(projectId, Issue.MakeId(requestId, step, kind), ct);
+        if (v is null || v.Value.Status != IssueStatus.Open) return;
+        try
+        {
+            await stores.Issues.ReplaceAsync(v.Value with { Status = IssueStatus.Resolved, ResolvedAt = clock.UtcNow }, v.ETag, ct);
+        }
+        catch (ConcurrencyException)
+        {
+            // Updated meanwhile; the next pass looks again.
         }
     }
 

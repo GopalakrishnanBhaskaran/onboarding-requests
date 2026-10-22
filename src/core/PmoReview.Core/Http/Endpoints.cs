@@ -32,11 +32,13 @@ public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList
     public string? MailRedirectTo { get; init; }
     /// <summary>Agent TAP on and mail on: the agent mails a new joiner's sign-in details (wording in the app follows it).</summary>
     public bool AgentTap { get; init; }
+    /// <summary>Agent provisioning on for rows flagged privileged too (never privileged administrator roles).</summary>
+    public bool AgentPrivileged { get; init; }
 }
 
 public static class Endpoints
 {
-    public static ApiHost MapCore(this ApiHost host, DataStores stores, WorkflowService workflow, MappingSheetService sheet)
+    public static ApiHost MapCore(this ApiHost host, DataStores stores, WorkflowService workflow, MappingSheetService sheet, ContactInventoryService contacts)
     {
         host.Map("GET", "me", async c =>
         {
@@ -54,6 +56,7 @@ public static class Endpoints
             {
                 AppEnvironment = s.AppEnvironment, MailEnabled = s.MailEnabled, MailRedirectTo = s.MailRedirectTo,
                 AgentTap = s.AgentProvisioning && s.AgentTap && s.MailEnabled,
+                AgentPrivileged = s.AgentProvisioning && s.AgentPrivileged,
             });
         });
         host.Map("GET", "queue", async c => Ok(new { items = await workflow.MyActionsAsync(c.Caller, c.Ct) }));
@@ -75,6 +78,8 @@ public static class Endpoints
             Ok(await workflow.ApproveAsync(c.Caller, c["projectId"], c["requestId"], c.Body<ApprovalInput>(), c.Request.CorrelationId, c.Ct)));
         host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/pickup", async c =>
             Ok(await workflow.PickUpAsync(c.Caller, c["projectId"], c["requestId"], WorkflowService.TeamFromRoute(c["team"]), c.Ct)));
+        host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/handback", async c =>
+            Ok(await workflow.HandBackAsync(c.Caller, c["projectId"], c["requestId"], WorkflowService.TeamFromRoute(c["team"]), c.Ct)));
         host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/report", async c =>
         {
             var team = WorkflowService.TeamFromRoute(c["team"]);
@@ -99,6 +104,10 @@ public static class Endpoints
             Ok(await sheet.UpdateAsync(c.Caller, c["projectId"], c["rowId"], c.Body<MappingRowInput>(), c.IfMatch, c.Ct)));
         host.Map("POST", "projects/{projectId}/mapping-sheet/{rowId}/group", async c =>
             Ok(await sheet.UpdateGroupAsync(c.Caller, c["projectId"], c["rowId"], c.Body<MappingGroupInput>(), c.IfMatch, c.Ct)));
+        // Contact inventory: where team mails go (semicolon-separated per team on the page).
+        host.Map("GET", "projects/{projectId}/contacts", async c => Ok(await contacts.GetAsync(c.Caller, c["projectId"], c.Ct)));
+        host.Map("PUT", "projects/{projectId}/contacts", async c =>
+            Ok(await contacts.UpdateAsync(c.Caller, c["projectId"], c.Body<ContactInventoryInput>(), c.IfMatch, c.Ct)));
         host.Map("GET", "projects/{projectId}/response-document", async c =>
             Ok(new { items = (await sheet.ListResponseDocumentAsync(c.Caller, c["projectId"], c.Ct)).Select(ToItem) }));
 

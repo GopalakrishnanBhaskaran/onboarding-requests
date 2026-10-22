@@ -4,9 +4,14 @@ using PmoReview.Core.Domain;
 
 namespace PmoReview.Core.Workflow;
 
-/// <summary>Who gets what. Addresses come from the request (requester, Owner, user) and the project's contacts.</summary>
+/// <summary>
+/// Who gets what. Addresses come from the request (requester, Owner, user) and the project's contact inventory (Security,
+/// ID team, role assignment team, PMO, Operators; edited on the Contact inventory page). <see cref="Notifier"/> turns each
+/// into a plain mail address (guest sign-in forms included) and drops anything that is not one.
+/// </summary>
 public static class Recipients
 {
+    /// <summary>The person who submitted the request (asked for the account): their sign-in name.</summary>
     public static IEnumerable<string?> Requester(AccessRequest r) => [r.CreatedByName];
     public static IEnumerable<string?> Owner(AccessRequest r) => [r.Owner];
     /// <summary>The joiner: the enterprise mail address given as Enterprise ID (the new tenant account has no mailbox yet).</summary>
@@ -16,6 +21,13 @@ public static class Recipients
     public static IEnumerable<string?> RoleTeam(Project? p) => p?.Contacts.RoleTeam ?? [];
     public static IEnumerable<string?> Pmo(Project? p) => p?.Contacts.Pmo ?? [];
     public static IEnumerable<string?> Operators(Project? p) => p?.Contacts.Operators ?? [];
+
+    /// <summary>
+    /// The one completion mail: the requester first, then Security, PMO, the ID team and the role assignment team (one mail
+    /// instead of three: the Azure-managed mail domain sends at most 10 mails an hour, F70). Never the Owner.
+    /// </summary>
+    public static IEnumerable<string?> Completion(AccessRequest r, Project? p) =>
+        Requester(r).Concat(Security(p)).Concat(Pmo(p)).Concat(IdTeam(p)).Concat(RoleTeam(p));
 
     public static IEnumerable<string?> For(WaitingOn w, AccessRequest r, Project? p) => w switch
     {
@@ -47,11 +59,14 @@ public static class Messages
         "The named Owner approves the business need. Security approves risk and access level. " +
         "Only after both approvals the AI agent creates the user ID, group and membership" +
         (s.AgentRoleAssignment ? " and assigns the approved Azure role where the mapping sheet allows it" : "") + ". " +
+        (s.AgentPrivileged ? "This includes rows flagged privileged, except privileged administrator roles (Owner, Contributor, User Access Administrator and the like). " : "") +
         (s.AgentTap && s.MailEnabled
             ? "For a new account the agent also mails the joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps. " +
-              "The ID team handles what the agent leaves to it (guests, privileged access, exceptions). "
-            : "The ID team issues the Temporary Access Pass and handles what the agent leaves to it (guests, privileged access, exceptions). ") +
+              $"The ID team handles what the agent leaves to it ({Left(s)}). "
+            : $"The ID team issues the Temporary Access Pass and handles what the agent leaves to it ({Left(s)}). ") +
         $"The role assignment team assigns the {(s.AgentRoleAssignment ? "other " : "")}roles. PMO owns the mapping sheet and is informed only.";
+
+    private static string Left(WorkflowSettings s) => s.AgentPrivileged ? "guests, privileged administrator roles, exceptions" : "guests, privileged access, exceptions";
 
     public static string Short(AccessRequest r) => r.Id.Length > 8 ? r.Id[..8] : r.Id;
 
@@ -139,12 +154,6 @@ public static class Messages
         $"After the Owner and Security approvals, the AI agent provisioned {What(r)}.\n\n{done}\n{next}\n\n" +
         $"Approved access:\n{scope.Summary}\n\n{Link(s, r)}");
 
-    /// <summary>After the agent assigned the approved Azure roles to the group (v2.1).</summary>
-    public static (string, string) RolesAssigned(AccessRequest r, ReviewedScope scope, IReadOnlyList<AzureRoleGrant> grants, WorkflowSettings s) => (
-        $"AI agent assigned {grants.Count} Azure role(s): request {Short(r)}",
-        $"After the Owner and Security approvals, the AI agent assigned these Azure roles to group {scope.EntraGroup} for {What(r)}:\n" +
-        $"{Bullets(grants.Select(g => $"{g.RoleName} at {g.Scope}"))}\n\nThe agent verifies the assignment next. {Link(s, r)}");
-
     public static (string, string) TeamTask(AccessRequest r, TeamTask task, WorkflowSettings s) => (
         $"{Team(task.Team)} task: request {Short(r)}",
         $"{task.Instructions}\n\nPick it up and record completion in the app: {Link(s, r)}");
@@ -152,11 +161,6 @@ public static class Messages
     public static (string, string) TaskReturned(AccessRequest r, TeamTask task, WorkflowSettings s) => (
         $"Returned to {Team(task.Team)}: request {Short(r)}",
         $"The AI verification of your report for {What(r)} found differences:\n{task.LastDifference}\n\nFix them (or update the mapping sheet, which triggers a new review) and record completion again: {Link(s, r)}");
-
-    public static (string, string) TapCleanup(AccessRequest r, WorkflowSettings s) => (
-        $"Delete the Temporary Access Pass: request {Short(r)}",
-        $"{Who(r)} has signed in and registered a permanent method, but a Temporary Access Pass is still on the account. " +
-        $"Delete it in Entra (the agent never deletes anything; the user can also delete it on Security info). {Link(s, r)}");
 
     /// <summary>
     /// Agent TAP: the one mail with the joiner's sign-in name, initial password and one-time TAP, and how to set up MFA.
@@ -222,17 +226,34 @@ public static class Messages
             $"Request {Short(r)} · requested by {r.CreatedByName} · approved by the Owner and Security.");
     }
 
-    public static (string, string) Completed(AccessRequest r, ReviewedScope scope, string timings) => (
-        $"Completed: request {Short(r)}",
-        $"{What(r)} — done and verified (sign-in, permanent method, TAP removed).\nGroup {scope.EntraGroup}, role {scope.Role}.\n\nTime per stage:\n{timings}");
-
-    public static (string, string) PmoInformed(AccessRequest r, ReviewedScope scope) => (
-        $"For information: request {Short(r)} completed",
-        $"{What(r)} completed using mapping row {scope.MappingRowId} ({scope.EntraGroup} / {scope.Role}). No action needed.");
-
-    public static (string, string) Closure(AccessRequest r) => (
-        $"Closed: request {Short(r)}",
-        $"{What(r)} is verified and closed. Thank you.");
+    /// <summary>
+    /// The one completion mail (requester, Security, PMO, ID team, role assignment team): what was approved, who did each
+    /// step, the verified access and the time per stage. No action needed from anyone.
+    /// </summary>
+    public static (string, string) Completed(AccessRequest r, ReviewedScope scope, WorkflowState flow, string timings, WorkflowSettings s)
+    {
+        var grants = scope.Grants();
+        var roles = grants.Count == 0 ? $"Role: {scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
+            : $"Azure roles:\n{Bullets(grants.Select(g => $"{g.RoleName} on {g.ResourceName ?? g.Scope}"))}";
+        var owner = flow.CurrentApproval(ApprovalStage.Owner);
+        var security = flow.CurrentApproval(ApprovalStage.Security);
+        string By(TeamTask? t, string team) => t?.ReportedBy is null ? team : t.ReportedBy == WorkflowAgent.AgentName ? "the AI agent" : $"{team} ({t.ReportedBy})";
+        // The agent created the account even when the ID team then issued the pass (agent TAP off, or left to the team).
+        string IdBy(TeamTask? t) => t?.Agent is not { Completed: true } a ? By(t, "ID team")
+            : "the AI agent" + (a.SignInDetailsSentAt is not null ? "; sign-in details mailed to the joiner"
+                : t.ReportedBy is { } by && by != WorkflowAgent.AgentName ? $"; Temporary Access Pass by the ID team ({by})" : "");
+        return (
+            $"Completed: request {Short(r)} — {r.DomainId}",
+            $"Request {Short(r)} for {What(r)} is complete. The AI agent verified the account, the group membership and the roles.\n\n" +
+            $"Sign-in name: {r.DomainId}\nGroup: {scope.EntraGroup}\n{roles}\n\n" +
+            $"Requested by: {r.CreatedByName}\n" +
+            $"Approved by: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)})\n" +
+            $"User, group and membership: {IdBy(flow.IdTeamTask)}\n" +
+            $"Roles: {By(flow.RoleTeamTask, "role assignment team")}\n" +
+            $"Mapping row: {scope.MappingRowId}\n\n" +
+            $"The joiner was mailed at {Services.DomainIds.MailOf(r.EnterpriseId) ?? r.EnterpriseId} that the access is ready. No action needed.\n\n" +
+            $"Time per stage:\n{timings}\n\n{Link(s, r)}");
+    }
 
     public static (string, string) SecurityAlert(AccessRequest r, string who, string userId, ApprovalStage stage, DateTimeOffset at) => (
         $"Security alert: unauthorized approval attempt on request {Short(r)}",

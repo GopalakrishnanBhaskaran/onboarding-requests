@@ -86,7 +86,9 @@ var host = new HostBuilder()
                 : null;
             return new WorkflowWorker(parts.Agent,
                 new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>(),
-                    redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment),
+                    redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment,
+                    // Within the sender's limits (F70); with the agent TAP, 2 mails an hour stay free for the sign-in details.
+                    limits: settings.Workflow.MailLimits, reserve: settings.Workflow.AgentTap ? 2 : 0),
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant));
         });

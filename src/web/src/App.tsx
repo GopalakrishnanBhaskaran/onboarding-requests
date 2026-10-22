@@ -12,6 +12,7 @@ import { RequestFormPage } from './pages/RequestFormPage';
 import { RequestDetailPage } from './pages/RequestDetailPage';
 import { QueuePage } from './pages/QueuePage';
 import { MappingSheetPage } from './pages/MappingSheetPage';
+import { ContactsPage } from './pages/ContactsPage';
 import { OperatorPage } from './pages/OperatorPage';
 import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
@@ -134,6 +135,7 @@ function Shell() {
           <Link href={href({ page: 'requests' })}>Requests</Link>
           <Link href={href({ page: 'queue' })}>My actions</Link>
           <Link href={href({ page: 'sheet' })}>Mapping sheet</Link>
+          <Link href={href({ page: 'contacts' })}>Contact inventory</Link>
           {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (
             <Link href={href({ page: 'operator' })}>Issues and reports</Link>
           )}
@@ -146,30 +148,33 @@ function Shell() {
         {me && me.projects.length === 0 && (
           <MessageBar intent="warning">
             <MessageBarBody>
-              You are signed in but not registered for any pilot project. Ask the pilot owner to register this user id: <code>{me.userId}</code>
+              You are signed in as <b>{me.displayName || me.userId}</b> but not registered for any project. Ask the pilot owner to register your
+              sign-in name{me.displayName ? <> <code>{me.displayName}</code></> : ''} (or this user id: <code>{me.userId}</code>).
             </MessageBarBody>
           </MessageBar>
         )}
-        {me && project && <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} />}
+        {me && project && <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} privileged={!!me.agentPrivileged} />}
       </main>
     </div>
   );
 }
 
-function Page({ route, project, projects, onOpenProject, agent, tap }: {
-  route: Route; project: ProjectSummary; projects: ProjectSummary[]; onOpenProject: (id: string) => void; agent: boolean; tap: boolean;
+function Page({ route, project, projects, onOpenProject, agent, tap, privileged }: {
+  route: Route; project: ProjectSummary; projects: ProjectSummary[]; onOpenProject: (id: string) => void; agent: boolean; tap: boolean; privileged: boolean;
 }) {
   switch (route.page) {
     case 'new':
-      return <RequestFormPage key="new" project={project} projects={projects} onProject={onOpenProject} agent={agent} tap={tap} />;
+      return <RequestFormPage key="new" project={project} projects={projects} onProject={onOpenProject} agent={agent} tap={tap} privileged={privileged} />;
     case 'edit':
-      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} />;
+      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} privileged={privileged} />;
     case 'request':
       return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
     case 'queue':
       return <QueuePage onOpen={onOpenProject} />;
     case 'sheet':
       return <MappingSheetPage key={project.projectId} project={project} />;
+    case 'contacts':
+      return <ContactsPage key={project.projectId} project={project} />;
     case 'operator':
       return <OperatorPage project={project} />;
     default:
