@@ -60,6 +60,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Agent provisioning (v2.1) | `tools/deploy_free.sh provisioning <subscriptionId> on <rgScope> [roleIds]` (dry run) → `… --approved-by "<name> <date>"`; `… off` to switch off |
 | Remove retired Graph write roles | `tools/deploy_free.sh revoke-graph-writes <subscriptionId>` (dry run) → `--approved-by "<name> <date>"` |
 | Flow diagnosis (read-only) | `bash tools/workflow_diag.sh <subscriptionId>` |
+| Feature checklist (read-only, PASS/WAIT/FAIL + next step) | `bash tools/verify_features.sh <subscriptionId> \| tee .local/verify.txt` · logic test `python3 tools/verify_features.py --self-test` |
 | Environment settings (no resource change) | `tools/deploy_free.sh environment <subscriptionId> test --redirect <mail>` |
 | Mail (approval) | `tools/deploy_free.sh email <subscriptionId> [--redirect <mail>]` (dry run) → `… --approved-by "<name> <date>"` |
 | Import a tenant's workbooks | `python3 tools/import_workbook.py --tenant PEST --project PEST --classification <xlsx> --response <xlsx> [--resolve] [--apply]` · test `python3 tools/test_import_workbook.py` |

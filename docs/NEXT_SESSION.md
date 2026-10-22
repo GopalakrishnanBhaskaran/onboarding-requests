@@ -61,7 +61,8 @@ tools/deploy_free.sh params $SUB
    - Expect: review Pass → Owner → Security → the agent creates `sample.joiner6@<tenant>`, group `sample-azr-pes-rg-data-dev-ph-weu-support-reader` and the membership (mail "AI agent provisioned…").
    - Then TAP by the ID team → Reader assigned on `rg-pmo-sample-access` (mail "AI agent assigned 1 Azure role") → *access ready* mail → sign-in → Completed.
    - Optional: a Prod request is returned (red row).
-8. Log each step in `DEPLOYMENT_LOG.md` (no TAP, no user ids), then commit and push.
+8. **Verify everything:** `bash tools/verify_features.sh $SUB | tee .local/verify.txt` — one line per feature (PASS / WAIT / FAIL) with the next step; all PASS = every feature verified live. Paste `.local/verify.txt` to Claude.
+9. Log each step in `DEPLOYMENT_LOG.md` (no TAP, no user ids), then commit and push.
 
 ## Decisions / checks still open (each Azure change needs approval)
 - Mail resources (`deploy_free.sh email`).
