@@ -4,16 +4,21 @@ Run each prompt in its **own session**, from the repo root on the imported branc
 
 ## How to spend tokens well in enterprise Claude Code
 
-| Setting | Use |
-|---|---|
-| Model | The most capable model your org allows (Opus class) for prompt A (security-sensitive infra and auth). A smaller/faster model (Sonnet class) for prompts B and C (reading output, runbook steps) |
-| Effort | `high` by default. `xhigh`/max only for prompt A, tasks A2–A3 (auth + identity) |
-| Mode | Start prompt A in **plan mode** (Shift+Tab). Approve the plan, then let it run |
-| Context | One session per prompt. Run `/compact` at about 60–70 % context. Paste only failing lines, not whole logs |
-| Limits | Your org admin sets the caps. Check `/status` (and `/cost` if enabled) at the start. If you hit a limit mid-task, the commit-per-task rule below lets a new session resume |
-| Permissions | Give it file edits plus `dotnet`, `npm`, `python3`, `bicep`, `git`. **Do not** give it Azure write access: humans run the deploy and admin steps |
+- **Model:**
+  - prompt A (security-sensitive infra and sign-in): the most capable model your org allows (Opus class);
+  - prompts B and C (reading output, runbook steps): a smaller, faster model (Sonnet class).
+- **Effort:** `high` by default. Use `xhigh` or max only for prompt A, tasks A2–A3 (sign-in and identity).
+- **Mode:** start prompt A in plan mode (Shift+Tab), approve the plan, then let it run.
+- **Context:**
+  - one session per prompt;
+  - run `/compact` at about 60–70 % context;
+  - paste only the failing lines, not whole logs.
+- **Limits:**
+  - your org admin sets the caps; check `/status` (and `/cost` if enabled) at the start;
+  - if you hit a limit mid-task, prompt A's one-commit-per-task rule lets a new session resume.
+- **Permissions:** give it file edits plus `dotnet`, `npm`, `python3`, `bicep`, `git`. Do not give it Azure write access: people run the deploy and admin steps.
 
-Rough size: prompt A is the big one (a few hours of agent work). Prompts B and C are short, interactive sessions.
+Size: prompt A is the big one (a few hours of agent work). Prompts B and C are short, interactive sessions.
 
 ---
 
@@ -21,8 +26,8 @@ Rough size: prompt A is the big one (a few hours of agent work). Prompts B and C
 
 ```
 You are preparing the PMO onboarding flow v2.2 for our enterprise Azure environment.
-Read first, in this order: CLAUDE.md, docs/ENTERPRISE_HANDOFF.md (sections 2-6), SCOPE.md,
-docs/PROMOTION.md, docs/VERIFIED_FACTS.md (F2, F3, F10, F21, F61, F63, F64).
+Read first, in this order: CLAUDE.md, docs/ENTERPRISE_HANDOFF.md (sections 2-6), docs/NEXT_SESSION.md,
+docs/GO_LIVE.md, SCOPE.md, docs/PROMOTION.md, docs/VERIFIED_FACTS.md (F2, F3, F10, F21, F61, F63, F64, F70).
 
 Constraints:
 - No Azure writes. Do not run az commands that change anything. You write code, Bicep, pipelines and
@@ -36,7 +41,7 @@ Constraints:
 Target: one stack per tenant (PEST, Vestacy) and per environment (test, prod), each in its own tenant's
 subscription. The worker's AGENT_TENANT_ID = that tenant. No cross-tenant provisioning.
 
-Tasks (close gaps G1-G8 in docs/ENTERPRISE_HANDOFF.md):
+Tasks (close gaps G1-G9 in docs/ENTERPRISE_HANDOFF.md):
 A1 Parameterise tenant/env/RG/name prefix in infra/ and in all tools/*.sh (no hardcoded
    rg-pmo-review-pilot). One params file per tenant+env under infra/params/ (placeholders only).
    Rename deploy_free.sh -> deploy.sh (keep the same subcommands and approval gates).
@@ -49,7 +54,11 @@ A3 API as a BYO Function App (Flex, .NET 10 isolated, system MI) linked to SWA. 
 A4 Cosmos without the free-tier assumption (serverless or provisioned with an RU cap, a parameter).
    Remove the zero-cost policy/budget defaults; budget amount and email become parameters.
 A5 Mail: ACS with a custom verified domain (parameter), DNS records listed in the deploy output;
+   MAIL_MAX_PER_MINUTE / MAIL_MAX_PER_HOUR per environment within the verified domain's limit (F70);
    keep the Graph sendMail option. Prod refuses NOTIFY_REDIRECT_TO (already coded; keep the test).
+   Prod contacts come from the Contact inventory page, never --test-contact.
+A5b Least privilege: drop AuditLog.Read.All from the enterprise Graph read list (no sign-in check
+   since 22 Oct); privileged rows stay off by default (`privileged ... on` only after Security decides).
 A6 Org policy alignment: tags, allowed regions, public network access, diagnostic settings to Log
    Analytics, storage shared-key off, minimum TLS. I will paste our policy list when you ask.
 A7 App Insights + Log Analytics (daily cap, minimum retention); no request text in logs.
@@ -78,7 +87,7 @@ At the end, write the DEPLOYMENT_LOG.md rows (no TAP, password or user ids) and 
 ## Prompt C — UAT end-to-end check
 
 ```
-Read docs/ENTERPRISE_HANDOFF.md step 13 and workflows/09-onboarding-flow-v2.md. I paste
+Read docs/ENTERPRISE_HANDOFF.md step 15 and workflows/09-onboarding-flow-v2.md. I paste
 verify_features.sh and workflow_diag.sh output for <TENANT>-<ENV>. For each WAIT or FAIL, give the
 cause, the next step and who owns it. When all rows PASS and a request shows Completed, write the UAT
 sign-off summary (facts only, with evidence).
