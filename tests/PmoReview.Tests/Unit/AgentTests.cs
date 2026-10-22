@@ -45,6 +45,40 @@ public class AgentTests
     }
 
     [Fact]
+    public async Task An_approval_past_sla_issue_is_closed_by_the_decision_and_none_stays_open_after_completion()
+    {
+        var app = TestApp.Create();
+        var id = await app.To(RequestStatus.AwaitingOwner);
+        app.Clock.Advance(TimeSpan.FromHours(49)); // past 2 x SLA: reminder, then escalation (High)
+        await app.RunWorker();
+        await app.RunWorker();
+        Assert.Contains(await app.Issues(id), i => i is { Kind: IssueKind.ApprovalSlaBreached, Status: IssueStatus.Open, Severity: IssueSeverity.High });
+
+        Assert.Equal(200, (await app.Approve(id, TestApp.Olivia)).Status);
+        Assert.DoesNotContain(await app.Issues(id), i => i is { Kind: IssueKind.ApprovalSlaBreached, Status: IssueStatus.Open });
+
+        // A breach left open by earlier code (e.g. a live request) is closed when the request completes.
+        app.Clock.Advance(TimeSpan.FromHours(49));
+        await app.RunWorker();
+        await app.RunWorker();
+        var open = (await app.Issues(id)).Single(i => i is { Kind: IssueKind.ApprovalSlaBreached, Status: IssueStatus.Open });
+        var v = (await app.Stores.Issues.GetAsync(TestApp.Alpha, open.Id))!;
+        Assert.Equal(200, (await app.Approve(id, TestApp.Sam)).Status);
+        await app.Stores.Issues.ReplaceAsync(v.Value, (await app.Stores.Issues.GetAsync(TestApp.Alpha, open.Id))!.ETag); // reopen it, as old code left it
+        app.Directory.AddUser(TestApp.DefaultUser);
+        app.Directory.AddMember(TestApp.DefaultGroup, TestApp.DefaultUser);
+        Assert.Equal(200, (await app.ReportIdTeam(id, app.IdReport())).Status);
+        await app.RunWorker();
+        app.Roles.Assign(app.Directory.GroupId(TestApp.DefaultGroup), TestApp.DefaultRole, TestApp.DefaultScope);
+        Assert.Equal(200, (await app.ReportRoleTeam(id, TestApp.RoleReport())).Status);
+        await app.RunWorker();
+        app.UserCompletesFirstSignIn();
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.Completed, await app.Status(id));
+        Assert.DoesNotContain(await app.Issues(id), i => i.Status == IssueStatus.Open && i.Kind is IssueKind.ApprovalSlaBreached or IssueKind.TaskSlaBreached);
+    }
+
+    [Fact]
     public async Task Security_escalation_goes_to_the_configured_security_manager()
     {
         var app = TestApp.Create();

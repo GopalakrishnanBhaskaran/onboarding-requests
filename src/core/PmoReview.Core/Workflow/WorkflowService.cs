@@ -204,6 +204,8 @@ public sealed partial class WorkflowService(
 
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
         await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, ct);
+        // The decision ends the wait: an "approval past SLA" issue for this request is closed (it stays in the daily counts).
+        effects.Add(c => issues.ResolveAsync(projectId, requestId, [IssueKind.ApprovalSlaBreached], c));
         foreach (var e in effects) await e(ct);
         await agent.AdvanceAsync(projectId, requestId, cid, ct);
         return await ViewAsync(caller, projectId, requestId, ct);

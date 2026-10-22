@@ -639,7 +639,9 @@ public sealed partial class WorkflowAgent(
             effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.CompletionSummary, Recipients.Owner(r).Concat(Recipients.Security(project)), s1, b1, c));
             effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.PmoInformed, Recipients.Pmo(project), s2, b2, c));
             effects.Add(c => notifier.EnqueueAsync(r.ProjectId, r.Id, "completed", NotificationKind.Closure, Recipients.IdTeam(project).Concat(Recipients.RoleTeam(project)), s3, b3, c));
-            effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.TapNotDeleted, IssueKind.VerificationMismatch], c));
+            // Done: nothing is pending any more, so no wait or mismatch issue of this request stays open.
+            effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id,
+                [IssueKind.TapNotDeleted, IssueKind.VerificationMismatch, IssueKind.ApprovalSlaBreached, IssueKind.TaskSlaBreached], c));
             return new Step(r with { Flow = done }, effects);
         }
 
