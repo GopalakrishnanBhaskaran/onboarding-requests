@@ -1,121 +1,332 @@
-# Architecture — PMO onboarding flow (v2)
+# Architecture — PMO onboarding flow (v2 with the 21–22 Oct changes, go-live release)
 
-v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves**. v2.1 (optional, approval-gated): after both approvals the worker creates the user, group and membership and assigns allow-listed Azure roles (`WorkflowAgent.Provisioning.cs`, `GraphDirectoryWriter`, `ArmRoleAssignmentWriter`); the TAP stays with the ID team unless the agent TAP is on (22 Oct 2026, approval-gated): then, for an account it has just created, the worker mails the joiner one one-time TAP, the initial password and the MFA steps once (`IDirectMail`), keeping only a masked copy. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
+Updated 23 Oct 2026 for code at `fd5491c`.
+Scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md` (F-numbers below).
 
-## Components
+The AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It **never approves**.
+People decide: the named Owner, then Security.
+After both approvals, the agent (deterministic code, not the AI model) can create the account and group and assign allow-listed roles, if that is switched on. Otherwise the ID team and the role assignment team do it and record what they did.
+
+
+## 1. What changed, by date
+
+- **17 Oct (v2):** the flow is AI review → Owner → Security → ID team → role team → AI verification.
+- **17 Oct (v2.1, approval-gated):** the agent creates the user, the group and the membership, and assigns allow-listed Azure roles. A refused write is retried for 24 h while a new permission reaches the worker.
+- **21 Oct:**
+  - tenant separation (one project = one Entra tenant);
+  - environments (Dev / Test / PreProd / Prod);
+  - workbook import;
+  - several roles per group;
+  - mail through Azure Communication Services;
+  - an approval page.
+- **22 Oct:**
+  - the agent TAP: one one-time pass, mailed once with the initial password and the MFA steps;
+  - a dropdown-only request form;
+  - the real PEST and Vestacy data, with the SAMPLE data removed;
+  - people registered by sign-in name;
+  - the role allow-list built from the mapping sheet;
+  - privileged rows handled by the agent (approval-gated);
+  - a team can hand a task back to the agent.
+- **22 Oct (go-live release):**
+  - the completion mail goes to the requester, not the Owner;
+  - verification no longer waits for the joiner's sign-in;
+  - a Contact inventory page;
+  - mail goes out within the sender's limit, most urgent first.
+
+
+## 2. Components
 
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI["SPA (React + Vite + Fluent UI)<br/>intake · status · decision panel · team tasks<br/>mapping sheet · issues and reports"]
+    UI["Website (React + Vite + Fluent UI v9)<br/>request form · status · approvals · team tasks<br/>mapping sheet · contact inventory · issues and reports"]
   end
-  subgraph SWA["Azure Static Web Apps — Free"]
-    AUTH["Built-in auth (Entra)"]
-    API["Managed Functions (.NET 9 isolated, HTTP)<br/>ApiHost → Endpoints → WorkflowService<br/>agent step runs inline after each action"]
+  subgraph SWA["Azure Static Web Apps (Free)"]
+    AUTH["Built-in sign-in (Entra)"]
+    API["API: managed Functions (.NET 9 isolated, HTTP)<br/>ApiHost → Endpoints → services<br/>agent step runs inline after each action"]
   end
-  subgraph W["AI agent worker — Flex Consumption, managed identity"]
-    T["Timer every 5 min (WORKFLOW_SCHEDULE)<br/>WorkflowAgent.AdvanceAsync for open requests<br/>outbox · daily summary"]
+  subgraph W["AI agent worker (Flex Consumption, managed identity)"]
+    T["Timer every 5 min<br/>WorkflowAgent for open requests<br/>mail queue · SLA · daily summary"]
   end
-  COSMOS[("Cosmos DB free tier<br/>projects · requests · reviewRuns · userAccess<br/>mappingSheet · responseDocument · notifications · issues")]
-  GRAPH["Microsoft Graph (READ only)<br/>users · groups · checkMemberGroups<br/>authentication/methods · auditLogs/signIns · manager"]
-  ARM["ARM roleAssignments (READ, optional)"]
-  ADO["Azure DevOps work item (optional)"]
-  MAIL["Graph sendMail (optional)"]
+  COSMOS[("Cosmos DB for NoSQL (free tier)<br/>projects (+ contacts) · requests · reviewRuns · userAccess<br/>mappingSheet · responseDocument · notifications · issues")]
+  GRAPH["Microsoft Graph<br/>read: users · groups · checkMemberGroups · auth methods · manager<br/>write (gated): create user · create group · add member · create TAP"]
+  ARM["Azure RBAC<br/>role assignment PUT (gated, constrained)"]
+  ACS["Azure Communication Services Email"]
+  ADO["Azure DevOps work item (off)"]
   AOAI["Azure OpenAI (coded, off)"]
 
   UI --> AUTH --> API --> COSMOS
   T --> COSMOS
   T --> GRAPH
-  T -.-> ARM
+  T --> ARM
+  T --> ACS
   T -.-> ADO
-  T -.-> MAIL
-  API -.-> AOAI
   T -.-> AOAI
+  API -.-> AOAI
   classDef off stroke-dasharray: 5 5,opacity:0.7
-  class ARM,ADO,MAIL,AOAI off
+  class ADO,AOAI off
 ```
 
-The SWA managed API has **no managed identity** (F2), so it cannot read Entra. The review it runs inline marks the Entra cross-check *Pending*; the worker completes it. A request is never sent for approval while any check is Pending (outcome precedence: Fail > Pending > Pass). Locally (`PILOT_LOCAL_DEV` + `ALLOW_UNVERIFIED_ENTRA`) the Entra checks show "not checked (local development)".
+### Component catalogue
 
-## Request lifecycle
+**Website (SPA)**
+- Code: `src/web` (React, Vite, TypeScript, Fluent UI v9).
+- Pages:
+  - request form: tenant, environment, resource and access level come from the mapping sheet only; the Enterprise ID is a mail address; a justification template;
+  - request list and status;
+  - Owner and Security approval panel;
+  - ID team and role team tasks, with pick-up, report and hand-back;
+  - mapping sheet (PMO edits rows);
+  - response document;
+  - contact inventory;
+  - issues and reports.
+- The header shows the environment (PROD, or a yellow test bar).
+
+**Sign-in**
+- Static Web Apps built-in, using the pre-configured Entra provider.
+- Any Microsoft account can sign in (F10). It sees nothing unless `userAccess` gives it a role (deny by default).
+- `/logout` goes to a public `signed-out.html`.
+
+**API**
+- Code: `src/api` runs on Static Web Apps managed Functions (.NET 9 isolated, HTTP only). The logic is in `src/core`: `ApiHost`, `Endpoints`, `RequestService`, `WorkflowService`, `MappingSheetService`, `ContactInventoryService`.
+- No managed identity (F2) and a 45-second limit (F3). It reaches Cosmos with a connection string held in the Static Web Apps app settings.
+- It runs the agent step inline after each action, so people see the next stage at once.
+
+**AI agent worker**
+- Code: `src/worker`, a timer every 5 minutes on Flex Consumption, with a system-assigned managed identity.
+- It runs `WorkflowAgent.AdvanceAsync` for every open request:
+  - Entra checks;
+  - provisioning and role assignment;
+  - verification;
+  - SLA reminders and escalation;
+  - the mail queue and the daily summary.
+
+**Workflow core**
+- Code: `src/core/Workflow`.
+- `WorkflowState` holds the stages, kept in the request document.
+- `WorkflowAgent` computes one step at a time. Provisioning is in `WorkflowAgent.Provisioning.cs`.
+- `Verifier` checks the ID team and role team reports and does the final check.
+- `Notifier` handles the outbox and issues. `Reports` builds the daily and developer reports.
+
+**Review**
+- Code: `src/core/Review`.
+- `ReviewEngine` and `ReviewChecks` are the deterministic checklist against the mapping sheet and the response document.
+- `InjectionDetector` turns request text that claims "already approved", or carries instructions, into findings.
+- `ResultAssembler` and `ResultSchema` validate the result against `schema/review-result.v2.json`.
+
+**Data**
+- Cosmos DB for NoSQL, free tier, shared 1,000 RU/s, database `pmoreview`.
+- Containers: `projects` (with the Contact inventory, versioned), `requests`, `reviewRuns`, `userAccess`, `mappingSheet`, `responseDocument`, `notifications`, `issues`.
+- Code: `CosmosDocumentStore`, with ETag concurrency on every update.
+
+**Directory (Entra)**
+- `GraphDirectoryReader` does the reads.
+- `GraphDirectoryWriter` makes the only Graph writes: POST user, POST group, POST member, POST TAP.
+
+**Azure roles**
+- `ArmRoleAssignmentWriter` makes one PUT per role assignment.
+- `ArmRoleAssignmentReader` (optional, off) reads existing assignments.
+
+**Mail**
+- `AcsEmailSender`: Azure Communication Services Email, managed identity, Azure-managed domain, one mail per 50 recipients.
+- `GraphMailSender`: optional, off.
+- `NotificationDispatcher`: the queue within `MAIL_MAX_PER_MINUTE` / `MAIL_MAX_PER_HOUR` (5 / 10, F70).
+- `IDirectMail`: sends the agent TAP mail.
+
+**Reviewer models**
+- `RuleOnlyReviewModel` is active: deterministic, no AI model.
+- `AzureOpenAIReviewModel` and `AzureOpenAIAssistant` are coded and off (section 3).
+
+**Audit**
+- The trail is kept in the request, and the issues list.
+- `AzureDevOpsWorkItemTracker` (optional, off).
+
+**Infrastructure**
+- `infra/main.bicep` with modules `pilot`, `worker` and `email`.
+- An Azure Policy limits the allowed resource types.
+- A Cost Management budget.
+
+**Tools**
+- `tools/deploy_free.sh`: whatif / apply / app / worker / grant-graph / provisioning / tap / privileged / environment / email.
+- `import_workbook.py`, `register_user.py`, `sheet_roles.py`.
+- `verify_features.sh`, `workflow_diag.sh`, `cost_check.sh`, `run_acceptance.sh`, `mac_setup.sh`.
+
+
+## 3. Use of LLMs
+
+### When requests run: no LLM is active today
+
+The "AI agent" is deterministic C# (`WorkflowAgent`). The name describes its job (review, route, verify, report), not a language model.
+The active reviewer is `RuleOnlyReviewModel`, a fixed checklist. No request text goes to any model.
+
+### Coded and switched off: Azure OpenAI (each needs approval, docs/PROMOTION.md)
+
+**AI review opinion** (`AzureOpenAIReviewModel`, stage 2)
+- It adds concerns to the checklist result.
+- The checklist still decides PASS / FAIL. The model can add a failed AI check, which returns the request. It can never remove a failed check, approve, create or assign.
+- Settings: temperature 0, structured output with a strict JSON schema (`onboarding_review`), prompt version `aoai-review-v2`. Each run records the provider, the deployment and the prompt version.
+- Limits (`ReviewLimits`):
+  - 30-second time budget;
+  - 24,000 input characters;
+  - 1,500 output tokens;
+  - at most 3 retries on HTTP 429, honouring `retry-after-ms`.
+
+**AI analysis in reports** (`AzureOpenAIAssistant`, worker only, `AI_REPORTS=true`)
+- Its one call is `AnalyseAsync(purpose, facts)`.
+- It adds a written analysis to the daily summary and to the developer report.
+- It never changes a request.
+
+**Connection** (`AzureOpenAIChat`)
+- Managed identity with the role Cognitive Services OpenAI User. No keys.
+- Default endpoint: the GA `v1` endpoint (`/openai/v1/chat/completions`) with audience `https://ai.azure.com/.default` (F53).
+
+**Switch**
+- Set `REVIEW_MODEL_PROVIDER=AzureOpenAI` and `ALLOW_PAID_SERVICES=true` (startup refuses a paid provider without it).
+- The review runs in the API, and the API has no managed identity. So the review needs the API moved to its own Function App first (PROMOTION swap 2).
+
+**Guardrails around any model**
+- `SecretMasker` masks secrets and TAPs (`******`) before a prompt.
+- Request text is untrusted (`InjectionDetector`).
+- The host validates the model output against the schema and recomputes the outcome.
+- The model never decides and never writes.
+- A data owner must sign off before request text is sent to the model.
+
+### During development: Claude Code (Anthropic)
+
+- The code, tests and docs were written and tested with Claude Code in cloud sessions.
+- Claude Code is not part of the running system. The app makes no Anthropic or Claude call.
+- Rules for those sessions:
+  - never paste a TAP, password, connection string or personal user id;
+  - real workbooks stay out of git;
+  - Azure changes are run by people, after approval.
+- Prompts for the enterprise build: `docs/ENTERPRISE_CLAUDE_PROMPTS.md`.
+
+
+## 4. Request lifecycle
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Submitted: requester submits (intake validated, domain ID derived)
-  Submitted --> AiReview: agent starts review (idempotency key = request id + step)
+  [*] --> Submitted: requester submits (dropdowns, Enterprise ID = mail)
+  Submitted --> AiReview: agent starts the review (key = request id + step)
   AiReview --> AwaitingOwner: PASS (all checks, Entra cross-check done)
-  AiReview --> Returned: FAIL (reasons to requester + PMO)
+  AiReview --> Returned: FAIL (red row, Prod without a group, mismatch...)
   Returned --> Submitted: requester corrects and resubmits
   AiReview --> FailedNeedsDev: review failed 3 times
   AwaitingOwner --> AwaitingSecurity: named Owner approves
   AwaitingOwner --> Rejected: Owner rejects (remarks)
-  AwaitingSecurity --> WithIdTeam: Security approves
+  AwaitingSecurity --> WithIdTeam: Security approves (not the Owner approver)
   AwaitingSecurity --> Rejected: Security rejects (remarks)
-  WithIdTeam --> WithRoleTeam: report verified (user, group, naming, membership, sheet, TAP rules)
+  WithIdTeam --> WithRoleTeam: agent created user, group and membership, or the ID team report is verified
   WithIdTeam --> WithIdTeam: mismatch → task returned with the exact difference
-  WithRoleTeam --> Verifying: exact roles verified
+  WithRoleTeam --> Verifying: agent assigned the roles, or the role team report is verified
   WithRoleTeam --> WithRoleTeam: mismatch → task returned
-  Verifying --> Completed: account, membership and exact roles verified (no wait for the sign-in, 22 Oct 2026)
+  Verifying --> Completed: account, membership and exact roles verified (no sign-in wait)
   Verifying --> WithIdTeam: access not in place
-  Verifying --> Verifying: pending past VERIFY_SLA_HOURS, Operators reminded once
-  AwaitingOwner --> AiReview: mapping sheet changed (also from AwaitingSecurity, WithIdTeam, WithRoleTeam)
-  FailedNeedsDev --> Submitted: Operator resumes after the fix (failed review → new review; other stages resume where they failed)
+  AwaitingOwner --> AiReview: mapping sheet changed (also from later stages)
+  FailedNeedsDev --> Submitted: Operator resumes after the fix
 ```
 
-After a mapping change the review is re-run: if the reviewed group and role are unchanged the request resumes its stage; otherwise the approvals are superseded and it goes back to Awaiting Owner.
+- After a mapping change, the review runs again. If the reviewed group and role are unchanged, the request resumes its stage. Otherwise the approvals are superseded and it goes back to Awaiting Owner.
+- **Hand-back:** a team that was given a task (agent off, row not allowed) can hand it back. The agent re-checks and takes it once the row is allowed.
 
-## Stage → code
 
-| Stage | Code | Notes |
-|---|---|---|
-| 1 Intake | `Services/RequestService` | Required fields; safe format fixes (spaces, case); missing fields returned in `error.details` (`incomplete_request`). |
-| 2 AI review | `Review/ReviewEngine`, `Review/ReviewChecks`, `Processing/RunService` + `ReviewProcessor` | Reads both sources fresh (`Sources/StoreSourcesOfTruth`, 3 attempts). Result validated against `schema/review-result.v2.json`. Sheet fingerprint (SHA-256 of the resource's rows) stored on the run. |
-| 3 Approvals | `Workflow/WorkflowService.RespondAsync` | Only the named Owner (sign-in name), then a Security member who is not the Owner approver; tied to request id + reviewed run id. Others → ignored, *Unauthorized approval* issue, Security alerted. |
-| 4 ID team | `WorkflowService.ReportIdTeamAsync`, `Workflow/Verifier.IdTeamAsync` | TAP metadata only; the body is rejected if it carries a pass value. |
-| 5 Role team | `WorkflowService.ReportRoleTeamAsync`, `Verifier.RoleTeamAsync` | Exact roles vs response document; optional ARM read. Response document updated with what was assigned. |
-| 6 Final | `WorkflowAgent.FinalAsync`, `Verifier.FinalAsync` | Sign-in log, auth methods (permanent method, TAP gone), membership. Notifications, ADO work item with the trail, timings. |
-| SLA | `WorkflowAgent.ApprovalSlaAsync` / `TaskSlaAsync` | Reminder at SLA, escalation to the manager at 2× SLA (Graph manager or project contact). |
-| Issues + reports | `Workflow/Notifier` (`IssueLog`), `Workflow/Reports` | Issues list (severity keeps the max), daily summary with wait time per team, developer report; optional AI analysis (`IAiAssistant`). |
+## 5. Agent provisioning path (after both approvals, each switch approval-gated)
 
-## Agent step (idempotent)
+1. **Re-check:** both current approvals, the tenant (`AGENT_TENANT_ID`), the domain (`--domain-suffix`), and the row. A row is refused if it is a guest, ambiguous, missing a group, or privileged without `AGENT_PRIVILEGED`.
+2. **Group:** created when the mapping sheet says "to be created".
+3. **User:** created with an initial password that must be changed at first sign-in.
+4. **Membership:** the user is added to the group.
+5. **Agent TAP** (if `AGENT_TAP`): one one-time pass (`AGENT_TAP_LIFETIME_MINUTES`, within the tenant's policy). It is mailed once with the password and the MFA steps to the Enterprise ID mail. Only a masked copy is stored. The account is created only when this mail can go out in the same run.
+6. **Roles:** the row's roles are assigned to the group, all or nothing, only roles in `ROLE_ASSIGN_ALLOWED_ROLES` and within `ROLE_ASSIGN_SCOPES`. Never Owner, Contributor, User Access Administrator, RBAC Administrator, Reservations Administrator or Key Vault Data Access Administrator (`BuiltInRoles.NeverByAgent`). These are refused in code and again in the RBAC condition.
+7. **Failure:** any failure goes to the team, with the reason and an issue. A refused write is retried for 24 h while a new permission reaches the worker (F61).
 
-`WorkflowAgent.AdvanceAsync(request)` computes **one** step from the stored state: next request document + side effects (notifications, issues, ADO). The request is written first with its ETag; effects run after and are idempotent (`Ids.Key = requestId:step`). Retryable failures record an attempt and **stop** the call (max 3, then Failed-Needs-Dev with a developer report); nothing is retried blindly in a loop. Both the API (inline after each action) and the worker (timer) call the same method.
 
-## API
+## 6. Notifications
 
-All routes under `/api`, signed in, identity only from `x-ms-client-principal`. A project the caller has no role in → 404; missing permission → 403. Updates need `If-Match`.
+- **Who gets what:**
+  - the Owner is mailed only to decide, and Security for its stage;
+  - the requester gets the one completion mail, together with Security, PMO, the ID team and the role team;
+  - the joiner gets *access ready* at the Enterprise ID mail;
+  - the requester and Security get the provisioning summaries.
+- **Team addresses:** from the Contact inventory. The lists are semicolon-separated, versioned, and saved by PMO and Operators; every change is mailed to Security and PMO. The addresses route mail only; approval rights stay in `userAccess`.
+- **Limits:**
+  - approvals and team tasks go first;
+  - a throttled mail (429) waits without using an attempt;
+  - a backlog raises an issue;
+  - each mail has at most 50 recipients, and bad addresses are skipped;
+  - guest sign-in names are mailed at the real mailbox;
+  - an approval or task that reaches nobody raises a High issue.
+- **Test environments:** `NOTIFY_REDIRECT_TO` sends every mail to one test mailbox, naming the intended recipients. It is refused in prod.
 
-| Method + route | Who |
-|---|---|
-| GET `me`, GET `queue` (my actions) | any signed-in user |
-| GET/POST `projects/{p}/requests` | project members / Requester |
-| GET/PUT `projects/{p}/requests/{id}` | members / Requester (resubmit only when Returned) |
-| GET `projects/{p}/requests/{id}/trail` | members |
-| POST `projects/{p}/requests/{id}/approvals` `{decision, remarks, reviewRunId}` | named Owner (Owner stage), Security (Security stage) |
-| POST `projects/{p}/requests/{id}/tasks/{id-team\|role-team}/pickup` · `/report` | IdTeam / RoleTeam |
-| POST `projects/{p}/requests/{id}/advance` | Operator (runs the agent step now) |
-| POST `projects/{p}/requests/{id}/resume` | Operator — Failed-Needs-Dev only, after a developer fix: back to the failed stage, attempts reset |
-| GET/POST `projects/{p}/mapping-sheet`, PUT `…/{rowId}` | members / PMO |
-| POST `projects/{p}/mapping-sheet/{rowId}/group` | IdTeam (group created) |
-| GET `projects/{p}/response-document` | members |
-| GET `projects/{p}/issues` | Security, Operator |
-| GET `projects/{p}/reports/daily/{date}`, `…/reports/developer` | Security, PMO, Operator |
-| GET `projects/{p}/requests/{id}/runs`, GET `…/runs/{runId}` | members |
-| POST `projects/{p}/runs/{runId}/retry`, POST `…/operator/recover` | Operator |
 
-## Trust boundaries
-1. Browser → SWA: authenticated by SWA; every body field is untrusted.
-2. API → Cosmos: connection string in SWA app settings (no managed identity on managed Functions).
-3. Worker → Cosmos / Graph / ARM: managed identity; Cosmos data roles on the containers it uses only (not `userAccess`); Graph application roles read (`User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`, `AuditLog.Read.All`); with v2.1 provisioning approved also `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All` and Role Based Access Control Administrator on one resource group, constrained to allow-listed roles and user/group principals. The SWA API never holds a writer.
-4. Request text, team notes, model output: untrusted. Masked (`SecretMasker`) before logs, ADO, mail and prompts; the host validates every model result against the schema and recomputes the outcome.
+## 7. Tenants and environments
 
-## Design decisions
+- One project = one Entra tenant (PEST, Vestacy). Requests, rows, contacts, roles and mail never cross projects.
+- The agent reads and writes Entra and Azure only for projects in its own tenant (`AGENT_TENANT_ID` = the worker's tenant). For another tenant the checks say "not checked by the agent", and the teams do the work there.
+- Each project lists its environments. The request picks one, and the mapping row must match it. Prod without a group is returned.
+- `APP_ENVIRONMENT` = pilot | dev | test | prod.
 
-| Decision | Why |
-|---|---|
-| Workflow state lives in the request document (`flow`) | One document, one ETag: a stage change and its audit entry commit together. |
-| Agent runs inline in the API and on the worker timer | The requester sees the next stage immediately; Entra-dependent checks finish within ~5 minutes. |
-| Teams record their work; the agent verifies | The agent never needs write permissions; mismatches go back with the exact difference. |
-| TAP metadata only, minute precision | The pass never reaches the app; times come from a datetime-local input, so "after approval" compares to the minute. |
-| `tools/local-api` instead of Functions Core Tools locally | Core Tools could not be downloaded in the build environment; both hosts call the same `ApiHost`. |
-| `az deployment sub what-if` | The resource group is created by the deployment, so it passes the approval gate too. |
+
+## 8. Stage → code
+
+- **Intake:** `Services/RequestService`. Dropdown values must come from the mapping sheet. The Enterprise ID must be a mail address. The justification template must have no unfilled `[ … ]`.
+- **AI review:**
+  - code: `Review/ReviewEngine`, `ReviewChecks`, `Processing/RunService`, `ReviewProcessor`;
+  - reads both sources fresh;
+  - validates the result against the schema;
+  - stores a fingerprint of the sheet.
+- **Approvals:** `WorkflowService.RespondAsync`. Only the named Owner (matched by sign-in name), then Security (not the Owner approver). Anyone else is ignored, logged as an *Unauthorized approval* issue, and Security is alerted.
+- **ID team:**
+  - the agent's path: `WorkflowAgent.Provisioning`;
+  - the team's path: `ReportIdTeamAsync` with `Verifier.IdTeamAsync`;
+  - a report body that carries a pass is rejected;
+  - hand-back: `HandBackAsync`.
+- **Role team:**
+  - the agent's path: `ArmRoleAssignmentWriter`;
+  - the team's path: `ReportRoleTeamAsync` with `Verifier.RoleTeamAsync`;
+  - the exact roles are checked against the response document.
+- **Final:** `WorkflowAgent.FinalAsync` and `Verifier.FinalAsync` check the account, the membership and the exact roles once, then the request completes, the completion mail goes out and the trail is written.
+- **SLA:** `ApprovalSlaAsync` / `TaskSlaAsync` send a reminder at the SLA and escalate to the manager at twice the SLA. Managers come from the Contact inventory or Graph.
+- **Issues and reports:** `Notifier` (`IssueLog`) and `Reports` (daily summary, developer report).
+
+
+## 9. API (all under `/api`, signed in)
+
+Identity comes only from `x-ms-client-principal`. A project the caller has no role in returns 404; a missing permission returns 403. Updates need `If-Match`.
+
+- `GET me`, `GET queue`: any signed-in user.
+- `GET/POST projects/{p}/requests`, `GET/PUT …/requests/{id}`, `GET …/{id}/trail`: members; the Requester submits and resubmits.
+- `POST …/{id}/approvals`: the named Owner, then Security.
+- `POST …/{id}/tasks/{id-team|role-team}/pickup`, `…/handback`, `…/report`: IdTeam / RoleTeam.
+- `POST …/{id}/advance`, `POST …/{id}/resume`: Operator.
+- `GET/POST projects/{p}/mapping-sheet`, `PUT …/{rowId}`, `POST …/{rowId}/group`: members; PMO edits; IdTeam records a created group.
+- `GET/PUT projects/{p}/contacts`: every role reads; PMO and Operators save.
+- `GET projects/{p}/response-document`: members.
+- `GET projects/{p}/issues`, `GET …/reports/daily/{date}`, `GET …/reports/developer`: Security, PMO, Operator.
+- `GET …/requests/{id}/runs`, `GET projects/{p}/runs/{runId}`, `POST …/runs/{runId}/retry`, `POST …/operator/recover`: members / Operator.
+
+
+## 10. Trust boundaries and permissions
+
+1. **Browser → Static Web Apps:** signed in by Static Web Apps; every field in a request body is untrusted. People are found in `userAccess` by user id or by sign-in name.
+2. **API → Cosmos:** connection string in the Static Web Apps app settings (managed Functions have no managed identity). The API never holds a writer for Entra or Azure.
+3. **Worker → Cosmos / Graph / Azure / mail:** managed identity.
+   - Cosmos: data roles only on the containers it uses.
+   - Graph read: `User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`. `AuditLog.Read.All` is still granted but no longer used.
+   - Graph create (gated): `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All`.
+   - TAP (gated): `UserAuthMethod-TAP.ReadWrite.All`.
+   - Azure: Role Based Access Control Administrator on one scope, limited by a condition to the allow-listed roles and to user and group principals.
+   - Mail: a role on the Communication Services resource.
+4. **Untrusted content:** request text, team notes and any model output. It is masked (`SecretMasker`) before logs, ADO, mail and prompts. The host validates every result.
+
+
+## 11. Design decisions
+
+- **Workflow state in the request document (`flow`):** one document and one ETag, so a stage change and its audit entry commit together.
+- **The agent runs inline in the API and on the worker timer:** people see the next stage at once, and Entra work finishes within about 5 minutes.
+- **Agent writes are deterministic, gated and re-checked:** the AI model never decides or writes. Every write needs both current approvals and its switch on.
+- **One stack per tenant:** a managed identity has rights only in its own tenant, so cross-tenant writes are not built.
+- **Contact inventory on the project document:** no new container; versioned; separate from approval rights.
+- **The mail queue honours the sender's limit:** nothing is lost when the Azure-managed domain sends only 10 an hour (F70).
+- **No sign-in wait at completion:** access is verified directly, and the sign-in log check (Entra P1/P2) is no longer needed.
+- **`az deployment sub what-if` before every resource change:** the resource group is created by the deployment, so it passes the approval gate too.
