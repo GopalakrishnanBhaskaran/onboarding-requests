@@ -3,7 +3,7 @@
 v2 (17 Oct 2026) replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. Flow: requester submits → **AI review** (mapping sheet + response document) → **Owner** approval → **Security** approval → **ID team** creates user/group (+ TAP) → **role assignment team** assigns roles → **AI verification**, notifications, audit.
 The **AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It never approves.** v2.1 (Gokul, 17 Oct 2026; off until approved): only after both approvals the worker creates the user, group and membership and assigns allow-listed Azure roles. Agent TAP (Gokul, 22 Oct 2026; off until approved): for an account it has just created, the worker also mails the joiner a one-time TAP, the initial password and the MFA set-up steps, once; otherwise the TAP stays with the ID team.
 
-Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`. **Open work and handoff: read `docs/NEXT_SESSION.md` first.** SOP: `workflows/09-onboarding-flow-v2.md`.
+Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`. **Open work and handoff: read `docs/NEXT_SESSION.md` first.** Enterprise (PEST + Vestacy) rollout: `docs/ENTERPRISE_HANDOFF.md`, prompts in `docs/ENTERPRISE_CLAUDE_PROMPTS.md`. SOP: `workflows/09-onboarding-flow-v2.md`.
 
 ## Hard rules
 1. **Cost.** Static Web Apps (Free) with managed Functions, Cosmos DB free tier, Azure Policy assignment, Cost Management budget, plus (approved 16 Oct 2026, Azure credits, budget ₹2,000/month, alerts 50/80/100%) one Flex Consumption Function App (the AI agent worker) and its one storage account with their role assignments — nothing else. Anything more needs Gokul's written approval.
