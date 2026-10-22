@@ -22,7 +22,7 @@ if [[ -n "$W" ]]; then
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
   echo "-- settings:"
   az functionapp config appsettings list -g "$RG" -n "$W" \
-    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES'], name)].{name:name, value:value}" -o table
+    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED'], name)].{name:name, value:value}" -o table
   MI=$(az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv)
   echo "-- Graph application permissions (read: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All; v2.1 provisioning adds User.Create, Group.Create, GroupMember.ReadWrite.All; agent TAP adds UserAuthMethod-TAP.ReadWrite.All):"
   HELD=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
@@ -33,11 +33,11 @@ if [[ -n "$W" ]]; then
     echo "FLAG: retired Phase 2b/2c write permissions still held. After approval: tools/deploy_free.sh revoke-graph-writes $SUB --approved-by \"<name> <date>\""
   fi
   PROV=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv)
-  if echo "$HELD" | grep -qxE "User.Create|Group.Create|GroupMember.ReadWrite.All" && [[ "${PROV,,}" != "true" ]]; then
+  if echo "$HELD" | grep -qxE "User.Create|Group.Create|GroupMember.ReadWrite.All" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$PROV")" != "true" ]]; then
     echo "FLAG: v2.1 create permissions held while AGENT_PROVISIONING is off. Remove them (approval): tools/deploy_free.sh provisioning $SUB off --approved-by \"<name> <date>\""
   fi
   TAPON=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='AGENT_TAP'].value | [0]" -o tsv)
-  if echo "$HELD" | grep -qx "UserAuthMethod-TAP.ReadWrite.All" && [[ "${TAPON,,}" != "true" ]]; then
+  if echo "$HELD" | grep -qx "UserAuthMethod-TAP.ReadWrite.All" && [[ "$(tr '[:upper:]' '[:lower:]' <<<"$TAPON")" != "true" ]]; then
     echo "FLAG: the TAP write permission is held while AGENT_TAP is off. Remove it (approval): tools/deploy_free.sh tap $SUB off --approved-by \"<name> <date>\""
   fi
   COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)

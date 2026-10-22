@@ -32,6 +32,8 @@ public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList
     public string? MailRedirectTo { get; init; }
     /// <summary>Agent TAP on and mail on: the agent mails a new joiner's sign-in details (wording in the app follows it).</summary>
     public bool AgentTap { get; init; }
+    /// <summary>Agent provisioning on for rows flagged privileged too (never privileged administrator roles).</summary>
+    public bool AgentPrivileged { get; init; }
 }
 
 public static class Endpoints
@@ -54,6 +56,7 @@ public static class Endpoints
             {
                 AppEnvironment = s.AppEnvironment, MailEnabled = s.MailEnabled, MailRedirectTo = s.MailRedirectTo,
                 AgentTap = s.AgentProvisioning && s.AgentTap && s.MailEnabled,
+                AgentPrivileged = s.AgentProvisioning && s.AgentPrivileged,
             });
         });
         host.Map("GET", "queue", async c => Ok(new { items = await workflow.MyActionsAsync(c.Caller, c.Ct) }));

@@ -64,9 +64,12 @@ describe('scope guardrails', () => {
     // Agent TAP on: the agent mails the joiner's pass; still never approves; the ID team takes what the agent leaves.
     expect(whoDoesWhat(true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*one-time Temporary Access Pass.*MFA/);
     expect(AGENT_TAP_BANNER).toMatch(/never approves.*Only after both approvals.*one-time Temporary Access Pass/);
-    const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
+    // Privileged rows on: still never approves, never privileged administrator roles.
+    expect(whoDoesWhat(true, true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*privileged rows too, never Owner, Contributor, User Access Administrator/);
+    expect(whoDoesWhat(true, true, true).find(([who]) => who === 'ID team')?.[1]).toMatch(/privileged administrator roles/);
+    const form =readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
     expect(form).toContain('FLOW_OVERVIEW.map');
-    expect(form).toContain('whoDoesWhat(agent, tap).map');
+    expect(form).toContain('whoDoesWhat(agent, tap, privileged).map');
   });
 
   it('offers resource and access level as dropdowns only, and a justification template that must be filled in', () => {

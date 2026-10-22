@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using PmoReview.Adapters.Storage;
+using PmoReview.Core.Domain;
 using Xunit;
 
 namespace PmoReview.Tests.Unit;
@@ -182,6 +183,20 @@ public partial class InfraConsistencyTests
         Assert.Contains("--condition-version 2.0", deploy);
         Assert.Contains("StringEqualsIgnoreCase $types", deploy);
         Assert.Contains("RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168", deploy);
+    }
+
+    [Fact]
+    public void Privileged_rows_are_off_by_default_and_privileged_administrator_roles_never_reach_the_agents_allow_list()
+    {
+        var bicep = MainBicep() + Worker();
+        Assert.Contains("param agentPrivileged bool = false", bicep);
+        Assert.Contains("{ name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }", bicep);
+        var deploy = Read("tools", "deploy_free.sh");
+        var never = Regex.Match(deploy, "NEVER_BY_AGENT=\"(?<ids>[^\"]*)\"").Groups["ids"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(BuiltInRoles.NeverByAgent.Values.Order(), never.Order()); // same list as the code (F68)
+        Assert.Contains("check_role_ids \"$roles\" || return 1", deploy); // provisioning refuses them in the RBAC condition
+        Assert.Contains("agent_privileged \"$MODE\"", deploy);
+        Assert.Contains("\"AGENT_PRIVILEGED=${priv:-false}\"", deploy); // the website follows the worker
     }
 
     [Fact]

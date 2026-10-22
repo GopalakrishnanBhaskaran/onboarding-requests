@@ -169,6 +169,25 @@ public static class BuiltInRoles
 
     public static string? NameOf(string? roleId) =>
         roleId is null ? null : Ids.FirstOrDefault(p => string.Equals(p.Value, roleId.Trim(), StringComparison.OrdinalIgnoreCase)).Key;
+
+    /// <summary>
+    /// Never assigned by the AI agent, whatever its allow-list says: Azure's privileged administrator roles (VERIFIED_FACTS
+    /// F68) and Key Vault Data Access Administrator, which can assign roles itself. People handle these.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> NeverByAgent = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Owner"] = "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+        ["Contributor"] = "b24988ac-6180-42a0-ab88-20f7382dd24c",
+        ["Reservations Administrator"] = "a8889054-8d42-49c9-bc1c-52486c10e7cd",
+        ["Role Based Access Control Administrator"] = "f58310d9-a9f6-439a-9e8d-f62e7b41a168",
+        ["User Access Administrator"] = "18d7d88d-d35e-4fb5-a5c3-7773c20a72d9",
+        ["Key Vault Data Access Administrator"] = "8b54135c-b56d-4d72-a534-26097cfdc8d8",
+    };
+
+    /// <summary>By role id or by name (a grant whose id is not resolved still counts).</summary>
+    public static bool IsNeverByAgent(AzureRoleGrant g) =>
+        NeverByAgent.ContainsKey(g.RoleName.Trim())
+        || (g.RoleId is { } id && NeverByAgent.Values.Contains(id, StringComparer.OrdinalIgnoreCase));
 }
 
 public enum ResponseState { PendingApproval, Approved, Assigned, Rejected, Revoked }

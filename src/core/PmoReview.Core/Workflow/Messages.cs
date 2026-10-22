@@ -47,11 +47,14 @@ public static class Messages
         "The named Owner approves the business need. Security approves risk and access level. " +
         "Only after both approvals the AI agent creates the user ID, group and membership" +
         (s.AgentRoleAssignment ? " and assigns the approved Azure role where the mapping sheet allows it" : "") + ". " +
+        (s.AgentPrivileged ? "This includes rows flagged privileged, except privileged administrator roles (Owner, Contributor, User Access Administrator and the like). " : "") +
         (s.AgentTap && s.MailEnabled
             ? "For a new account the agent also mails the joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps. " +
-              "The ID team handles what the agent leaves to it (guests, privileged access, exceptions). "
-            : "The ID team issues the Temporary Access Pass and handles what the agent leaves to it (guests, privileged access, exceptions). ") +
+              $"The ID team handles what the agent leaves to it ({Left(s)}). "
+            : $"The ID team issues the Temporary Access Pass and handles what the agent leaves to it ({Left(s)}). ") +
         $"The role assignment team assigns the {(s.AgentRoleAssignment ? "other " : "")}roles. PMO owns the mapping sheet and is informed only.";
+
+    private static string Left(WorkflowSettings s) => s.AgentPrivileged ? "guests, privileged administrator roles, exceptions" : "guests, privileged access, exceptions";
 
     public static string Short(AccessRequest r) => r.Id.Length > 8 ? r.Id[..8] : r.Id;
 

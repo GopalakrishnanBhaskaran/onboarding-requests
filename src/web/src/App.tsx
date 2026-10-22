@@ -151,20 +151,20 @@ function Shell() {
             </MessageBarBody>
           </MessageBar>
         )}
-        {me && project && <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} />}
+        {me && project && <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} privileged={!!me.agentPrivileged} />}
       </main>
     </div>
   );
 }
 
-function Page({ route, project, projects, onOpenProject, agent, tap }: {
-  route: Route; project: ProjectSummary; projects: ProjectSummary[]; onOpenProject: (id: string) => void; agent: boolean; tap: boolean;
+function Page({ route, project, projects, onOpenProject, agent, tap, privileged }: {
+  route: Route; project: ProjectSummary; projects: ProjectSummary[]; onOpenProject: (id: string) => void; agent: boolean; tap: boolean; privileged: boolean;
 }) {
   switch (route.page) {
     case 'new':
-      return <RequestFormPage key="new" project={project} projects={projects} onProject={onOpenProject} agent={agent} tap={tap} />;
+      return <RequestFormPage key="new" project={project} projects={projects} onProject={onOpenProject} agent={agent} tap={tap} privileged={privileged} />;
     case 'edit':
-      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} />;
+      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} privileged={privileged} />;
     case 'request':
       return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
     case 'queue':

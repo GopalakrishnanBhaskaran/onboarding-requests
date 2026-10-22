@@ -73,6 +73,9 @@ param agentTap bool = false
 @description('Lifetime in minutes of an agent-issued TAP (within the tenant TAP policy maximum).')
 param agentTapLifetimeMinutes int = 480
 
+@description('Agent privileged rows: also provision rows flagged privileged after both approvals (never privileged administrator roles). Approval-gated.')
+param agentPrivileged bool = false
+
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
@@ -182,6 +185,7 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'ROLE_ASSIGN_SCOPES', value: roleAssignScopes }
         { name: 'AGENT_TAP', value: agentTap ? 'true' : 'false' }
         { name: 'AGENT_TAP_LIFETIME_MINUTES', value: string(agentTapLifetimeMinutes) }
+        { name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }

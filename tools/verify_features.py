@@ -22,6 +22,15 @@ READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 # The roles of the PEST Dev Support Reader row (response document), by lower-case name: the end-to-end test needs both.
 TEST_ROLES = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"}
 TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
+# Built-in role ids by lower-case name (BuiltInRoles.Ids) and the ones the agent never assigns (BuiltInRoles.NeverByAgent).
+ROLE_IDS = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+            "storage blob data contributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe", "storage blob data owner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+            "key vault reader": "21090545-7ca7-4776-b22c-e363652d74d2", "key vault secrets user": "4633458b-17de-408a-b874-0445c86b69e6",
+            "key vault secrets officer": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"}
+NEVER_BY_AGENT = {"owner", "contributor", "reservations administrator", "role based access control administrator", "user access administrator",
+                  "key vault data access administrator"}
+# The privileged PEST row of the live test (Data Engineer, Dev).
+PRIVILEGED_ROW = "PH-DATAENGINEERS-DEV"
 
 
 @dataclass
@@ -112,6 +121,23 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
                       f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
                       "" if tap_ok else "tools/deploy_free.sh tap <sub> on (dry run → approval), then tools/deploy_free.sh app <sub>"))
+
+    # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
+    prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
+    pnames = sorted({str(g.get("roleName", "")).strip().lower() for g in ((prow or {}).get("azureRoles") or []) if g.get("roleName")})
+    never = [n for n in pnames if n in NEVER_BY_AGENT]
+    missing = [n for n in pnames if n not in NEVER_BY_AGENT and ROLE_IDS.get(n, n) not in allowed_roles]
+    priv_ok = on("AGENT_PRIVILEGED") and str(swa.get("AGENT_PRIVILEGED", "")).lower() == "true" and prow is not None and not never and not missing
+    want_ids = sorted({READER, *TEST_ROLES.values(), *(ROLE_IDS[n] for n in pnames if n in ROLE_IDS)})
+    flagged = f", flagged privileged: {bool(prow.get('privileged'))}" if prow else ""
+    out.append(Result(f"5c. Agent provisions privileged rows too ({PRIVILEGED_ROW}: user, group, membership and its roles)", PASS if priv_ok else WAIT,
+                      f"AGENT_PRIVILEGED={s.get('AGENT_PRIVILEGED') or 'false'} (website {swa.get('AGENT_PRIVILEGED') or 'false'}); row {'found' if prow else 'missing'}"
+                      f"{flagged}; "
+                      f"roles {pnames or '-'}; not on the allow-list {missing or 'none'}; never by the agent {never or 'none'}",
+                      "" if priv_ok else
+                      f"row {PRIVILEGED_ROW} has {', '.join(never)}: people assign it (the agent never does)" if never else
+                      "tools/deploy_free.sh privileged <sub> on (dry run → approval)" + (
+                          f"; and the roles: tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(want_ids)} (dry run → approval)" if missing else "")))
 
     # 6. Real tenants (from the shared workbooks), no SAMPLE data left
     p = {x.get("projectId"): x for x in projects}
@@ -226,13 +252,16 @@ def self_test() -> None:
            "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE}), "rbac_admin_scopes": [allowed],
            "worker_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "AGENT_TENANT_ID": "T1", "NOTIFY_SENDER": "AcsEmail",
                                "ACS_ENDPOINT": "https://a", "NOTIFY_FROM": "DoNotReply@d", "AGENT_PROVISIONING": "true", "AGENT_ROLE_ASSIGNMENT": "true",
-                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480",
-                               "ROLE_ASSIGN_ALLOWED_ROLES": ",".join(TEST_ROLES.values()), "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true"}}
+                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "AGENT_PRIVILEGED": "true",
+                               "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
+                               "ROLE_ASSIGN_SCOPES": allowed},
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"}}
     projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": {"security": ["x@y.z"]}},
                 {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"]}]
     rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
              "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
+            {"projectId": "PEST", "rowId": PRIVILEGED_ROW, "privileged": True,
+             "azureRoles": [{"roleName": n, "scope": allowed} for n in ("Storage Blob Data Contributor", "Key Vault Secrets Officer", "Reader")]},
             {"projectId": "VESTACY", "rowId": "PH-SUPPORT-DEV", "azureRoles": []}]
     ev = lambda *s: [{"step": x, "note": ""} for x in s]  # noqa: E731
     all_steps = ev("owner-approved", "security-approved", "agent-provisioned", "agent-role-assigned", "completed")
@@ -243,7 +272,7 @@ def self_test() -> None:
 
     # The state after this commit is deployed, before the steps: SAMPLE data still there, no tenants, TAP off, Reader only.
     ctx2 = json.loads(json.dumps(ctx))
-    ctx2["worker_settings"].update({"AGENT_TAP": "false", "ROLE_ASSIGN_ALLOWED_ROLES": READER})
+    ctx2["worker_settings"].update({"AGENT_TAP": "false", "AGENT_PRIVILEGED": "false", "ROLE_ASSIGN_ALLOWED_ROLES": READER})
     ctx2["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES)
     sample_projects = [{"projectId": "SAMPLE-PEST", "isSample": True}, {"projectId": "SAMPLE-ALPHA", "isSample": True}]
     sample_rows = [{"projectId": "SAMPLE-PEST", "rowId": "P-PH-SUPPORT-READER-DEV", "isSample": True, "azureRoles": [{"roleName": "Reader", "scope": allowed}]}]
@@ -251,6 +280,14 @@ def self_test() -> None:
     assert {k: got[k].status for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")} == {k: WAIT for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")}, \
         {k: v.status for k, v in got.items()}
     assert "2a2b9908" in got["5."].next and "tap <sub> on" in got["5b."].next and "--remove-sample" in got["6b."].next and "--test-scope" in got["7."].next
+    # Privileged rows on, but the Data Engineer roles are not on the allow-list (Reader + Storage Blob Data Reader only).
+    ctx4 = json.loads(json.dumps(ctx))
+    ctx4["worker_settings"]["ROLE_ASSIGN_ALLOWED_ROLES"] = ",".join(TEST_ROLES.values())
+    p4 = next(r for r in evaluate(ctx4, projects, rows, requests, notes, []) if r.feature.startswith("5c."))
+    assert p4.status == WAIT and ROLE_IDS["key vault secrets officer"] in p4.next and "storage blob data contributor" in p4.detail, (p4.detail, p4.next)
+    rows5 = [dict(r, azureRoles=[{"roleName": "Owner", "scope": allowed}]) if r["rowId"] == PRIVILEGED_ROW else r for r in rows]
+    p5 = next(r for r in evaluate(ctx, projects, rows5, requests, notes, []) if r.feature.startswith("5c."))
+    assert p5.status == WAIT and "never does" in p5.next, (p5.detail, p5.next)
     ctx3 = json.loads(json.dumps(ctx))
     ctx3["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES | {"Group.ReadWrite.All"})
     assert next(r for r in evaluate(ctx3, projects, rows, requests, notes, []) if r.feature.startswith("5.")).status == FAIL

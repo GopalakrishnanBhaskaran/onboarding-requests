@@ -248,7 +248,7 @@ public class ProvisioningTests
 
     [Theory]
     [InlineData(null, false)] // no Azure role on the row (e.g. a Databricks role): the role team, no issue
-    [InlineData("8e3af657-a8ff-443c-a75c-2fe8c4bcb635", true)] // Owner: not on the allow-list
+    [InlineData("b7e6dc6d-f1e8-4753-8033-0f276bb0955b", true)] // Storage Blob Data Owner: not on the allow-list (Owner itself: PrivilegedProvisioningTests)
     public async Task Roles_outside_the_allow_list_or_without_an_azure_role_go_to_the_role_team(string? roleId, bool issue)
     {
         var app = App();

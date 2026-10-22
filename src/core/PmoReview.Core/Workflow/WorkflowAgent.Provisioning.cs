@@ -33,10 +33,39 @@ public sealed partial class WorkflowAgent
         settings.AgentTap && directMail?.Delivers == true && !r.Guest && Services.DomainIds.MailOf(r.EnterpriseId) is not null;
 
     private bool ProvisioningPending(TeamTask task) =>
-        settings.AgentProvisioning && task.State == TeamTaskState.Open && task.Agent is not ({ Completed: true } or { Manual: not null });
+        settings.AgentProvisioning && task.State == TeamTaskState.Open && (task.Agent is not ({ Completed: true } or { Manual: not null }) || PrivilegedResumable(task));
 
     private bool RoleAssignmentPending(TeamTask task) =>
-        settings.AgentRoleAssignment && task.State == TeamTaskState.Open && task.Agent is not ({ Completed: true } or { Manual: not null });
+        settings.AgentRoleAssignment && task.State == TeamTaskState.Open && (task.Agent is not ({ Completed: true } or { Manual: not null }) || PrivilegedResumable(task));
+
+    private const string PrivilegedLeft = " is privileged access (agent privileged provisioning is off)";
+
+    /// <summary>
+    /// Left to the team only because privileged rows were off (also the older wording): once they are on and nobody in the
+    /// team has picked the task up, the agent takes it back and runs every check again.
+    /// </summary>
+    private bool PrivilegedResumable(TeamTask task) =>
+        settings.AgentPrivileged && task.PickedUpAt is null
+        && task.Agent is { Completed: false, Manual: { } m } && (m.EndsWith(PrivilegedLeft, StringComparison.Ordinal) || m.EndsWith(" is privileged access", StringComparison.Ordinal));
+
+    /// <summary>Why a privileged row stays with the people, or null when the agent may do it.</summary>
+    private string? PrivilegedReason(MappingRow? row, ReviewedScope scope)
+    {
+        var never = scope.Grants().Where(BuiltInRoles.IsNeverByAgent).Select(g => g.RoleName).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (never.Count > 0)
+            return $"mapping row {scope.MappingRowId} includes {string.Join(", ", never)}: privileged administrator roles are never handled by the agent";
+        return row?.Privileged == true && !settings.AgentPrivileged ? $"mapping row {scope.MappingRowId}{PrivilegedLeft}" : null;
+    }
+
+    /// <summary>A task taken back from the team (see <see cref="PrivilegedResumable"/>): the trail says so, the agent is waited on.</summary>
+    private AccessRequest Resumed(AccessRequest r, TeamTask task, DateTimeOffset now) => !PrivilegedResumable(task) ? r : r with
+    {
+        Flow = r.Flow!.Waiting(WaitingOn.Agent, now).Log(now, Agent, "agent-resumed",
+            $"Privileged rows are now done by the AI agent; it takes the {(task.Team == AppRole.IdTeam ? "ID team" : "role assignment team")} task back (nobody had picked it up) and runs every check again."),
+    };
+
+    private string PrivilegedNote(MappingRow? row) =>
+        row?.Privileged == true ? " Privileged access: done by the agent because privileged rows are switched on (after both approvals)." : "";
 
     private bool BothApprovalsCurrent(WorkflowState flow) =>
         flow.CurrentApproval(ApprovalStage.Owner)?.Decision == ApprovalDecision.Approved
@@ -46,22 +75,22 @@ public sealed partial class WorkflowAgent
 
     private async Task<Step?> ProvisionAsync(AccessRequest r, TeamTask task, CancellationToken ct)
     {
+        var now = clock.UtcNow;
+        r = Resumed(r, task, now);
         var flow = r.Flow!;
         var scope = flow.Scope!;
-        var now = clock.UtcNow;
         var project = await ProjectAsync(r, ct);
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
         var row = sheet.FirstOrDefault(x => x.RowId == scope.MappingRowId);
-        var work = task.Agent ?? new AgentWork { At = now };
+        var work = (task.Agent ?? new AgentWork { At = now }) with { Manual = null };
         if (work.SignInDetailsSentAt is null && signInDetailsSent.TryGetValue(r.Id, out var mailed)) work = mailed; // the save after the mail was lost
 
         if (!BothApprovalsCurrent(flow))
             return ToIdTeam(r, task, work with { Manual = "the Owner and Security approvals are not both current" }, project, now, IssueSeverity.High);
         var manual = Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (r.Guest ? "guest accounts are invited by the ID team, not created by the agent"
-            : row?.Privileged == true ? $"mapping row {scope.MappingRowId} is privileged access"
-            : row?.Flag == RowFlag.Red ? $"mapping row {scope.MappingRowId} is flagged red (needs a human decision)"
-            : null);
+            : PrivilegedReason(row, scope)
+            ?? (row?.Flag == RowFlag.Red ? $"mapping row {scope.MappingRowId} is flagged red (needs a human decision)" : null));
         if (manual is not null) return ToIdTeam(r, task, work with { Manual = manual }, project, now, IssueSeverity.Info);
 
         Secret? password = null;
@@ -170,7 +199,7 @@ public sealed partial class WorkflowAgent
         }
 
         work = work with { At = now, Completed = true };
-        var done = Done(work, r, scope);
+        var done = Done(work, r, scope) + PrivilegedNote(row);
         List<Func<CancellationToken, Task>> resolved = work.RefusedSince is null ? []
             : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]; // the permission arrived
         var informed = Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r));
@@ -366,21 +395,21 @@ public sealed partial class WorkflowAgent
 
     private async Task<Step?> AssignRoleAsync(AccessRequest r, TeamTask task, CancellationToken ct)
     {
+        var now = clock.UtcNow;
+        r = Resumed(r, task, now);
         var flow = r.Flow!;
         var scope = flow.Scope!;
-        var now = clock.UtcNow;
         var project = await ProjectAsync(r, ct);
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
-        var work = task.Agent ?? new AgentWork { At = now };
+        var work = (task.Agent ?? new AgentWork { At = now }) with { Manual = null };
         // Exactly the Azure roles the Owner and Security saw: taken from the approved scope, never from the live row.
         var grants = scope.Grants();
 
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
             : Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (row is null ? $"mapping row {scope.MappingRowId} not found"
-            : row.Privileged ? $"mapping row {scope.MappingRowId} is privileged access"
-            : grants.Count == 0 ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)"
-            : null);
+            : PrivilegedReason(row, scope)
+            ?? (grants.Count == 0 ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)" : null));
         var severity = manual?.Contains("not assigned", StringComparison.Ordinal) == true ? IssueSeverity.High : IssueSeverity.Info;
         if (manual is null)
         {
@@ -428,7 +457,7 @@ public sealed partial class WorkflowAgent
         // Same record the role team would write through its form.
         var roles = ExpectedRoles(scope);
         await UpdateResponseAsync(r, x => x with { AssignedRoles = roles, State = ResponseState.Assigned, AssignedBy = AgentName, AssignedAt = now }, ct);
-        var list = string.Join("; ", grants.Select(g => $"{g.RoleName} at {g.Scope}"));
+        var list = string.Join("; ", grants.Select(g => $"{g.RoleName} at {g.Scope}")) + (row?.Privileged == true ? " — privileged access row" : "");
         var reported = task with
         {
             Agent = work with { At = now, RoleAssigned = true, Completed = true },

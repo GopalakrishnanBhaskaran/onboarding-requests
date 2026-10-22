@@ -84,6 +84,7 @@ public sealed record PilotSettings
                 AgentRoleAssignment = On("AGENT_ROLE_ASSIGNMENT"),
                 // Agent TAP (approval-gated: deploy_free.sh tap): the agent mails a new account's sign-in details once.
                 AgentTap = On("AGENT_TAP"),
+                AgentPrivileged = On("AGENT_PRIVILEGED"),
                 AgentTapLifetimeMinutes = Math.Clamp(int.TryParse(get("AGENT_TAP_LIFETIME_MINUTES"), out var al) ? al : 480, 60, 43200),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),

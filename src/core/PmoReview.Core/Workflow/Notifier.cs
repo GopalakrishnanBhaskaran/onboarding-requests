@@ -38,6 +38,12 @@ public sealed record WorkflowSettings
     /// <summary>Lifetime of an agent-issued TAP in minutes (the joiner reads it from mail; within the tenant's TAP policy maximum).</summary>
     public int AgentTapLifetimeMinutes { get; init; } = 480;
     /// <summary>
+    /// Agent privileged rows (<c>AGENT_PRIVILEGED</c>; Gokul, 22 Oct 2026; off until approved): the agent also provisions and
+    /// assigns rows flagged privileged, after both approvals, with the same checks and allow-list. Never the roles in
+    /// <see cref="Domain.BuiltInRoles.NeverByAgent"/>. Off: privileged rows go to the teams.
+    /// </summary>
+    public bool AgentPrivileged { get; init; }
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>

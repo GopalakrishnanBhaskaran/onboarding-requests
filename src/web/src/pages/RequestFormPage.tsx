@@ -18,7 +18,7 @@ const SIGN_IN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const ENTERPRISE_MAIL = /^[A-Za-z0-9][A-Za-z0-9._'+-]{0,63}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 /** Stage 1: intake. The flow is stated upfront. A returned request is corrected here and submitted again. */
-export function RequestFormPage({ project, projects = [project], onProject, requestId, agent = false, tap = false }: {
+export function RequestFormPage({ project, projects = [project], onProject, requestId, agent = false, tap = false, privileged = false }: {
   project: ProjectSummary;
   /** Tenants (one project each) the user may request in; switching resets resource, access level and environment. */
   projects?: ProjectSummary[];
@@ -26,6 +26,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   requestId?: string;
   agent?: boolean;
   tap?: boolean;
+  privileged?: boolean;
 }) {
   const s = useStyles();
   const [fields, setFields] = useState<FormFields>(empty);
@@ -128,7 +129,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
           {FLOW_OVERVIEW.map((step) => <li key={step} style={{ listStyle: 'none' }}><Body1>{step}</Body1></li>)}
         </ul>
         <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, max-content) 1fr', gap: '2px 12px', margin: 0 }}>
-          {whoDoesWhat(agent, tap).map(([who, what]) => (
+          {whoDoesWhat(agent, tap, privileged).map(([who, what]) => (
             <div key={who} style={{ display: 'contents' }}>
               <dt><Body1><b>{who}</b></Body1></dt>
               <dd style={{ margin: 0 }}><Body1>{what}</Body1></dd>

@@ -7,7 +7,16 @@ Branch **`claude/great-goodall-j4ozev`**, pushed. No PR.
 Live end-to-end test to **Completed**, logged in `DEPLOYMENT_LOG.md`, on the **real PEST tenant data**:
 PEST / Dev / *the platform resource whose name ends in (ph)* / *Support Reader* → AI review → Owner → Security → the agent creates the group, the account and the membership, **mails the one-time TAP, the temporary password and the MFA steps**, assigns Storage Blob Data Reader + Reader → the joiner signs in and sets up Authenticator → Completed.
 
-## What changed on 22 Oct (code only, nothing deployed)
+## Later on 22 Oct (code only, nothing deployed)
+- **Privileged rows by the agent** (your request: "make this also done by ai agent"). It is off until you approve it with `deploy_free.sh privileged`.
+  - After both approvals, the agent also provisions rows flagged privileged, for example PEST `PH-DATAENGINEERS-DEV`.
+  - It uses the same checks, the same allow-list and the same RBAC condition.
+  - It never handles Owner, Contributor, User Access Administrator, RBAC Administrator, Reservations Administrator or Key Vault Data Access Administrator (F68). `provisioning` refuses them in the condition.
+  - An open task the agent left to a team only because the row was privileged goes back to the agent on its next run, if nobody has picked it up. This covers the live Data Engineer request.
+- **Deploy from a Mac**: `tools/mac_setup.sh` + `docs/MAC_DEPLOY.md`. The clone and the workbooks stay on the Mac. The bash-4-only lines in the tools were made bash 3.2-safe (checked by reading the scripts, not run on a Mac), and `mac_setup.sh` also installs a current bash. `mac_setup.sh` was dry-run here against stub `brew`/`az`; its first real run on your Mac is the check (F69).
+- Tests: .NET 349 (348 pass, 1 opt-in skip), acceptance 27/27, SPA 8/8.
+
+## What changed earlier on 22 Oct (code only, nothing deployed)
 - **Agent TAP** (your request). It is off until you approve it with `deploy_free.sh tap`. For an account it has just created, the agent:
   - issues one one-time TAP (8 h by default);
   - sends one mail to the Enterprise ID mail address with: sign-in name, temporary password, TAP and expiry, and the MFA set-up steps.
@@ -29,7 +38,7 @@ PEST / Dev / *the platform resource whose name ends in (ph)* / *Support Reader* 
   - that the sign-in details were mailed.
 - Tests: .NET 332 (331 pass, 1 opt-in skip), acceptance 27/27, Playwright 7/7, SPA 8/8.
 
-## Steps in Cloud Shell (this container cannot reach Azure)
+## Steps (Mac: `docs/MAC_DEPLOY.md`, inside `bash`; or Cloud Shell. This container cannot reach Azure)
 ```bash
 SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; az account set --subscription $SUB
 cd ~/onboarding-requests && git fetch -q origin claude/great-goodall-j4ozev && git checkout -q claude/great-goodall-j4ozev && git pull -q origin claude/great-goodall-j4ozev
@@ -78,6 +87,18 @@ tools/deploy_free.sh params $SUB
      ```
    - It shows that the constrained RBAC Administrator assignment on `rg-pmo-sample-access` is replaced with one that allows both roles.
    - After you approve: add `--approved-by "Gokul <date>"`.
+6b. **Privileged rows by the agent** (security changes: needs your "approved"). Needed for the PEST Data Engineer request.
+   - First add the Data Engineer roles to the allow-list (dry run, then `--approved-by`). The list is Reader, Storage Blob Data Reader, Storage Blob Data Contributor and Key Vault Secrets Officer:
+     ```bash
+     tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access acdd72a7-3385-48ef-bd42-f606fba81ae7,2a2b9908-6ea1-4ae2-8e65-a410df84e7d1,ba92f5b4-2d11-453d-a403-e96b0029c9fe,b86a8fe4-44ce-4948-aee5-eccb2c155cd7
+     ```
+   - Then `tools/deploy_free.sh privileged $SUB on` (dry run), then add `--approved-by "Gokul <date>"`.
+   - Within 5–10 minutes the agent takes the Data Engineer task back from the ID team, provided nobody picked it up:
+     - it creates the account;
+     - it mails the sign-in details;
+     - it adds the membership of `azr-pes-rg-data-dev-ph-weu-dataengineers`;
+     - it assigns the three roles on `rg-pmo-sample-access`.
+   - Before that, the row must be active (Undeprecate) and carry the group object id that is in Entra (Mapping sheet → Edit).
 7. **Agent TAP** (security change: needs your "approved"). Dry run:
    ```bash
    tools/deploy_free.sh tap $SUB on
@@ -108,7 +129,7 @@ tools/deploy_free.sh params $SUB
 10. Re-run step 8 until everything is PASS. Log the steps in `DEPLOYMENT_LOG.md` (no TAP, no password, no user ids). Commit and push.
 
 ## Decisions / checks still open (each Azure change needs approval)
-- Steps 6 and 7 above.
+- Steps 6, 6b and 7 above.
 - Production:
   - import with the real scopes (`--resolve` / `--scope-map`, not `--test-scope`), the real tenant ids and real contacts, no `--test-contact`;
   - `APP_ENVIRONMENT=prod` (the redirect is refused there);

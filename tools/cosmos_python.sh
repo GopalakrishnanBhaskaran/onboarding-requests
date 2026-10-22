@@ -5,7 +5,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REQ="$ROOT/tools/requirements.txt"
-has_sdk() { "$1" -c "import azure.cosmos" 2>/dev/null; }
+has_sdk() { "$1" -c "import azure.cosmos, openpyxl" 2>/dev/null; } # Cosmos + the workbook import
 
 has_sdk python3 && { echo python3; exit 0; }
 if python3 -m pip install --user -q -r "$REQ" >&2 && has_sdk python3; then echo python3; exit 0; fi
