@@ -4,6 +4,7 @@ using System.Text.Json;
 using Azure.Core;
 using PmoReview.Adapters.Entra;
 using PmoReview.Adapters.Rbac;
+using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using Xunit;
 
@@ -29,14 +30,15 @@ public class GraphDirectoryWriterTests
     {
         var h = new RouteHandler();
         routes(h);
-        return (new GraphDirectoryWriter(new HttpClient(h), new OidCredential()), h);
+        return (new GraphDirectoryWriter(new HttpClient(h), new OidCredential(), TimeSpan.Zero), h);
     }
 
     [Fact]
-    public async Task Creates_a_member_user_with_a_random_password_that_is_never_returned()
+    public async Task Creates_a_member_user_with_the_given_password_that_is_never_returned()
     {
         var (writer, http) = Writer(h => h.On(HttpMethod.Post, $"{G}users", $$"""{"id":"{{UserId}}"}""", HttpStatusCode.Created));
-        var user = await writer.CreateUserAsync(new NewUser("sample.e2001@sample.invalid", "Sample Joiner", "sample.e2001", "Sample", "Joiner"), CancellationToken.None);
+        var initial = Secret.NewPassword();
+        var user = await writer.CreateUserAsync(new NewUser("sample.e2001@sample.invalid", "Sample Joiner", "sample.e2001", "Sample", "Joiner"), initial, CancellationToken.None);
 
         Assert.Equal((UserId, false), (user.ObjectId, user.IsGuest));
         var call = Assert.Single(http.Calls);
@@ -46,8 +48,65 @@ public class GraphDirectoryWriterTests
         Assert.Equal("sample.e2001@sample.invalid", body.GetProperty("userPrincipalName").GetString());
         Assert.Equal("sample.e2001", body.GetProperty("mailNickname").GetString());
         var password = body.GetProperty("passwordProfile").GetProperty("password").GetString()!;
-        Assert.True(password.Length >= 32 && body.GetProperty("passwordProfile").GetProperty("forceChangePasswordNextSignIn").GetBoolean());
+        Assert.Equal(initial.Reveal(), password);
+        Assert.True(password.Length >= 16 && body.GetProperty("passwordProfile").GetProperty("forceChangePasswordNextSignIn").GetBoolean());
         Assert.DoesNotContain(password, user.ToString());
+        Assert.Equal("******", initial.ToString()); // a log line or record that holds it prints the mask
+    }
+
+    /// <summary>A token whose roles claim lists the given Graph application permissions.</summary>
+    private sealed class RolesCredential(params string[] roles) : TokenCredential
+    {
+        private readonly string _token = $"e30.{Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { oid = AgentOid, roles }))).TrimEnd('=').Replace('+', '-').Replace('/', '_')}.sig";
+        public override AccessToken GetToken(TokenRequestContext c, CancellationToken ct) => new(_token, DateTimeOffset.MaxValue);
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext c, CancellationToken ct) => ValueTask.FromResult(GetToken(c, ct));
+    }
+
+    [Theory]
+    [InlineData(true, "User.Create", "UserAuthMethod-TAP.ReadWrite.All")]
+    [InlineData(false, "User.Create", "UserAuthMethod-TAP.Read.All")]
+    [InlineData(false)]
+    public async Task The_tap_permission_is_read_from_the_token_roles(bool expected, params string[] roles)
+    {
+        var writer = new GraphDirectoryWriter(new HttpClient(new RouteHandler()), new RolesCredential(roles), TimeSpan.Zero);
+        Assert.Equal(expected, await writer.CanIssueTapAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Creates_one_one_time_tap_and_returns_the_pass_only_as_a_secret()
+    {
+        var (writer, http) = Writer(h => h.On(HttpMethod.Post, $"{G}users/{UserId}/authentication/temporaryAccessPassMethods",
+            """{"id":"6f1967b7-15e8-4935-ac26-d50770ed07a7","temporaryAccessPass":"SAMPLE+tap1","createdDateTime":"2026-10-22T08:00:00Z","startDateTime":"2026-10-22T08:00:00Z","lifetimeInMinutes":480,"isUsableOnce":true,"isUsable":true}""",
+            HttpStatusCode.Created));
+        var tap = await writer.CreateTemporaryAccessPassAsync(UserId, 480, CancellationToken.None);
+
+        var call = Assert.Single(http.Calls);
+        Assert.Equal((HttpMethod.Post, $"{G}users/{UserId}/authentication/temporaryAccessPassMethods"), (call.Method, call.Url));
+        var body = JsonDocument.Parse(call.Body).RootElement;
+        Assert.Equal((480, true), (body.GetProperty("lifetimeInMinutes").GetInt32(), body.GetProperty("isUsableOnce").GetBoolean()));
+        Assert.Equal("SAMPLE+tap1", tap.Pass.Reveal());
+        Assert.DoesNotContain("SAMPLE+tap1", tap.ToString());
+        Assert.Equal((new DateTimeOffset(2026, 10, 22, 8, 0, 0, TimeSpan.Zero), new DateTimeOffset(2026, 10, 22, 16, 0, 0, TimeSpan.Zero), true),
+            (tap.IssuedAt, tap.ExpiresAt, tap.OneTime));
+    }
+
+    [Fact]
+    public async Task A_user_that_is_not_replicated_yet_is_retried_in_the_same_run()
+    {
+        var h = new RouteHandler();
+        h.On(HttpMethod.Post, $"{G}users/{UserId}/authentication/temporaryAccessPassMethods", """{"error":{"code":"Request_ResourceNotFound"}}""", HttpStatusCode.NotFound, times: 2)
+         .On(HttpMethod.Post, $"{G}users/{UserId}/authentication/temporaryAccessPassMethods", """{"temporaryAccessPass":"SAMPLE+tap2","lifetimeInMinutes":60,"isUsableOnce":true}""", HttpStatusCode.Created);
+        var writer = new GraphDirectoryWriter(new HttpClient(h), new OidCredential(), TimeSpan.Zero);
+        var tap = await writer.CreateTemporaryAccessPassAsync(UserId, 60, CancellationToken.None);
+        Assert.Equal(("SAMPLE+tap2", 3), (tap.Pass.Reveal(), h.Calls.Count));
+    }
+
+    [Fact]
+    public async Task Tap_urls_with_an_id_that_is_not_a_guid_never_reach_graph()
+    {
+        var (writer, http) = Writer(_ => { });
+        await Assert.ThrowsAsync<DirectoryWriteException>(() => writer.CreateTemporaryAccessPassAsync("../../groups", 60, CancellationToken.None));
+        Assert.Empty(http.Calls);
     }
 
     [Fact]

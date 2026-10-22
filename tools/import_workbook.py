@@ -15,6 +15,13 @@ Inputs
                     the map stay unresolved: the role assignment team assigns those (the agent assigns a group's roles
                     only when every one is resolved and allow-listed).
   --resolve         Resolve the remaining names with the Azure CLI (az resource list / az group list; read-only).
+  --test-scope      Pilot test in a tenant without the real resources: every Azure role of every row is given this one
+                    resource group scope (the real resource names stay on each line, so approvers see what it stands
+                    for). Roles repeated by that are merged. Never for production.
+
+With --apply the project (one per tenant) is created or updated in Cosmos: tenant name, environments, group naming
+pattern, and optionally --domain-suffix, --tenant-id, --test-contact (every project contact = one tester mailbox) and
+--register-user USERID=Role,Role (repeatable; userId from /.auth/me).
 
 Groups the response document names but the classification does not list are rows "to be created" (amber); in an
 environment the classification says has no groups (e.g. Prod) they are red.
@@ -23,6 +30,10 @@ Examples
   python3 tools/import_workbook.py --tenant PEST --project PEST --project-name "PEST data platform" \\
       --classification Entra-Group-Classification.xlsx --response "Data Response document - PEST.xlsx" --resolve
   COSMOS_CONNECTION_STRING=... python3 tools/import_workbook.py ... --apply [--update]
+  # pilot test in the agent's own tenant: roles land in the approved test resource group, every mail to the tester
+  COSMOS_CONNECTION_STRING=... python3 tools/import_workbook.py --tenant PEST --project PEST ... \\
+      --test-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --tenant-id <agent tenant guid> \\
+      --domain-suffix @contoso.onmicrosoft.com --test-contact tester@example.com --register-user <userId>=Requester,Owner --apply
 """
 from __future__ import annotations
 
@@ -65,8 +76,10 @@ def flag_of(cell) -> str:
 
 
 def clean_domain(label: str, code: str) -> str:
-    """'Central hub / platform - THIS IS THE dai DOMAIN … (ph)' -> 'Central hub / platform (ph)'; '[alias]' notes dropped."""
+    """'Central hub / platform - THIS IS THE dai DOMAIN … (ph)' -> 'Central hub / platform (ph)'; '[alias]' and
+    '(a note, with words)' notes dropped."""
     base = re.sub(r"\s*\[[^\]]*\]", "", label).split(" - ")[0]
+    base = re.sub(r"\s*\([^)]*[ ,][^)]*\)", "", base)
     base = re.sub(r"\s*\([a-z0-9]+\)\s*$", "", base).strip()
     return f"{base} ({code})"
 
@@ -133,8 +146,25 @@ def resolve(names: set[str], scope_map: dict[str, str], use_az: bool) -> dict[st
     return found
 
 
+def apply_test_scope(rows: list[dict], scope: str) -> None:
+    """Pilot test: every Azure role is given the one test resource group; repeats of a role there are merged, naming
+    the real resources it stands for."""
+    for r in rows:
+        merged: dict[str, dict] = {}
+        for g in r["azureRoles"]:
+            key = g["roleName"].lower()
+            if key in merged:
+                merged[key]["resourceName"] = f"{merged[key]['resourceName']}, {g['resourceName']}"[:200]
+            else:
+                merged[key] = {**g, "scope": scope, "resourceType": "Microsoft.Resources/resourceGroups"}
+        r["azureRoles"] = list(merged.values())
+        if merged:
+            note = f"TEST: the roles are assigned in the test resource group {scope.rsplit('/', 1)[-1]} (stands for the real resources named on each line)."
+            r["notes"] = f"{note} {r['notes'] or ''}".strip()[:2000]
+
+
 def build(tenant: str, project: str, classification: Path | None, responses: list[Path], scope_map: dict[str, str], use_az: bool,
-          resource_prefix: str = "") -> dict:
+          resource_prefix: str = "", test_scope: str | None = None) -> dict:
     import openpyxl
     rbac = read_response(responses) if responses else {}
     rows: list[dict] = []
@@ -203,11 +233,13 @@ def build(tenant: str, project: str, classification: Path | None, responses: lis
                             ", ".join(p.name for p in responses), now, resource_prefix))
 
     names = {x["resourceName"] for r in rows for x in r["azureRoles"]}
-    scopes = resolve(names, scope_map, use_az)
+    scopes = {} if test_scope else resolve(names, scope_map, use_az)
     for r in rows:
         for x in r["azureRoles"]:
             x["scope"] = scopes.get(x["resourceName"].lower())
             x["roleDefinitionId"] = None
+    if test_scope:
+        apply_test_scope(rows, test_scope)
     order = [e for e in ("Dev", "Test", "PreProd", "Prod") if e in envs or e == "Prod"]
     return {"project": {"projectId": project, "tenantName": tenant, "environments": order}, "mappingSheet": rows}
 
@@ -225,7 +257,48 @@ def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, not
     }
 
 
-def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: str | None, update: bool, database: str) -> None:
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator"}
+SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
+MAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+CONTACT_LISTS = ("pmo", "security", "idTeam", "roleTeam", "operators")
+CONTACT_ONE = ("securityManager", "idTeamManager", "roleTeamManager", "ownerManagerFallback")
+
+
+def users(pairs: list[str], project: str) -> list[dict]:
+    """--register-user USERID=Role,Role -> userAccess documents for the project (not sample data)."""
+    out = []
+    for pair in pairs:
+        user, _, roles = pair.partition("=")
+        wanted = [r.strip() for r in roles.split(",") if r.strip()]
+        if not SAFE_ID.match(user) or not wanted or set(wanted) - ROLES:
+            raise SystemExit(f"--register-user must be USERID=Role,Role with roles from {sorted(ROLES)}")
+        out.append({"id": f"{user}:{project}", "userId": user, "projectId": project, "roles": wanted, "isSample": False, "schemaVersion": 1})
+    return out
+
+
+def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None) -> dict:
+    """Pure: the project document after the import (keeps what was set live unless given again)."""
+    p = data["project"]
+    doc = dict(live) if live else {"id": p["projectId"], "projectId": p["projectId"], "contacts": {}, "schemaVersion": 2}
+    doc.update({"name": project_name or doc.get("name") or f"{p['tenantName']} data platform", "tenantName": p["tenantName"],
+                "environments": p["environments"], "isSample": False,
+                "groupNamePattern": rf"^azr-{p['tenantName'].lower()[:3]}-rg-data-(dev|tst|ppd|prd)-[a-z0-9]+-weu-[A-Za-z0-9-]+$"})
+    if domain_suffix:
+        doc["domainIdSuffix"] = domain_suffix.lower()
+    if tenant_id:
+        doc["tenantId"] = tenant_id.lower()
+    if test_contact:
+        c = dict(doc.get("contacts") or {})
+        for k in CONTACT_LISTS:
+            c[k] = [test_contact.lower()]
+        for k in CONTACT_ONE:
+            c[k] = test_contact.lower()
+        doc["contacts"] = c
+    return doc
+
+
+def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: str | None, update: bool, database: str,
+          test_contact: str | None = None, register: list[dict] | None = None) -> None:
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
         raise SystemExit("COSMOS_CONNECTION_STRING is not set")
@@ -235,15 +308,10 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
     projects = db.get_container_client("projects")
     p = data["project"]
     try:
-        doc = projects.read_item(p["projectId"], partition_key=p["projectId"])
+        live = projects.read_item(p["projectId"], partition_key=p["projectId"])
     except CosmosResourceNotFoundError:
-        doc = {"id": p["projectId"], "projectId": p["projectId"], "contacts": {}, "isSample": False, "schemaVersion": 2}
-    doc.update({"name": project_name or doc.get("name") or p["projectId"], "tenantName": p["tenantName"], "environments": p["environments"],
-                "groupNamePattern": rf"^azr-{p['tenantName'].lower()[:3]}-rg-data-(dev|tst|ppd|prd)-[a-z0-9]+-weu-[A-Za-z0-9-]+$"})
-    if domain_suffix:
-        doc["domainIdSuffix"] = domain_suffix.lower()
-    if tenant_id:
-        doc["tenantId"] = tenant_id.lower()
+        live = None
+    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact)
     projects.upsert_item(doc)
     sheet = db.get_container_client("mappingSheet")
     created = updated = kept = 0
@@ -255,10 +323,16 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
             if not update:
                 kept += 1
                 continue
-            live = sheet.read_item(row["id"], partition_key=row["projectId"])
-            sheet.replace_item(row["id"], {**row, "version": int(live.get("version", 1)) + 1})  # in-flight requests are reviewed again
+            live_row = sheet.read_item(row["id"], partition_key=row["projectId"])
+            sheet.replace_item(row["id"], {**row, "version": int(live_row.get("version", 1)) + 1})  # in-flight requests are reviewed again
             updated += 1
-    print(f"project {p['projectId']} ({p['tenantName']}): {created} rows created, {updated} updated, {kept} kept (use --update to replace)")
+    access = db.get_container_client("userAccess")
+    for u in register or []:
+        access.upsert_item(u)
+        print(f"  registered {u['userId']} on {u['projectId']}: {', '.join(u['roles'])}")
+    contacts = "test contact " + test_contact if test_contact else ("contacts kept" if doc.get("contacts") else "NO contacts (no mail goes out)")
+    print(f"project {p['projectId']} ({p['tenantName']}, {doc.get('tenantId') or 'agent tenant'}, {doc.get('domainIdSuffix') or 'no domain'}, {contacts}): "
+          f"{created} rows created, {updated} updated, {kept} kept (use --update to replace)")
 
 
 def main() -> int:
@@ -275,15 +349,25 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--update", action="store_true", help="with --apply: replace existing rows (bumps their version)")
     ap.add_argument("--domain-suffix")
-    ap.add_argument("--tenant-id")
+    ap.add_argument("--tenant-id", help="Entra tenant GUID of this project (the agent's own tenant for a pilot test)")
+    ap.add_argument("--test-scope", help="pilot test: every Azure role in this one resource group (/subscriptions/<id>/resourceGroups/<name>)")
+    ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox")
+    ap.add_argument("--register-user", action="append", default=[], metavar="USERID=Role,Role", help="register a signed-in user on the project (repeatable)")
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
     args = ap.parse_args()
     if not args.classification and not args.response:
         ap.error("give --classification and/or --response")
     if args.tenant_id and not GUID.match(args.tenant_id):
         ap.error("--tenant-id must be the tenant's GUID")
+    if args.test_scope and not re.match(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}$", args.test_scope):
+        ap.error("--test-scope must be /subscriptions/<id>/resourceGroups/<name>")
+    if args.test_contact and not MAIL.match(args.test_contact):
+        ap.error("--test-contact must be one mail address")
+    if args.project.upper().startswith("SAMPLE-"):
+        ap.error("real workbooks go into a real project id (e.g. PEST), not a SAMPLE- one")
+    register = users(args.register_user, args.project)
     scope_map = json.loads(args.scope_map.read_text(encoding="utf-8")) if args.scope_map else {}
-    data = build(args.tenant, args.project, args.classification, args.response, scope_map, args.resolve, args.resource_prefix)
+    data = build(args.tenant, args.project, args.classification, args.response, scope_map, args.resolve, args.resource_prefix, args.test_scope)
     out = args.out or Path(__file__).resolve().parent.parent / ".local" / f"import-{args.project.lower()}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -294,7 +378,7 @@ def main() -> int:
           f"{sum(r['groupState'] == 'ToBeCreated' for r in rows)} to be created, "
           f"{sum(len(r['azureRoles']) for r in rows)} Azure roles ({unresolved} without a resolved scope). Wrote {out}")
     if args.apply:
-        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database)
+        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register)
     return 0
 
 

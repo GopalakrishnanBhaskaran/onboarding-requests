@@ -22,10 +22,14 @@ async function as(browser: Browser, userId: string): Promise<{ ctx: BrowserConte
 }
 
 /** Unique per run: the in-memory store lives as long as the local API, and the review flags duplicate requests. */
-const enterpriseId = (tag: string) => `sample.e2e.${tag}.${Date.now().toString(36)}`;
+const enterpriseId = (tag: string) => `sample.e2e.${tag}.${Date.now().toString(36)}@company.example`;
 
-async function submit(page: Page, fields: { enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string; environment?: string }) {
+async function submit(page: Page, fields: {
+  enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string; environment?: string; tenant?: string;
+}) {
   await page.goto('/#/requests/new');
+  // The tenant is chosen on the form itself (one project per tenant).
+  if (fields.tenant) await page.getByRole('combobox', { name: 'Tenant', exact: true }).selectOption(fields.tenant);
   await expect(page.getByRole('heading', { name: 'New onboarding request' })).toBeVisible();
   // The flow and who does what are stated upfront.
   await expect(page.getByText('3. Owner approval')).toBeVisible();
@@ -38,7 +42,12 @@ async function submit(page: Page, fields: { enterpriseId: string; resource: stri
   if (fields.environment) await page.getByLabel('Environment').selectOption(fields.environment);
   await page.getByLabel('Resource').selectOption(fields.resource);
   await page.getByLabel('Access level').selectOption(fields.accessLevel);
-  await page.getByLabel('Justification').fill(fields.justification);
+  // A ready template, prefilled with the choices; submitting it unfilled is refused.
+  await page.getByRole('button', { name: 'Insert into justification' }).click();
+  await expect(page.getByRole('textbox', { name: 'Justification' })).toHaveValue(new RegExp(`Access needed: ${fields.accessLevel} on `));
+  await expect(page.getByText('Replace every [ … ] of the template with your own details.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled();
+  await page.getByRole('textbox', { name: 'Justification' }).fill(fields.justification);
   await page.getByLabel('Owner (sign-in name)').fill(fields.owner);
   await page.getByRole('button', { name: 'Submit request' }).click();
   await expect(page.getByRole('heading', { level: 1, name: /^Request [0-9a-f]{8}/ })).toBeVisible();
@@ -166,12 +175,10 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
 test('tenant project: environment, the Azure roles and risk flags are on the decision page; Prod is returned', async ({ browser }) => {
   const alice = await as(browser, 'sample-user-alice');
   await alice.page.goto('/');
-  await alice.page.getByRole('combobox', { name: 'Project' }).click();
-  await alice.page.getByRole('option', { name: /SAMPLE PEST data platform/ }).click();
   await expect(alice.page.getByText('Tenant:').first()).toBeVisible();
-  const mail = `${enterpriseId('pest')}@company.example`;
   const id = await submit(alice.page, {
-    enterpriseId: mail,
+    tenant: 'SAMPLE-PEST',
+    enterpriseId: enterpriseId('pest'),
     environment: 'Dev',
     resource: 'SAMPLE PEST Platform (ph)',
     accessLevel: 'Support Reader',
@@ -182,7 +189,7 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
 
   const olivia = await as(browser, 'sample-user-olivia');
   await olivia.page.goto('/');
-  await olivia.page.getByRole('combobox', { name: 'Project' }).click();
+  await olivia.page.getByRole('combobox', { name: 'Switch tenant' }).click();
   await olivia.page.getByRole('option', { name: /SAMPLE PEST data platform/ }).click();
   await open(olivia.page, id);
   const panel = olivia.page.locator('section[aria-labelledby="decision-h"]');
@@ -194,7 +201,7 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
   await expectStage(olivia.page, 'Awaiting Security');
 
   const prod = await submit(alice.page, {
-    enterpriseId: `${enterpriseId('prd')}@company.example`,
+    enterpriseId: enterpriseId('prd'),
     environment: 'Prod',
     resource: 'SAMPLE PEST Platform (ph)',
     accessLevel: 'Support Reader',

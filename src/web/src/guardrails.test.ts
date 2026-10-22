@@ -2,7 +2,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { href, parse } from './lib/router';
-import { AGENT_BANNER, APPROVE_LABEL, FLOW_OVERVIEW, WHO_DOES_WHAT, whoDoesWhat } from './lib/flow';
+import {
+  AGENT_BANNER, AGENT_TAP_BANNER, APPROVE_LABEL, FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, WHO_DOES_WHAT, justificationTemplate, whoDoesWhat,
+} from './lib/flow';
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -59,9 +61,31 @@ describe('scope guardrails', () => {
     expect(whoDoesWhat(true)[0][1]).toMatch(/Never approves\. Only after both approvals/);
     expect(whoDoesWhat(true).find(([who]) => who === 'ID team')?.[1]).toMatch(/Temporary Access Pass/);
     expect(AGENT_BANNER).toMatch(/never approves.*Only after both approvals.*ID team issues the Temporary Access Pass/);
+    // Agent TAP on: the agent mails the joiner's pass; still never approves; the ID team takes what the agent leaves.
+    expect(whoDoesWhat(true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*one-time Temporary Access Pass.*MFA/);
+    expect(AGENT_TAP_BANNER).toMatch(/never approves.*Only after both approvals.*one-time Temporary Access Pass/);
     const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
     expect(form).toContain('FLOW_OVERVIEW.map');
-    expect(form).toContain('whoDoesWhat(agent).map');
+    expect(form).toContain('whoDoesWhat(agent, tap).map');
+  });
+
+  it('offers resource and access level as dropdowns only, and a justification template that must be filled in', () => {
+    const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
+    for (const label of ['Resource', 'Access level', 'Environment', 'Tenant']) {
+      const field = form.slice(form.indexOf(`label="${label}"`));
+      expect(field.slice(0, field.indexOf('</Field>'))).toContain('<Select');
+      expect(field.slice(0, field.indexOf('</Field>'))).not.toContain('<Input');
+    }
+    const t = justificationTemplate('Support Reader', 'SAMPLE PEST Platform (ph)', 'Dev');
+    expect(t).toContain('Access needed: Support Reader on SAMPLE PEST Platform (ph) (Dev).');
+    expect(TEMPLATE_PLACEHOLDER.test(t)).toBe(true);
+    const filled = t.replace(/\[[^\]]*\]/g, 'Support engineer');
+    expect(TEMPLATE_PLACEHOLDER.test(filled)).toBe(false);
+  });
+
+  it('shows no SAMPLE wording in the screens', () => {
+    const offenders = files.flatMap((f) => lines(f).filter((l) => /SAMPLE|sample-access/.test(l.code)).map((l) => `${f}:${l.n}: ${l.code.trim()}`));
+    expect(offenders).toEqual([]);
   });
 });
 

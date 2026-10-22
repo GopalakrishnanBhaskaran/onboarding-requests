@@ -199,8 +199,12 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var missing = RequestFields.Required.Where(f => Value(clean, f) is null).Select(RequestFields.Label).ToList();
         if (missing.Count > 0) throw AppException.Incomplete(missing);
 
-        if (!EnterpriseIdFormat().IsMatch(clean.EnterpriseId!) && !EnterpriseMailFormat().IsMatch(clean.EnterpriseId!))
-            throw AppException.Invalid("Enterprise ID must be the joiner's enterprise mail address (jane.doe@company.com) or a user name of letters, digits, dot, dash and underscore (2-64 characters).");
+        // A mail address only (22 Oct 2026): notifications and — with the agent TAP — the sign-in details go there.
+        if (!EnterpriseMailFormat().IsMatch(clean.EnterpriseId!))
+            throw AppException.Invalid("Enterprise ID must be the joiner's enterprise mail address, e.g. jane.doe@company.com: notifications and the sign-in details are sent there.");
+        // The form's justification template marks what to fill in as [ … ]: an unfilled template is not a justification.
+        if (TemplatePlaceholder().IsMatch(clean.Justification!))
+            throw AppException.Invalid("Justification: replace every [ … ] of the template with your own details before submitting.");
         if (!NameFormat().IsMatch(clean.FirstName!) || !NameFormat().IsMatch(clean.LastName!))
             throw AppException.Invalid("First and last name may contain only letters, spaces, dots, hyphens and apostrophes.");
         if (!SignInFormat().IsMatch(clean.Owner!))
@@ -238,14 +242,15 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(spaced.ToLowerInvariant());
     }
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9._-]{1,63}$")]
-    private static partial Regex EnterpriseIdFormat();
-
     [GeneratedRegex("^[a-z0-9][a-z0-9._'+-]{0,63}@[a-z0-9-]+(\\.[a-z0-9-]+)+$")]
     private static partial Regex EnterpriseMailFormat();
 
     [GeneratedRegex(@"^[\p{L}][\p{L} .'-]{0,99}$")]
     private static partial Regex NameFormat();
+
+    /// <summary>A placeholder of the form's justification template (src/web/src/lib/flow.ts, same pattern).</summary>
+    [GeneratedRegex(@"\[[a-z][a-z0-9 ,./()-]{1,160}\]")]
+    public static partial Regex TemplatePlaceholder();
 
     [GeneratedRegex("^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
     private static partial Regex SignInFormat();

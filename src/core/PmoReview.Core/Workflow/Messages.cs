@@ -1,4 +1,5 @@
 using System.Globalization;
+using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 
 namespace PmoReview.Core.Workflow;
@@ -28,7 +29,10 @@ public static class Recipients
     };
 }
 
-/// <summary>Plain-text notification templates. Short and direct. Never contain a TAP or other secret.</summary>
+/// <summary>
+/// Plain-text notification templates. Short and direct. Never contain a TAP or other secret — except
+/// <see cref="SignInDetails"/>, which is sent once directly and stored only with both secrets masked.
+/// </summary>
 public static class Messages
 {
     public const string WhoDoesWhat =
@@ -43,7 +47,10 @@ public static class Messages
         "The named Owner approves the business need. Security approves risk and access level. " +
         "Only after both approvals the AI agent creates the user ID, group and membership" +
         (s.AgentRoleAssignment ? " and assigns the approved Azure role where the mapping sheet allows it" : "") + ". " +
-        "The ID team issues the Temporary Access Pass and handles what the agent leaves to it (guests, privileged access, exceptions). " +
+        (s.AgentTap && s.MailEnabled
+            ? "For a new account the agent also mails the joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps. " +
+              "The ID team handles what the agent leaves to it (guests, privileged access, exceptions). "
+            : "The ID team issues the Temporary Access Pass and handles what the agent leaves to it (guests, privileged access, exceptions). ") +
         $"The role assignment team assigns the {(s.AgentRoleAssignment ? "other " : "")}roles. PMO owns the mapping sheet and is informed only.";
 
     public static string Short(AccessRequest r) => r.Id.Length > 8 ? r.Id[..8] : r.Id;
@@ -149,9 +156,52 @@ public static class Messages
     public static (string, string) TapCleanup(AccessRequest r, WorkflowSettings s) => (
         $"Delete the Temporary Access Pass: request {Short(r)}",
         $"{Who(r)} has signed in and registered a permanent method, but a Temporary Access Pass is still on the account. " +
-        $"Delete it in Entra (the agent never deletes anything). {Link(s, r)}");
+        $"Delete it in Entra (the agent never deletes anything; the user can also delete it on Security info). {Link(s, r)}");
 
-    public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null)
+    /// <summary>
+    /// Agent TAP: the one mail with the joiner's sign-in name, initial password and one-time TAP, and how to set up MFA.
+    /// Called twice: with the real values for the mail that is sent, and with <see cref="SecretMasker.Mask"/> for the copy
+    /// the app keeps. Without the password (account created in an earlier run) the user sets one after MFA.
+    /// </summary>
+    public static (string Subject, string Body) SignInDetails(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass,
+        DateTimeOffset expires, WorkflowSettings s)
+    {
+        var tenant = project?.TenantName ?? project?.Name;
+        var grants = scope.Grants();
+        var access = grants.Count == 0 ? $"{scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
+            : string.Join(", ", grants.Select(g => g.RoleName).Distinct(StringComparer.OrdinalIgnoreCase));
+        var lines = new List<string>
+        {
+            $"Hello {r.FirstName},",
+            "",
+            $"Your account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created after the Owner and Security approved request {Short(r)}.",
+            "",
+            $"Sign-in name: {upn}",
+            password is null ? "Temporary password (not included): see step 6" : $"Temporary password: {password}",
+            $"Temporary Access Pass: {pass}",
+            $"The Temporary Access Pass works once and expires {Time(expires)}.",
+            "",
+            "Set up multi-factor authentication (MFA) first, before the pass expires:",
+            "1. Open a private (InPrivate / Incognito) browser window and go to https://aka.ms/mysecurityinfo",
+            "2. Enter your sign-in name. When asked, enter the Temporary Access Pass (not the password).",
+            "3. Select \"Add sign-in method\" and choose Microsoft Authenticator. Install the Microsoft Authenticator app on your phone, add a work or school account, and scan the QR code. Approve the test notification. Finish within 10 minutes of signing in.",
+            "4. Still on Security info: delete the Temporary Access Pass entry if you see one.",
+            "5. Sign out and close the private window.",
+            password is null
+                ? "6. Set your password at https://aka.ms/sspr (it uses the Microsoft Authenticator you just added). If that page is not available to you, ask the ID team."
+                : "6. Sign in again at https://myapps.microsoft.com with your sign-in name and the temporary password. Choose a new password when asked and approve the sign-in in Microsoft Authenticator.",
+            "",
+            $"Your access: '{r.AccessLevel}' on '{r.Resource}' through group {scope.EntraGroup} ({access}). You get another mail when the access is ready.",
+            "",
+            "Keep this mail private and delete it once you have set up your account. Nobody will ask you for the pass or the password.",
+            "If the pass expired before you used it, ask the ID team for a new one.",
+            "",
+            $"Request {Short(r)} · requested by {r.CreatedByName}.",
+        };
+        return ($"Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details and MFA set-up", string.Join("\n", lines));
+    }
+
+    public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null, bool signInDetailsMailed = false)
     {
         var grants = scope.Grants();
         var roles = grants.Count == 0 ? $"role {scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
@@ -164,8 +214,11 @@ public static class Messages
             (r.Environment is null ? "" : $"Environment: {r.Environment}\n") +
             $"Your sign-in name (domain-specific ID): {r.DomainId}\n" +
             $"Group: {scope.EntraGroup}\n{roles}\n\n" +
-            "How to sign in: go to https://mysignins.microsoft.com. The ID team gives you a one-time Temporary Access Pass directly and separately; " +
-            "it is never sent by mail. After the first sign-in, register a permanent sign-in method (Microsoft Authenticator or a passkey).\n\n" +
+            (signInDetailsMailed
+                ? "How to sign in: use the sign-in details mailed to you earlier (subject \"Your new account…: sign-in details and MFA set-up\"). " +
+                  "If you have not set up Microsoft Authenticator yet, follow the steps in that mail first.\n\n"
+                : "How to sign in: go to https://mysignins.microsoft.com. The ID team gives you a one-time Temporary Access Pass directly and separately; " +
+                  "it is never sent by mail. After the first sign-in, register a permanent sign-in method (Microsoft Authenticator or a passkey).\n\n") +
             $"Request {Short(r)} · requested by {r.CreatedByName} · approved by the Owner and Security.");
     }
 

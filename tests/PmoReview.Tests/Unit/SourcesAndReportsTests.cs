@@ -97,8 +97,8 @@ public class ReportsTests
         var done = await app.To(RequestStatus.Verifying);
         app.UserCompletesFirstSignIn();
         await app.RunWorker();
-        var returned = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.e5005", resource: "SAMPLE Legacy Tool"));
-        var waiting = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.e6006"));
+        var returned = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.e5005@sample-corp.invalid", resource: "SAMPLE Legacy Tool"));
+        var waiting = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.e6006@sample-corp.invalid"));
         await app.RunWorker();
         app.Clock.Advance(TimeSpan.FromHours(3));
 

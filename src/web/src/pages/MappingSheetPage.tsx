@@ -229,7 +229,7 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
           <Subtitle2 as="h2">Azure roles the AI agent assigns (PMO)</Subtitle2>
           <Caption1 className={s.muted}>
             The group's Azure roles from the response document, one per line: <code>Role name | resource name | Azure scope</code>, for example
-            <code> Reader | rg-pmo-sample-access | /subscriptions/&lt;id&gt;/resourceGroups/rg-pmo-sample-access</code>. Built-in role names
+            <code> Reader | rg-data-dev-001 | /subscriptions/&lt;id&gt;/resourceGroups/rg-data-dev-001</code>. Built-in role names
             (Reader, Storage Blob Data Reader/Contributor, Key Vault …) resolve to their ids. After both approvals the AI agent sets up every
             line if all roles and scopes are on its approved allow-list; otherwise the role assignment team does it. Empty clears the list.
           </Caption1>

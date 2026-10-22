@@ -11,7 +11,7 @@ namespace PmoReview.Core.Workflow;
 
 /// <summary>
 /// The AI agent's side of the flow: reviews, validates, summarises, routes, tracks, verifies and reports. It never
-/// approves, creates or assigns anything. <see cref="AdvanceAsync"/> is idempotent: it looks at where a request stands
+/// approves. It creates or assigns only with the approved v2.1 settings, after both approvals (WorkflowAgent.Provisioning). <see cref="AdvanceAsync"/> is idempotent: it looks at where a request stands
 /// and does the next agent step, if any. The API calls it after each human action; the worker calls it for every open
 /// request on a timer (and is the only place with the read-only Entra reader in the pilot).
 /// </summary>
@@ -30,7 +30,8 @@ public sealed partial class WorkflowAgent(
     IDirectoryReader? directory = null,
     IAiAssistant? assistant = null,
     IDirectoryWriter? writer = null,
-    IRoleAssignmentWriter? roleWriter = null)
+    IRoleAssignmentWriter? roleWriter = null,
+    IDirectMail? directMail = null)
 {
     private const string Agent = WorkflowState.AgentActor;
     private const int MaxStepsPerCall = 8;
@@ -598,7 +599,7 @@ public sealed partial class WorkflowAgent(
         var next = (flow with { RoleTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks } })
             .Log(now, Agent, "role-team-verified", "AI verified the role assignment matches the approved role exactly.")
             .To(RequestStatus.Verifying, WaitingOn.User, now, Agent, "verify-start", "Final verification: waiting for the user's sign-in, permanent method and TAP removal.");
-        var (subject, body) = Messages.AccessReady(r, flow.Scope!, project);
+        var (subject, body) = Messages.AccessReady(r, flow.Scope!, project, flow.IdTeamTask?.Agent?.SignInDetailsSentAt is not null);
         return new Step(r with { Flow = next },
         [
             c => notifier.EnqueueAsync(r.ProjectId, r.Id, "access-ready", NotificationKind.AccessReady, Recipients.User(r).Concat(Recipients.Requester(r)), subject, body, c),

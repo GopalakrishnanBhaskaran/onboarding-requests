@@ -13,7 +13,7 @@ import { RequestDetailPage } from './pages/RequestDetailPage';
 import { QueuePage } from './pages/QueuePage';
 import { MappingSheetPage } from './pages/MappingSheetPage';
 import { OperatorPage } from './pages/OperatorPage';
-import { AGENT_BANNER, BANNER } from './lib/flow';
+import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
 const PROJECT_KEY = 'pmo-review.project';
 
@@ -103,14 +103,14 @@ function Shell() {
         <div className={s.grow} />
         {me && me.projects.length > 0 && project && (
           <Dropdown
-            aria-label="Project"
-            value={project.name}
+            aria-label="Switch tenant"
+            value={project.tenantName ? `${project.tenantName} · ${project.name}` : project.name}
             selectedOptions={[project.projectId]}
             onOptionSelect={(_, d) => d.optionValue && choose(d.optionValue)}
           >
             {me.projects.map((p) => (
-              <Option key={p.projectId} value={p.projectId} text={p.name}>
-                {p.name}{p.tenantName ? ` · tenant ${p.tenantName}` : ''} ({p.roles.join(', ')})
+              <Option key={p.projectId} value={p.projectId} text={p.tenantName ? `${p.tenantName} · ${p.name}` : p.name}>
+                {p.tenantName ? `Tenant ${p.tenantName} · ${p.name}` : p.name} ({p.roles.join(', ')})
               </Option>
             ))}
           </Dropdown>
@@ -121,7 +121,7 @@ function Shell() {
 
       {/* Permanent, non-dismissible scope statement. */}
       <MessageBar intent="info" layout="multiline" style={{ borderRadius: 0 }}>
-        <MessageBarBody>{me?.agentProvisioning ? AGENT_BANNER : BANNER}</MessageBarBody>
+        <MessageBarBody>{me?.agentProvisioning ? (me.agentTap ? AGENT_TAP_BANNER : AGENT_BANNER) : BANNER}</MessageBarBody>
       </MessageBar>
       {me?.mailEnabled && me.mailRedirectTo && (
         <MessageBar intent="warning" style={{ borderRadius: 0 }}>
@@ -150,18 +150,20 @@ function Shell() {
             </MessageBarBody>
           </MessageBar>
         )}
-        {me && project && <Page route={route} project={project} onOpenProject={choose} agent={!!me.agentProvisioning} />}
+        {me && project && <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} />}
       </main>
     </div>
   );
 }
 
-function Page({ route, project, onOpenProject, agent }: { route: Route; project: ProjectSummary; onOpenProject: (id: string) => void; agent: boolean }) {
+function Page({ route, project, projects, onOpenProject, agent, tap }: {
+  route: Route; project: ProjectSummary; projects: ProjectSummary[]; onOpenProject: (id: string) => void; agent: boolean; tap: boolean;
+}) {
   switch (route.page) {
     case 'new':
-      return <RequestFormPage key="new" project={project} agent={agent} />;
+      return <RequestFormPage key="new" project={project} projects={projects} onProject={onOpenProject} agent={agent} tap={tap} />;
     case 'edit':
-      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} />;
+      return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} />;
     case 'request':
       return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
     case 'queue':

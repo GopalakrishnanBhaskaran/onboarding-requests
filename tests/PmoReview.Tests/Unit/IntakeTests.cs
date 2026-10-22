@@ -14,7 +14,7 @@ public class IntakeTests
     public async Task Incomplete_request_is_rejected_with_exactly_what_is_missing_and_nothing_is_saved()
     {
         var app = TestApp.Create();
-        var r = await app.Submit(new { enterpriseId = "sample.e1001", firstName = "Sample", resource = "SAMPLE Databricks Engineering" });
+        var r = await app.Submit(new { enterpriseId = "sample.e1001@sample-corp.invalid", firstName = "Sample", resource = "SAMPLE Databricks Engineering" });
         Assert.Equal(400, r.Status);
         Assert.Equal("incomplete_request", r.ErrorCode);
         var missing = r.Json.GetProperty("error").GetProperty("details").EnumerateArray().Select(d => d.GetString()!).ToArray();
@@ -36,10 +36,10 @@ public class IntakeTests
     {
         var (clean, fixes) = RequestService.Validate(new RequestInput
         {
-            EnterpriseId = " Sample.E1001 ", FirstName = "  sample  ", LastName = "JOINER", Resource = "SAMPLE   Databricks  Engineering",
+            EnterpriseId = " Sample.E1001@Sample-Corp.invalid ", FirstName = "  sample  ", LastName = "JOINER", Resource = "SAMPLE   Databricks  Engineering",
             AccessLevel = "User", Justification = "SAMPLE: builds pipelines in the dev workspace for the team.", Owner = "Owner.Name@Sample.Invalid",
         });
-        Assert.Equal("sample.e1001", clean.EnterpriseId);
+        Assert.Equal("sample.e1001@sample-corp.invalid", clean.EnterpriseId);
         Assert.Equal("Sample", clean.FirstName);
         Assert.Equal("Joiner", clean.LastName);
         Assert.Equal("SAMPLE Databricks Engineering", clean.Resource);
@@ -52,7 +52,7 @@ public class IntakeTests
     {
         var (clean, _) = RequestService.Validate(new RequestInput
         {
-            EnterpriseId = "e1", FirstName = "McKenzie", LastName = "de Vries", Resource = "R", AccessLevel = "User",
+            EnterpriseId = "e1@sample-corp.invalid", FirstName = "McKenzie", LastName = "de Vries", Resource = "R", AccessLevel = "User",
             Justification = "SAMPLE: x", Owner = "o@sample.invalid",
         });
         Assert.Equal("McKenzie", clean.FirstName);
@@ -61,8 +61,9 @@ public class IntakeTests
 
     [Theory]
     [InlineData("bad id!", "Sample", "o@sample.invalid", "Enterprise ID")]
-    [InlineData("e1001", "Sample<script>", "o@sample.invalid", "First and last name")]
-    [InlineData("e1001", "Sample", "not-a-sign-in", "Owner must be")]
+    [InlineData("e1001", "Sample", "o@sample.invalid", "enterprise mail address")] // a short id: the sign-in details need a mailbox
+    [InlineData("e1001@sample-corp.invalid", "Sample<script>", "o@sample.invalid", "First and last name")]
+    [InlineData("e1001@sample-corp.invalid", "Sample", "not-a-sign-in", "Owner must be")]
     public void Invalid_formats_are_rejected(string enterpriseId, string first, string owner, string message)
     {
         var e = Assert.Throws<AppException>(() => RequestService.Validate(new RequestInput
@@ -73,10 +74,30 @@ public class IntakeTests
     }
 
     [Fact]
+    public async Task An_unfilled_justification_template_is_refused_and_a_filled_one_is_accepted()
+    {
+        var app = TestApp.Create();
+        // The form's template (src/web/src/lib/flow.ts), with the request's own choices filled in by the form.
+        const string template = "Role: [job title] in the [team name] team.\nAccess needed: User on SAMPLE Databricks Engineering.\n" +
+                                "Why: to [the tasks that need this access, e.g. investigate support tickets by reading pipeline logs and storage data].\n" +
+                                "Start: [dd-mm-yyyy]. Duration: [permanent while in the team / until dd-mm-yyyy].\nReference: [ticket or change number]. Manager: [manager name].";
+        var r = await app.Submit(TestApp.Intake(justification: template));
+        Assert.Equal(400, r.Status);
+        Assert.Contains("of the template with your own details", r.Body);
+
+        var filled = template.Replace("[job title]", "Data engineer").Replace("[team name]", "SAMPLE ingestion")
+            .Replace("[the tasks that need this access, e.g. investigate support tickets by reading pipeline logs and storage data]", "build and run ingestion pipelines in the dev workspace")
+            .Replace("[dd-mm-yyyy]", "03-11-2026").Replace("[permanent while in the team / until dd-mm-yyyy]", "permanent while in the team")
+            .Replace("[ticket or change number]", "SAMPLE-CHG-1001").Replace("[manager name]", "Sample Manager");
+        Assert.Equal(201, (await app.Submit(TestApp.Intake(justification: filled))).Status);
+        Assert.DoesNotMatch(RequestService.TemplatePlaceholder(), "Reads [PEST] logs"); // capitals are not a placeholder
+    }
+
+    [Fact]
     public async Task Domain_specific_id_is_derived_from_the_enterprise_id_and_project_domain()
     {
         var app = TestApp.Create();
-        var r = await app.Submit(TestApp.Intake(enterpriseId: "Sample.E2002"));
+        var r = await app.Submit(TestApp.Intake(enterpriseId: "Sample.E2002@Sample-Corp.invalid"));
         Assert.Equal("sample.e2002@sample.invalid", r.Request.GetProperty("domainId").GetString());
         Assert.Equal("sample.e2002@contoso.invalid", DomainIds.Derive("Sample.E2002", "@Contoso.invalid"));
         Assert.Equal("sample.e2002", DomainIds.Derive("Sample.E2002", null));
@@ -88,7 +109,7 @@ public class IntakeTests
         var app = TestApp.Create();
         var r = await app.Submit(new
         {
-            enterpriseId = "sample.e1001", firstName = "Sample", lastName = "Joiner", resource = "SAMPLE Databricks Engineering", accessLevel = "User",
+            enterpriseId = "sample.e1001@sample-corp.invalid", firstName = "Sample", lastName = "Joiner", resource = "SAMPLE Databricks Engineering", accessLevel = "User",
             justification = "SAMPLE: joins the data engineering team to build and run pipelines.", owner = "sample-user-olivia@sample.invalid",
             createdBy = TestApp.Olivia, domainId = "someone.else@sample.invalid", flow = new { status = "Completed" }, revision = 99,
         });

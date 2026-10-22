@@ -5,7 +5,8 @@
 #       Read-only. Writes the what-if to .local/whatif.txt for Gokul to review.
 #
 #   tools/deploy_free.sh app <subscriptionId>
-#       App-only redeploy (no infrastructure change): API + SPA + SAMPLE seed. Covered by the original approval.
+#       App-only redeploy (no infrastructure change): API + SPA. Covered by the original approval. The live app holds the
+#       real tenants (tools/import_workbook.py); SAMPLE data is seeded only with SEED_SAMPLE=1.
 #
 #   tools/deploy_free.sh apply <subscriptionId> <params.json> --approved-by "<name> <date>"
 #       ONLY after Gokul replied "approved" to that exact what-if. Creates resources, sets the Cosmos
@@ -38,6 +39,14 @@
 #       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
 #
+#   tools/deploy_free.sh tap <subscriptionId> on [--lifetime <minutes>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh tap <subscriptionId> off [--approved-by "<name> <date>"]
+#       Agent TAP (requested by Gokul 22 Oct 2026): for an account it has just created after both approvals, the agent
+#       mails a one-time Temporary Access Pass, the initial password and the MFA steps to the Enterprise ID mail, once.
+#       "on": Graph application permission UserAuthMethod-TAP.ReadWrite.All + worker/SWA AGENT_TAP=true. Needs agent
+#       provisioning and mail on. Shows the tenant's TAP policy. Security change: dry run without --approved-by.
+#       "off": AGENT_TAP=false at once (the ID team issues passes again); removing the permission needs --approved-by.
+#
 #   tools/deploy_free.sh environment <subscriptionId> <pilot|dev|test|prod> [--redirect <mail>]
 #       Settings only (worker + SWA): APP_ENVIRONMENT, NOTIFY_REDIRECT_TO (test environments: every mail goes to that
 #       one address, naming the intended recipients), AGENT_TENANT_ID (tenant separation). prod refuses a redirect.
@@ -49,7 +58,7 @@
 #       to NOTIFY_SENDER=AcsEmail.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -220,6 +229,10 @@ provisioning() {
   if $rg_new; then echo "  Resource group: create $rg_name in $rg_loc, empty (free), tags pilot=pmo-review purpose=sample-access"; fi
   for perm in "${GRAPH_PROVISION_ROLES[@]}"; do echo "  Graph application permission: $perm"; done
   echo "  Azure: Role Based Access Control Administrator at $scope, condition: only roles {$roles}, only User/Group principals"
+  local held_cond; held_cond=$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "[0].condition" -o tsv 2>/dev/null || true)
+  if [[ -n "$held_cond" && "$held_cond" != "$(rbac_condition "$roles")" ]]; then
+    echo "  (replaces the current condition at $scope, which allows other roles)"
+  fi
   echo "  Worker settings: AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true ROLE_ASSIGN_ALLOWED_ROLES=$roles ROLE_ASSIGN_SCOPES=$scope"
   echo "  SWA settings: AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true"
   if [[ -z "${APPROVED_BY:-}" ]]; then
@@ -241,12 +254,21 @@ provisioning() {
       echo "Already granted: $perm"
     fi
   done
-  if [[ "$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "length(@)" -o tsv)" == "0" ]]; then
+  local existing existing_id existing_cond
+  existing=$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "[0].[id, condition]" -o tsv)
+  existing_id=$(cut -f1 <<<"$existing"); existing_cond=$(cut -f2- <<<"$existing")
+  if [[ -n "$existing_id" && "$existing_cond" != "$(rbac_condition "$roles")" ]]; then
+    # Another role list (e.g. Reader -> Reader + Storage Blob Data Reader for a response document's roles): replace it.
+    az role assignment delete --ids "$existing_id" -o none
+    echo "Removed the old condition at $scope (other role list)"
+    existing_id=""
+  fi
+  if [[ -z "$existing_id" ]]; then
     az role assignment create --assignee-object-id "$mi" --assignee-principal-type ServicePrincipal --role "$RBAC_ADMIN_ROLE_ID" \
       --scope "$scope" --condition "$(rbac_condition "$roles")" --condition-version 2.0 -o none
-    echo "Assigned Role Based Access Control Administrator (constrained) at $scope"
+    echo "Assigned Role Based Access Control Administrator (constrained to roles {$roles}) at $scope"
   else
-    echo "Already assigned: Role Based Access Control Administrator at $scope (condition unchanged; remove it with 'off' to change the roles)"
+    echo "Already assigned: Role Based Access Control Administrator at $scope with the same roles"
   fi
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_PROVISIONING=true AGENT_ROLE_ASSIGNMENT=true \
     "ROLE_ASSIGN_ALLOWED_ROLES=$roles" "ROLE_ASSIGN_SCOPES=$scope"
@@ -255,6 +277,76 @@ provisioning() {
   list_graph_roles "$mi"
   echo "Note: new Graph permissions can take up to ~24 h to reach the worker's managed identity token (VERIFIED_FACTS F61)."
   echo "Until then the agent's writes are refused and it retries every run; the request page says it is waiting for the permission."
+}
+
+# Agent TAP (requested by Gokul 22 Oct 2026, approval-gated): least-privileged Graph TAP permission (VERIFIED_FACTS F66).
+# Tenant-wide by nature: the identity could create a TAP for any user; the code does it only for a user it created
+# itself in the same request, after both approvals, and mails it only to that request's Enterprise ID mail.
+GRAPH_TAP_ROLE=UserAuthMethod-TAP.ReadWrite.All
+
+tap_policy() {
+  az rest --method GET --url "https://graph.microsoft.com/v1.0/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/TemporaryAccessPass" \
+    --query "{state:state, defaultLifetime:defaultLifetimeInMinutes, maxLifetime:maxLifetimeInMinutes, oneTimeOnly:isUsableOnce, length:defaultLength, forGroups:includeTargets[].id}" -o json 2>/dev/null || true
+}
+
+agent_tap() {
+  local mode="$1" lifetime="${2:-480}" name mi swa graph role assignment policy max sender prov
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  role=$(graph_role_id "$GRAPH_TAP_ROLE")
+  [[ -n "$role" ]] || { echo "Could not find $GRAPH_TAP_ROLE on Microsoft Graph."; return 1; }
+  assignment=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[?appRoleId=='$role'].id | [0]" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_TAP=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=false -o none
+    echo "Agent TAP switched off on $name and $swa: the ID team issues every Temporary Access Pass again."
+    [[ -n "$assignment" ]] || { echo "Not held: $GRAPH_TAP_ROLE"; return 0; }
+    if [[ -z "${APPROVED_BY:-}" ]]; then echo "Would remove: $GRAPH_TAP_ROLE (dry run; pass --approved-by after explicit approval)"
+    else az rest --method DELETE --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments/$assignment" -o none; echo "Removed: $GRAPH_TAP_ROLE"; fi
+    return 0
+  fi
+
+  [[ "$lifetime" =~ ^[0-9]+$ ]] || { echo "--lifetime must be minutes"; return 1; }
+  prov=$(worker_setting "$name" AGENT_PROVISIONING); sender=$(worker_setting "$name" NOTIFY_SENDER)
+  echo "Checks:"
+  echo "  Agent provisioning: ${prov:-false} (must be true: the agent mails passes only for accounts it creates)"
+  echo "  Mail sender: ${sender:-Outbox} (must be AcsEmail or GraphMail: with Outbox the agent never issues a pass)"
+  echo "  Test redirect: $(worker_setting "$name" NOTIFY_REDIRECT_TO || true) (empty = mail goes to the joiner's Enterprise ID mail)"
+  policy=$(tap_policy)
+  if [[ -n "$policy" ]]; then
+    echo "  Tenant TAP policy: $(tr -d '\n ' <<<"$policy")"
+    max=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('maxLifetime') or '')" "$policy")
+    [[ "$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('state'))" "$policy")" == "enabled" ]] \
+      || echo "  WARNING: the TAP method is not enabled in the tenant: Entra refuses the pass and the ID team gets the task."
+    if [[ -n "$max" && "$lifetime" -gt "$max" ]]; then echo "  Lifetime $lifetime > policy maximum $max: using $max."; lifetime=$max; fi
+  else
+    echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
+  fi
+  [[ "$lifetime" -ge 60 ]] || { echo "Lifetime must be at least 60 minutes (the joiner reads it from mail)."; return 1; }
+  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
+  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime; SWA: AGENT_TAP=true"
+  echo "  Risk: the permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
+  echo "  request after both approvals, mails it once to that request's Enterprise ID mail and keeps no copy."
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  [[ "$prov" == "true" ]] || { echo "Switch agent provisioning on first (tools/deploy_free.sh provisioning ...)."; return 1; }
+  [[ "$sender" == "AcsEmail" || "$sender" == "GraphMail" ]] || { echo "Switch mail on first (tools/deploy_free.sh email ...)."; return 1; }
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  if [[ -z "$assignment" ]]; then
+    az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+      --headers "Content-Type=application/json" --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+    echo "Granted $GRAPH_TAP_ROLE (approved by $APPROVED_BY)"
+  else
+    echo "Already granted: $GRAPH_TAP_ROLE"
+  fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true -o none
+  echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
+  echo "waits before creating an account (so the password and the pass go out together); the request page says so."
 }
 
 # Per-environment settings (no resource or permission change). A test environment may send every mail to one address.
@@ -359,14 +451,15 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant
+  local env sender redirect tenant tap
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
+  tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -429,12 +522,12 @@ case "$CMD" in
       "ALLOWED_IDENTITY_PROVIDERS=aad" "PROCESSING_BUDGET_SECONDS=30" "STUCK_RUN_MINUTES=5" -o none
     app_settings_v2 "$RG" "$SWA"
     deploy_app "$RG" "$SWA"
-    COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
+    [[ "${SEED_SAMPLE:-0}" == "1" ]] && COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
     unset CS
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
-    echo "Next: each test user signs in once, reads userId from /.auth/me, then:"
-    echo "  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles Requester,Owner"
+    echo "Next: import each tenant's workbooks; each user signs in once, reads userId from /.auth/me, then is registered:"
+    echo "  COSMOS_CONNECTION_STRING=... python3 tools/import_workbook.py --tenant PEST --project PEST ... --register-user <userId>=Requester,Owner --apply"
     if worker_enabled; then
       deploy_worker || true
       grant_graph || echo "Graph read permissions NOT granted (needs Global Administrator). Run: tools/deploy_free.sh grant-graph $SUB"
@@ -460,7 +553,7 @@ case "$CMD" in
     W=$(worker_name); echo "  worker: ${W:-not deployed}"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     if [[ -n "$W" ]]; then
-      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER NOTIFY_FROM NOTIFY_REDIRECT_TO APP_ENVIRONMENT AGENT_TENANT_ID AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
+      for k in WORKFLOW_SCHEDULE NOTIFY_SENDER NOTIFY_FROM NOTIFY_REDIRECT_TO APP_ENVIRONMENT AGENT_TENANT_ID AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT AGENT_TAP AGENT_TAP_LIFETIME_MINUTES ROLE_READER ADO_ORG_URL ENTRA_AUTO_ASSIGN ENTRA_PROVISION_JOINERS; do
         V=$(az functionapp config appsettings list -g "$RG" -n "$W" --query "[?name=='$k'].value | [0]" -o tsv 2>/dev/null)
         echo "  $k: ${V:-not set}"
       done
@@ -490,6 +583,9 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "agentProvisioning": v(live.get("AGENT_PROVISIONING", "").lower() == "true"),
      "agentRoleAssignment": v(live.get("AGENT_ROLE_ASSIGNMENT", "").lower() == "true"),
      "roleAssignAllowedRoles": v(live.get("ROLE_ASSIGN_ALLOWED_ROLES", "")), "roleAssignScopes": v(live.get("ROLE_ASSIGN_SCOPES", "")),
+     # Agent TAP as it is live (deploy_free.sh tap, approved separately).
+     "agentTap": v(live.get("AGENT_TAP", "").lower() == "true"),
+     "agentTapLifetimeMinutes": v(int(live.get("AGENT_TAP_LIFETIME_MINUTES") or 480)),
      # Mail and environment as they are live (deploy_free.sh email / environment).
      "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
      "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
@@ -524,6 +620,17 @@ PY
     done
     provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
     ;;
+  tap)
+    MODE="${3:?on|off}"; shift 3; LIFETIME=480
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --lifetime) LIFETIME="${2:?minutes}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (tap $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    agent_tap "$MODE" "$LIFETIME"
+    ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
     [[ "${4:-}" == "--redirect" ]] && REDIRECT="${5:?mail address}"
@@ -548,12 +655,14 @@ PY
     PYTHON=$("$ROOT/tools/cosmos_python.sh") # before the upload: a missing package fails fast, not after it
     app_settings_v2 "$RG" "$SWA"
     deploy_app "$RG" "$SWA"
-    CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
-    COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
-    unset CS
+    if [[ "${SEED_SAMPLE:-0}" == "1" ]]; then
+      CS=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+      COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
+      unset CS
+    fi
     echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|environment|email ..."; exit 1 ;;
 esac

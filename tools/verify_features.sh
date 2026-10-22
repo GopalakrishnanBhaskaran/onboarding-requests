@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Feature checklist for the live pilot: PASS / WAIT / FAIL per feature, with the next step. Read-only, prints no secrets.
 #   bash tools/verify_features.sh <subscriptionId>            (or: … | tee .local/verify.txt, then paste the file)
-# Checks: code deployed, environment settings, mail on and mail delivered, agent provisioning rights, tenant separation and
-# environments, workbook-style mapping rows, Owner and Security approvals, agent-created user/group/role, end to end.
+# Checks: code deployed, environment settings, mail on and mail delivered, agent provisioning and TAP rights, the PEST and
+# Vestacy tenants from the workbooks (no SAMPLE data left), the test row, approvals, agent-created user/group/role,
+# sign-in details mailed, end to end.
 set -uo pipefail
 SUB="${1:?subscriptionId}"
 RG=rg-pmo-review-pilot
@@ -30,9 +31,9 @@ V_WORKER_CHANGED=$(changed "$V_WORKER" src/core src/adapters src/worker)
 V_TENANT=$(az account show --query tenantId -o tsv)
 # Named settings only (never a connection string).
 V_WORKER_SETTINGS=$([[ -n "$W" ]] && az functionapp config appsettings list -g "$RG" -n "$W" \
-  --query "[?contains(['APP_ENVIRONMENT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','NOTIFY_SENDER','ACS_ENDPOINT','NOTIFY_FROM','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES'], name)].{name:name, value:value}" -o json || echo "[]")
+  --query "[?contains(['APP_ENVIRONMENT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','NOTIFY_SENDER','ACS_ENDPOINT','NOTIFY_FROM','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES'], name)].{name:name, value:value}" -o json || echo "[]")
 V_SWA_SETTINGS=$([[ -n "$SWA" ]] && az staticwebapp appsettings list -n "$SWA" -g "$RG" \
-  --query "properties.{APP_ENVIRONMENT:APP_ENVIRONMENT, NOTIFY_REDIRECT_TO:NOTIFY_REDIRECT_TO, NOTIFY_SENDER:NOTIFY_SENDER, AGENT_PROVISIONING:AGENT_PROVISIONING}" -o json 2>/dev/null || echo "{}")
+  --query "properties.{APP_ENVIRONMENT:APP_ENVIRONMENT, NOTIFY_REDIRECT_TO:NOTIFY_REDIRECT_TO, NOTIFY_SENDER:NOTIFY_SENDER, AGENT_PROVISIONING:AGENT_PROVISIONING, AGENT_TAP:AGENT_TAP}" -o json 2>/dev/null || echo "{}")
 V_GRAPH=$([[ -n "$MI" ]] && az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
   | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done || true)
 V_RBAC=$([[ -n "$MI" ]] && az role assignment list --assignee "$MI" --role f58310d9-a9f6-439a-9e8d-f62e7b41a168 --all --query "[].scope" -o tsv 2>/dev/null || true)

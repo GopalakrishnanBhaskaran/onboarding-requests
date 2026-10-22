@@ -82,6 +82,9 @@ public sealed record PilotSettings
                 // v2.1 agent provisioning: needs the approved write permissions (deploy_free.sh provisioning).
                 AgentProvisioning = On("AGENT_PROVISIONING"),
                 AgentRoleAssignment = On("AGENT_ROLE_ASSIGNMENT"),
+                // Agent TAP (approval-gated: deploy_free.sh tap): the agent mails a new account's sign-in details once.
+                AgentTap = On("AGENT_TAP"),
+                AgentTapLifetimeMinutes = Math.Clamp(int.TryParse(get("AGENT_TAP_LIFETIME_MINUTES"), out var al) ? al : 480, 60, 43200),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
                 AgentTenantId = Guid.TryParse(tenant, out var tid) ? tid.ToString("D") : null,
@@ -124,7 +127,7 @@ public static class PilotApp
 
     public static WorkflowParts BuildWorkflow(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
         IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null,
-        IAiAssistant? assistant = null, IDirectoryWriter? writer = null, IRoleAssignmentWriter? roleWriter = null)
+        IAiAssistant? assistant = null, IDirectoryWriter? writer = null, IRoleAssignmentWriter? roleWriter = null, IDirectMail? directMail = null)
     {
         var reviewer = model ?? ReviewModelFactory.Create(settings, logger: loggers.CreateLogger("AzureOpenAI"));
         var sources = new StoreSourcesOfTruth(stores);
@@ -141,7 +144,7 @@ public static class PilotApp
         var issues = new IssueLog(stores, clock, loggers.CreateLogger<IssueLog>());
         var verifier = new Verifier(directory, roles, settings.Workflow);
         var agent = new WorkflowAgent(stores, sources, runs, notifier, issues, verifier, settings.Workflow, policy, clock,
-            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter);
+            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues);

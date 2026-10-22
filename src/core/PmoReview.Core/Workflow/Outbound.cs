@@ -29,6 +29,34 @@ public sealed class OutboxOnlySender : INotificationSender
 }
 
 /// <summary>
+/// Sends one mail now instead of through the outbox, for content that must never be stored: the agent's sign-in details
+/// (initial password + TAP). Same sender and test redirect as <see cref="NotificationDispatcher"/>; the caller records a
+/// masked copy (<see cref="Notifier.RecordSentAsync"/>). Not retried: a failure goes to the ID team.
+/// </summary>
+public interface IDirectMail
+{
+    /// <summary>False when nothing would be mailed (Outbox only): the agent then never issues a TAP itself.</summary>
+    bool Delivers { get; }
+    /// <returns>The addresses it was delivered to (the test address when redirected).</returns>
+    Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct);
+}
+
+/// <summary>The worker's <see cref="IDirectMail"/>: the configured sender, with the test-environment redirect.</summary>
+public sealed class DirectMail(INotificationSender sender, string? redirectTo = null, string environment = "pilot") : IDirectMail
+{
+    public bool Delivers => sender.Delivers;
+
+    public async Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct)
+    {
+        if (!sender.Delivers) throw new OutboundException("NotDelivered");
+        var outgoing = NotificationDispatcher.Redirect(notification, redirectTo, environment);
+        if (outgoing.To.Count == 0) throw new OutboundException("NoRecipients");
+        await sender.SendAsync(outgoing, ct);
+        return outgoing.To;
+    }
+}
+
+/// <summary>
 /// Worker: sends pending notifications. Retries at most 3 times, then marks Failed and logs an issue. In a test
 /// environment with <paramref name="redirectTo"/> every mail goes to that one address, marked as a test and naming the
 /// intended recipients; the notification keeps its real recipients and records where it was delivered.
@@ -37,7 +65,10 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
     int maxAttempts = 3, string? redirectTo = null, string environment = "pilot")
 {
     /// <summary>The mail as it leaves the app: unchanged, or redirected to the test address.</summary>
-    public Notification Outgoing(Notification n) => redirectTo is null ? n : n with
+    public Notification Outgoing(Notification n) => Redirect(n, redirectTo, environment);
+
+    /// <summary>Test environments: every mail goes to <paramref name="redirectTo"/>, marked as a test and naming the intended recipients.</summary>
+    public static Notification Redirect(Notification n, string? redirectTo, string environment) => redirectTo is null ? n : n with
     {
         To = [redirectTo],
         Subject = $"[{environment.ToUpperInvariant()} test] {n.Subject}",

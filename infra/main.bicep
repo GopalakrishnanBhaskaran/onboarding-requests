@@ -89,6 +89,12 @@ param roleAssignAllowedRoles string = ''
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
+@description('Agent TAP (one-time TAP + initial password mailed to the joiner for an account the agent created). Approval-gated: deploy_free.sh tap.')
+param agentTap bool = false
+
+@description('Lifetime in minutes of an agent-issued TAP.')
+param agentTapLifetimeMinutes int = 480
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -141,6 +147,8 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     agentRoleAssignment: agentRoleAssignment
     roleAssignAllowedRoles: roleAssignAllowedRoles
     roleAssignScopes: roleAssignScopes
+    agentTap: agentTap
+    agentTapLifetimeMinutes: agentTapLifetimeMinutes
   }
 }
 

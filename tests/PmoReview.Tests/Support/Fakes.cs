@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Storage;
@@ -177,7 +178,7 @@ public sealed class FaultyStore<T>(IDocumentStore<T> inner) : IDocumentStore<T> 
 }
 
 /// <summary>Agent provisioning stand-in: writes into the fake directory and records every call.</summary>
-public sealed class FakeDirectoryWriter(FakeDirectory directory) : IDirectoryWriter
+public sealed class FakeDirectoryWriter(FakeDirectory directory, Func<DateTimeOffset>? now = null) : IDirectoryWriter
 {
     public List<string> Calls { get; } = [];
     /// <summary>Every write fails with this category (e.g. GraphForbidden).</summary>
@@ -186,12 +187,42 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory) : IDirectoryWri
     public bool NotReplicatedOnce { get; set; }
 
     public List<NewUser> Users { get; } = [];
+    /// <summary>The initial passwords Entra received (the agent TAP test checks the mail carries exactly this one).</summary>
+    public List<string> Passwords { get; } = [];
+    /// <summary>The TAP write permission is in the agent's token (false = granted but not arrived yet, F61).</summary>
+    public bool TapPermission { get; set; } = true;
+    /// <summary>The TAP call fails with this category (e.g. GraphError for a lifetime outside the tenant policy).</summary>
+    public string? TapFailWith { get; set; }
+    /// <summary>The next TAP call fails once with this category (e.g. NotReplicated right after the user was created).</summary>
+    public string? TapFailOnce { get; set; }
+    /// <summary>The passes handed out, in order (each replaces the previous one on the account).</summary>
+    public List<string> Passes { get; } = [];
 
-    public Task<DirectoryUser> CreateUserAsync(NewUser user, CancellationToken ct)
+    public Task<DirectoryUser> CreateUserAsync(NewUser user, Secret initialPassword, CancellationToken ct)
     {
         Write($"create-user {user.UserPrincipalName}");
         Users.Add(user);
+        Passwords.Add(initialPassword.Reveal());
         return Task.FromResult(directory.AddUser(user.UserPrincipalName));
+    }
+
+    public Task<bool> CanIssueTapAsync(CancellationToken ct) => Task.FromResult(TapPermission);
+
+    public Task<IssuedTap> CreateTemporaryAccessPassAsync(string userObjectId, int lifetimeMinutes, CancellationToken ct)
+    {
+        if (TapFailWith is { } f) throw new DirectoryWriteException(f);
+        if (TapFailOnce is { } once)
+        {
+            TapFailOnce = null;
+            throw new DirectoryWriteException(once);
+        }
+        var upn = directory.UpnOf(userObjectId)!;
+        Write($"create-tap {upn} {lifetimeMinutes}");
+        var pass = $"SAMPLE-TAP-{Passes.Count + 1:00}-x7Q";
+        Passes.Add(pass);
+        var at = now?.Invoke() ?? DateTimeOffset.UtcNow;
+        directory.SetTap(upn, new TapMethod(at, at, lifetimeMinutes, true, true, "Enabled"));
+        return Task.FromResult(new IssuedTap(new Secret(pass), at, at.AddMinutes(lifetimeMinutes), true));
     }
 
     public Task<DirectoryGroup> CreateSecurityGroupAsync(string displayName, string description, CancellationToken ct)
@@ -234,5 +265,21 @@ public sealed class FakeRoleWriter(FakeRoles roles) : IRoleAssignmentWriter
         Calls.Add($"{principalType} {principalObjectId} {roleDefinitionId} {scope}");
         roles.Assign(principalObjectId, BuiltInRoles.NameOf(roleDefinitionId) ?? roleDefinitionId, scope);
         return Task.CompletedTask;
+    }
+}
+
+/// <summary>Mail stand-in for the agent's sign-in details: keeps what was "sent" (tests only), or fails on demand.</summary>
+public sealed class FakeDirectMail(string? redirectTo = null) : IDirectMail
+{
+    public bool Delivers { get; set; } = true;
+    public string? FailWith { get; set; }
+    public List<Notification> Sent { get; } = [];
+
+    public Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct)
+    {
+        if (FailWith is { } f) throw new OutboundException(f);
+        var outgoing = NotificationDispatcher.Redirect(notification, redirectTo, "test");
+        Sent.Add(outgoing);
+        return Task.FromResult(outgoing.To);
     }
 }

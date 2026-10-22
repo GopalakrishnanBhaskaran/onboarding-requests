@@ -29,7 +29,7 @@ public class ProvisioningTests
 
     private static TestApp App(bool roles = true) => TestApp.With(settings: On(roles));
 
-    private static object Finance(string enterpriseId = "sample.e2001", bool guest = false) =>
+    private static object Finance(string enterpriseId = "sample.e2001@sample-corp.invalid", bool guest = false) =>
         TestApp.Intake(enterpriseId: enterpriseId, resource: "SAMPLE Finance Reports", accessLevel: "Viewer", guest: guest);
 
     /// <summary>PMO gives the row an Azure role the agent may assign (Reader at the SAMPLE scope).</summary>
@@ -71,7 +71,8 @@ public class ProvisioningTests
         Assert.Empty((await app.View(id, TestApp.Ivan)).Json.GetProperty("actions").EnumerateArray()); // nothing for the ID team yet
 
         await app.RunWorker();
-        Assert.Equal([$"create-user {FinanceUser}", $"create-group {FinanceGroup}", $"add-member {FinanceUser} {FinanceGroup}"], app.Writer.Calls);
+        // The group first, the account last: with the agent TAP its password is mailed in the same run.
+        Assert.Equal([$"create-group {FinanceGroup}", $"create-user {FinanceUser}", $"add-member {FinanceUser} {FinanceGroup}"], app.Writer.Calls);
         r = await app.Request(id);
         Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Flow!.Status, r.Flow.WaitingOn));
         var task = r.Flow.IdTeamTask!;
@@ -117,7 +118,7 @@ public class ProvisioningTests
     {
         var app = App(roles: false);
         app.Directory.AddUser("sample.e2002@sample.invalid");
-        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2002"));
+        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2002@sample-corp.invalid"));
 
         await app.RunWorker();
         Assert.Equal([$"add-member sample.e2002@sample.invalid {TestApp.DefaultGroup}"], app.Writer.Calls);
@@ -135,8 +136,8 @@ public class ProvisioningTests
     public async Task Guest_and_privileged_requests_stay_with_the_id_team()
     {
         var app = App();
-        var guest = await Approved(app, Finance("sample.e2003", guest: true));
-        var privileged = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2004", accessLevel: "Admin",
+        var guest = await Approved(app, Finance("sample.e2003@sample-corp.invalid", guest: true));
+        var privileged = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2004@sample-corp.invalid", accessLevel: "Admin",
             justification: "SAMPLE: manages and configures the dev workspace and supports the data engineering team's deployments."));
         await app.RunWorker();
 
@@ -157,7 +158,7 @@ public class ProvisioningTests
     public async Task Write_refused_for_24_hours_or_ambiguous_group_goes_to_the_id_team_with_a_high_issue(string kind)
     {
         var app = App();
-        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005"));
+        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005@sample-corp.invalid"));
         if (kind == "forbidden") app.Writer.FailWith = "GraphForbidden";
         else app.Directory.AddGroup(TestApp.DefaultGroup); // a second group with the reviewed name
 
@@ -178,7 +179,7 @@ public class ProvisioningTests
     public async Task A_refused_write_waits_for_the_new_permission_and_finishes_when_it_arrives()
     {
         var app = App();
-        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005"));
+        var id = await Approved(app, TestApp.Intake(enterpriseId: "sample.e2005@sample-corp.invalid"));
         app.Writer.FailWith = "GraphForbidden"; // just granted, not yet in the agent's cached token (F61)
 
         await app.RunWorker();
@@ -210,7 +211,7 @@ public class ProvisioningTests
         var app = App();
         await AzureRole(app);
         app.Directory.AddUser("sample.e2008@sample.invalid");
-        var id = await Approved(app, Finance("sample.e2008"));
+        var id = await Approved(app, Finance("sample.e2008@sample-corp.invalid"));
         app.RoleWriter.FailWith = "ArmForbidden";
         await app.RunWorker(); // provisions (existing account)
         await app.RunWorker(); // verifies the ID step; the role assignment is refused
@@ -232,7 +233,7 @@ public class ProvisioningTests
     {
         var app = App(roles: false);
         app.Writer.NotReplicatedOnce = true;
-        var id = await Approved(app, Finance("sample.e2006"));
+        var id = await Approved(app, Finance("sample.e2006@sample-corp.invalid"));
 
         await app.RunWorker();
         var task = (await app.Request(id)).Flow!.IdTeamTask!;
@@ -253,7 +254,7 @@ public class ProvisioningTests
         var app = App();
         if (roleId is not null) await AzureRole(app, roleId: roleId);
         app.Directory.AddUser("sample.e2007@sample.invalid");
-        var id = await Approved(app, Finance("sample.e2007"));
+        var id = await Approved(app, Finance("sample.e2007@sample-corp.invalid"));
         await app.RunWorker();
         await app.RunWorker();
 
@@ -271,7 +272,7 @@ public class ProvisioningTests
         var app = App();
         await AzureRole(app);
         app.Directory.AddUser("sample.e2008@sample.invalid");
-        var id = await Approved(app, Finance("sample.e2008"));
+        var id = await Approved(app, Finance("sample.e2008@sample-corp.invalid"));
         Assert.Contains(await app.Notifications(id), n => n.Kind == NotificationKind.ApprovalRequested
             && n.Body.Contains($"Azure role: {FakeRoleWriter.Reader} at {Scope}", StringComparison.Ordinal) && n.Body.Contains("only after both approvals", StringComparison.Ordinal));
 
@@ -299,7 +300,7 @@ public class ProvisioningTests
         // Provisioning switched on: the worker restarts with the new settings on the same data.
         var on = TestApp.On(off.Stores, On());
         await on.RunWorker();
-        Assert.Equal([$"create-user {FinanceUser}", $"create-group {FinanceGroup}", $"add-member {FinanceUser} {FinanceGroup}"], on.Writer.Calls);
+        Assert.Equal([$"create-group {FinanceGroup}", $"create-user {FinanceUser}", $"add-member {FinanceUser} {FinanceGroup}"], on.Writer.Calls);
         var r = (await on.Request(id)).Flow!;
         Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Status, r.WaitingOn));
         Assert.True(r.IdTeamTask!.Agent is { UserCreated: true, GroupCreated: true, Membership: true, Completed: true, Manual: null });
@@ -316,7 +317,7 @@ public class ProvisioningTests
     {
         // Live case: a request submitted before the project's domain was set to the tenant domain.
         var app = App();
-        var id = await Approved(app, Finance("sample.e2009"));
+        var id = await Approved(app, Finance("sample.e2009@sample-corp.invalid"));
         var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
         await app.Stores.Projects.ReplaceAsync(p.Value with { DomainIdSuffix = "@sample-tenant.invalid" }, p.ETag);
 

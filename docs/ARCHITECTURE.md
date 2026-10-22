@@ -1,6 +1,6 @@
 # Architecture — PMO onboarding flow (v2)
 
-v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves**. v2.1 (optional, approval-gated): after both approvals the worker creates the user, group and membership and assigns allow-listed Azure roles (`WorkflowAgent.Provisioning.cs`, `GraphDirectoryWriter`, `ArmRoleAssignmentWriter`); the TAP stays with the ID team. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
+v2 (17 Oct 2026). The AI agent reviews, validates, summarises, routes, tracks, verifies and reports; it **never approves**. v2.1 (optional, approval-gated): after both approvals the worker creates the user, group and membership and assigns allow-listed Azure roles (`WorkflowAgent.Provisioning.cs`, `GraphDirectoryWriter`, `ArmRoleAssignmentWriter`); the TAP stays with the ID team unless the agent TAP is on (22 Oct 2026, approval-gated): then, for an account it has just created, the worker mails the joiner one one-time TAP, the initial password and the MFA steps once (`IDirectMail`), keeping only a masked copy. People decide (named Owner, then Security); the ID team and the role assignment team make the changes in their own tools and record them here. Scope: `SCOPE.md`.
 
 ## Components
 

@@ -77,7 +77,7 @@ public class TenantEnvironmentTests
         Assert.Empty(app.Writer.Calls); // the API holds no writer
 
         await app.RunWorker();
-        Assert.Equal([$"create-user {JoinerUpn}", $"create-group {DevReaderGroup}", $"add-member {JoinerUpn} {DevReaderGroup}"], app.Writer.Calls);
+        Assert.Equal([$"create-group {DevReaderGroup}", $"create-user {JoinerUpn}", $"add-member {JoinerUpn} {DevReaderGroup}"], app.Writer.Calls);
         Assert.Equal(("Jane Doe", "jane.doe"), (app.Writer.Users[0].DisplayName, app.Writer.Users[0].MailNickname));
         r = await app.Request(id, TestApp.Pest);
         Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Flow!.Status, r.Flow.WaitingOn));
@@ -310,7 +310,7 @@ public class TenantEnvironmentTests
         // The requester just sees who it waits for.
         Assert.Equal("Waiting for the Owner named on the request: sample-user-otto@sample.invalid.", (await app.View(id)).Json.GetProperty("approvalHint").GetString());
 
-        var named = await app.SubmitId(TestApp.Intake(owner: "sample-user-alice@sample.invalid", enterpriseId: "sample.e1009"));
+        var named = await app.SubmitId(TestApp.Intake(owner: "sample-user-alice@sample.invalid", enterpriseId: "sample.e1009@sample-corp.invalid"));
         await app.RunWorker();
         // Alice is named but has no Owner role: told to get it registered.
         Assert.Contains("has no Owner role in this project yet", (await app.View(named)).Json.GetProperty("approvalHint").GetString());

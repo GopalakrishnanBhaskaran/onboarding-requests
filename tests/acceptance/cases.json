@@ -135,8 +135,8 @@
     },
     {
       "id": "AC23",
-      "case": "Agent never approves, creates or assigns",
-      "expected": "No grant/assign/provision route; no Entra write call in source",
+      "case": "Agent never approves; it writes only through the worker's approved writers",
+      "expected": "No grant/assign/provision route; no access-package or licence call in source; the one TAP create call only in the worker's Graph writer",
       "gate": true
     },
     {

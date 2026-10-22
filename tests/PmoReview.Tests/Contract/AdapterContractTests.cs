@@ -14,12 +14,13 @@ namespace PmoReview.Tests.Contract;
 /// <summary>HTTP stand-in: routes by method + URL prefix, records every call.</summary>
 public sealed class RouteHandler : HttpMessageHandler
 {
-    private readonly List<(HttpMethod Method, string Prefix, Func<HttpResponseMessage> Reply)> _routes = [];
+    private readonly List<(HttpMethod Method, string Prefix, Func<HttpResponseMessage> Reply, int[] Left)> _routes = [];
     public List<(HttpMethod Method, string Url, string Body)> Calls { get; } = [];
 
-    public RouteHandler On(HttpMethod method, string prefix, string json, HttpStatusCode code = HttpStatusCode.OK)
+    /// <param name="times">How many calls this route answers before the next matching route takes over.</param>
+    public RouteHandler On(HttpMethod method, string prefix, string json, HttpStatusCode code = HttpStatusCode.OK, int times = int.MaxValue)
     {
-        _routes.Add((method, prefix, () => new HttpResponseMessage(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") }));
+        _routes.Add((method, prefix, () => new HttpResponseMessage(code) { Content = new StringContent(json, Encoding.UTF8, "application/json") }, [times]));
         return this;
     }
 
@@ -27,8 +28,12 @@ public sealed class RouteHandler : HttpMessageHandler
     {
         var url = Uri.UnescapeDataString(request.RequestUri!.ToString());
         Calls.Add((request.Method, url, request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct)));
-        foreach (var (m, p, reply) in _routes)
-            if (m == request.Method && url.StartsWith(p, StringComparison.Ordinal)) return reply();
+        foreach (var (m, p, reply, left) in _routes)
+        {
+            if (m != request.Method || !url.StartsWith(p, StringComparison.Ordinal) || left[0] <= 0) continue;
+            left[0]--;
+            return reply();
+        }
         return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
     }
 }

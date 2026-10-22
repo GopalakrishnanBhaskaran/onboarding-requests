@@ -16,7 +16,8 @@ using PmoReview.Core.Workflow;
 // The AI agent's background worker (paid component). Refuses to start unless paid services are explicitly allowed
 // (CLAUDE.md rule 11). Managed identity only. The agent never approves. Entra and Azure RBAC are read only unless the
 // approved v2.1 provisioning is switched on (AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT): then, only after the Owner and
-// Security approvals, it creates the user, group and membership and assigns allow-listed Azure roles. Never a TAP.
+// Security approvals, it creates the user, group and membership and assigns allow-listed Azure roles. With the approved
+// AGENT_TAP (and a mail sender) it also mails a new account's one-time TAP and initial password to the joiner, once.
 string? Env(string name) => Environment.GetEnvironmentVariable(name);
 bool On(string name) => string.Equals(Env(name), "true", StringComparison.OrdinalIgnoreCase);
 if (!On("ALLOW_PAID_SERVICES"))
@@ -39,6 +40,16 @@ var host = new HostBuilder()
         services.AddSingleton(_ => CosmosDataStores.Create(
             CosmosDataStores.CreateClientWithIdentity(cosmosEndpoint, credential), Env("COSMOS_DATABASE") ?? "pmoreview"));
         services.AddSingleton<IDirectoryReader>(_ => new GraphDirectoryReader(Http(), credential));
+        services.AddSingleton<INotificationSender>(_ => Env("NOTIFY_SENDER") switch
+        {
+            "GraphMail" => new GraphMailSender(Http(), credential, Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox).")),
+            // Azure Communication Services Email with the worker's managed identity (deploy_free.sh email, approval-gated).
+            "AcsEmail" => new AcsEmailSender(
+                Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var acs) ? acs : throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs ACS_ENDPOINT (https://<name>.communication.azure.com)."),
+                credential,
+                Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs NOTIFY_FROM (DoNotReply@<managed domain>).")),
+            _ => new OutboxOnlySender(),
+        });
         services.AddSingleton(sp =>
         {
             var loggers = sp.GetRequiredService<ILoggerFactory>();
@@ -50,24 +61,19 @@ var host = new HostBuilder()
             IRoleAssignmentWriter? roleWriter = settings.Workflow.AgentRoleAssignment
                 ? new ArmRoleAssignmentWriter(Http(), credential, settings.Workflow.RoleAssignAllowedRoleIds)
                 : null;
+            // Agent TAP: the sign-in details are sent directly (never through the stored outbox), same sender and test redirect.
+            IDirectMail? directMail = settings.Workflow.AgentTap && writer is not null
+                ? new DirectMail(sp.GetRequiredService<INotificationSender>(), settings.Workflow.MailRedirectTo, settings.Workflow.AppEnvironment)
+                : null;
             return PilotApp.BuildWorkflow(sp.GetRequiredService<DataStores>(), settings, sp.GetRequiredService<IClock>(), loggers,
-                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter);
+                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter, directMail: directMail);
         });
         services.AddSingleton(sp =>
         {
             var parts = sp.GetRequiredService<WorkflowParts>();
             var loggers = sp.GetRequiredService<ILoggerFactory>();
             var clock = sp.GetRequiredService<IClock>();
-            INotificationSender sender = Env("NOTIFY_SENDER") switch
-            {
-                "GraphMail" => new GraphMailSender(Http(), credential, Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox).")),
-                // Azure Communication Services Email with the worker's managed identity (deploy_free.sh email, approval-gated).
-                "AcsEmail" => new AcsEmailSender(
-                    Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var acs) ? acs : throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs ACS_ENDPOINT (https://<name>.communication.azure.com)."),
-                    credential,
-                    Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs NOTIFY_FROM (DoNotReply@<managed domain>).")),
-                _ => new OutboxOnlySender(),
-            };
+            var sender = sp.GetRequiredService<INotificationSender>();
             IWorkItemTracker tracker = Uri.TryCreate(Env("ADO_ORG_URL"), UriKind.Absolute, out var org) && !string.IsNullOrWhiteSpace(Env("ADO_PROJECT"))
                 ? new AzureDevOpsWorkItemTracker(Http(), credential, new AzureDevOpsOptions
                 {

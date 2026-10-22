@@ -61,7 +61,7 @@ public class AcceptanceTests
     public async Task AC03_Domain_id_derived_and_format_fixed()
     {
         var app = TestApp.Create();
-        var r = await app.Submit(TestApp.Intake(enterpriseId: " Sample.E7007 ", first: "sample", last: "JOINER"));
+        var r = await app.Submit(TestApp.Intake(enterpriseId: " Sample.E7007@Sample-Corp.invalid ", first: "sample", last: "JOINER"));
         var req = r.Request;
         Evidence.Record("AC03", $"domainId {req.GetProperty("domainId")}; names {req.GetProperty("firstName")} {req.GetProperty("lastName")}");
         Assert.Equal("sample.e7007@sample.invalid", req.GetProperty("domainId").GetString());
@@ -336,9 +336,11 @@ public class AcceptanceTests
         var routes = app.Host.Routes;
         var src = Directory.GetFiles(Path.Combine(PmoReview.Tests.Contract.GraphDirectoryReaderTests.Repo(), "src"), "*.cs", SearchOption.AllDirectories)
             .Select(File.ReadAllText).ToList();
-        var writes = src.Count(s => System.Text.RegularExpressions.Regex.IsMatch(s, @"\b(assignmentRequests|assignLicense|temporaryAccessPassMethods)\b"));
-        Evidence.Record("AC23", $"{routes.Count} routes, none grant/assign/provision; Entra write calls in source: {writes}");
-        Assert.Equal(0, writes);
+        var writes = src.Count(s => System.Text.RegularExpressions.Regex.IsMatch(s, @"\b(assignmentRequests|assignLicense)\b"));
+        // The agent TAP's one create call (approval-gated, worker only) is in a single file: the Graph writer.
+        var tap = src.Count(s => System.Text.RegularExpressions.Regex.IsMatch(s, @"\btemporaryAccessPassMethods\b"));
+        Evidence.Record("AC23", $"{routes.Count} routes, none grant/assign/provision; package/licence write calls in source: {writes}; TAP create call sites: {tap} (worker's Graph writer)");
+        Assert.Equal((0, 1), (writes, tap));
         Assert.DoesNotContain(routes, r => r.Contains("assign", StringComparison.OrdinalIgnoreCase) || r.Contains("provision", StringComparison.OrdinalIgnoreCase));
         await Task.CompletedTask;
     }

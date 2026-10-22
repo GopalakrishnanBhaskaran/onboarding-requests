@@ -106,8 +106,10 @@ public partial class InfraConsistencyTests
         Assert.Contains("is retired (Phase 2 access packages)", worker);
         Assert.DoesNotContain("GraphEntraAssignmentWriter", worker);
         Assert.DoesNotContain("JoinerProvisioning", worker);
-        Assert.DoesNotContain(Directory.GetFiles(Path.Combine(Repo(), "src"), "*.cs", SearchOption.AllDirectories),
-            f => Regex.IsMatch(File.ReadAllText(f), @"\b(assignmentRequests|assignLicense|temporaryAccessPassMethods|accessPackages|resourceRoleScopes)\b"));
+        var src = Directory.GetFiles(Path.Combine(Repo(), "src"), "*.cs", SearchOption.AllDirectories);
+        Assert.DoesNotContain(src, f => Regex.IsMatch(File.ReadAllText(f), @"\b(assignmentRequests|assignLicense|accessPackages|resourceRoleScopes)\b"));
+        // Agent TAP (Gokul, 22 Oct 2026; off until approved): the one TAP create call lives in the Graph writer only.
+        Assert.Equal(["GraphDirectoryWriter.cs"], src.Where(f => Regex.IsMatch(File.ReadAllText(f), @"\btemporaryAccessPassMethods\b")).Select(Path.GetFileName));
     }
 
     [Fact]
@@ -135,12 +137,14 @@ public partial class InfraConsistencyTests
             foreach (var m in new[] { "HttpMethod.Patch", "HttpMethod.Delete", "HttpMethod.Put" })
                 Assert.DoesNotContain(m, File.ReadAllText(reader));
 
-        // Graph: POST to the three create URLs only; nothing touches authentication methods (the TAP), licences or packages.
+        // Graph: POST to the four create URLs only. The one authentication-method call is the agent TAP's create (no phone,
+        // password reset or other method; no update or delete); nothing touches licences or packages.
         var graph = File.ReadAllText(Path.Combine(adapters, "Entra", "GraphDirectoryWriter.cs"));
         Assert.Single(Regex.Matches(graph, @"HttpMethod\.\w+"));
         Assert.Contains("HttpMethod.Post", graph);
         Assert.Contains("WriteRefused", graph);
-        foreach (var banned in new[] { "/authentication", "assignLicense", "accessPackage", "temporaryAccessPass" })
+        Assert.Equal(["/authentication/temporaryAccessPassMethods"], Regex.Matches(graph, @"""/authentication/\w+""").Select(m => m.Value.Trim('"')));
+        foreach (var banned in new[] { "assignLicense", "accessPackage", "resetPassword", "phoneMethods", "passwordMethods", "/methods/" })
             Assert.DoesNotContain(banned, graph, StringComparison.OrdinalIgnoreCase);
 
         // Azure RBAC: one PUT of a role assignment; no delete.

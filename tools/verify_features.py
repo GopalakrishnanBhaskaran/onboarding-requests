@@ -19,6 +19,9 @@ CREATE_ROLES = {"User.Create", "Group.Create", "GroupMember.ReadWrite.All"}
 RETIRED_ROLES = {"EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All",
                  "UserAuthenticationMethod.ReadWrite.All", "Group.ReadWrite.All", "EntitlementManagement.Read.All", "User.ReadBasic.All"}
 READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
+# The roles of the PEST Dev Support Reader row (response document), by lower-case name: the end-to-end test needs both.
+TEST_ROLES = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"}
+TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
 
 
 @dataclass
@@ -88,53 +91,59 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       "" if st == PASS else "MailForbidden = the worker's mail role has not reached it yet (retried 3x); check spam; re-run later"
                       if errors else "create or approve a request (any new notification is mailed within 5 min)"))
 
-    # 5. Agent provisioning rights
+    # 5. Agent provisioning rights (create + the roles the PEST test row needs)
     roles = set(ctx.get("graph_roles") or [])
     rbac = [x for x in (ctx.get("rbac_admin_scopes") or []) if in_scope(x, allowed_scopes) or any(in_scope(a, [x]) for a in allowed_scopes)]
+    allowed_roles = str(s.get("ROLE_ASSIGN_ALLOWED_ROLES", "")).lower()
     prov_ok = on("AGENT_PROVISIONING") and on("AGENT_ROLE_ASSIGNMENT") and CREATE_ROLES <= roles and READ_ROLES <= roles and rbac \
-        and READER in str(s.get("ROLE_ASSIGN_ALLOWED_ROLES", "")).lower()
+        and all(r in allowed_roles for r in TEST_ROLES.values())
     retired = sorted(roles & RETIRED_ROLES)
-    out.append(Result("5. Agent may create user/group/membership and assign Reader (v2.1)", PASS if prov_ok and not retired else (FAIL if retired else WAIT),
+    out.append(Result("5. Agent may create user/group/membership and assign Reader + Storage Blob Data Reader (v2.1)",
+                      PASS if prov_ok and not retired else (FAIL if retired else WAIT),
                       f"settings {'on' if on('AGENT_PROVISIONING') and on('AGENT_ROLE_ASSIGNMENT') else 'off'}; Graph create roles "
                       f"{'all' if CREATE_ROLES <= roles else sorted(CREATE_ROLES - roles)}; read roles {'all' if READ_ROLES <= roles else sorted(READ_ROLES - roles)}; "
-                      f"RBAC Administrator at {rbac or 'no allowed scope'}; retired roles {retired or 'none'}",
+                      f"RBAC Administrator at {rbac or 'no allowed scope'}; allow-listed roles {[n for n, r in TEST_ROLES.items() if r in allowed_roles]}; retired roles {retired or 'none'}",
                       "" if prov_ok and not retired else "tools/deploy_free.sh revoke-graph-writes <sub> --approved-by …" if retired
-                      else "tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --approved-by \"Gokul 17 Oct 2026\""))
+                      else f"tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(TEST_ROLES.values())} (dry run → approval)"))
 
-    # 6. Tenant separation + environments
+    # 5b. Agent TAP (sign-in details mailed by the agent)
+    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and s.get("NOTIFY_SENDER") in ("AcsEmail", "GraphMail")
+    out.append(Result("5b. Agent issues the one-time TAP and mails it with the initial password and MFA steps", PASS if tap_ok else WAIT,
+                      f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
+                      f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
+                      "" if tap_ok else "tools/deploy_free.sh tap <sub> on (dry run → approval), then tools/deploy_free.sh app <sub>"))
+
+    # 6. Real tenants (from the shared workbooks), no SAMPLE data left
     p = {x.get("projectId"): x for x in projects}
-    pest, ves = p.get("SAMPLE-PEST") or {}, p.get("SAMPLE-VESTACY") or {}
+    real = {k: v for k, v in p.items() if not str(k).startswith("SAMPLE-") and not v.get("isSample")}
+    per = Counter(r.get("projectId") for r in rows if not r.get("isSample"))
     connected = lambda x: not x.get("tenantId") or str(x.get("tenantId")).lower() == tenant  # noqa: E731
-    sep_ok = bool(pest) and bool(ves) and connected(pest) and not connected(ves)
-    envs_ok = (pest.get("environments") or []) == ["Dev", "PreProd", "Prod"]
-    out.append(Result("6. Tenant separation (PEST in the agent's tenant, Vestacy separate) and environments", PASS if sep_ok and envs_ok else WAIT,
-                      f"SAMPLE-PEST {'connected' if pest and connected(pest) else 'missing/not connected'} envs {pest.get('environments') or '-'}; "
-                      f"SAMPLE-VESTACY {'separate' if ves and not connected(ves) else 'missing/connected'}",
-                      "" if sep_ok and envs_ok else "re-run the seed (step 3 of docs/NEXT_SESSION.md)"))
-    ves_handoff = [r["id"][:8] for r in v2 if r.get("projectId") == "SAMPLE-VESTACY" and any("separate from the AI agent" in (e.get("note") or "")
-                   for e in r["flow"].get("events") or [])]
-    if ves_handoff:
-        out.append(Result("6b. Vestacy request handed to the teams (agent did not touch it)", PASS, f"requests {ves_handoff}"))
+    want = {"PEST": "PEST", "VESTACY": "Vestacy"}
+    have = {k: real.get(k) for k in want}
+    tenants_ok = all(v and per.get(k) for k, v in have.items())
+    out.append(Result("6. PEST and Vestacy tenants in the app (one project each, rows from the workbooks)", PASS if tenants_ok else WAIT,
+                      "; ".join(f"{k}: " + (f"tenant {v.get('tenantName')}, {'agent tenant' if connected(v) else 'separate tenant'}, envs {v.get('environments')}, "
+                                            f"{per.get(k, 0)} rows, contacts {'set' if (v.get('contacts') or {}).get('security') else 'none'}" if v else "missing")
+                                for k, v in have.items()),
+                      "" if tenants_ok else "python3 tools/import_workbook.py --tenant PEST --project PEST … --apply (docs/NEXT_SESSION.md)"))
+    sample = sorted(k for k in p if str(k).startswith("SAMPLE-") or p[k].get("isSample"))
+    sample_rows = sum(1 for r in rows if r.get("isSample") or str(r.get("projectId", "")).startswith("SAMPLE-"))
+    out.append(Result("6b. No SAMPLE projects or mappings left in the live app", PASS if not sample and not sample_rows else WAIT,
+                      f"SAMPLE projects {sample or 'none'}; SAMPLE mapping rows {sample_rows}",
+                      "" if not sample and not sample_rows else "python3 tools/seed_sample_data.py --remove-sample (lists) then --yes"))
 
-    # 7. Mapping sheet from the workbooks (SAMPLE PEST) + Azure roles
-    prow = {r.get("rowId"): r for r in rows if r.get("projectId") == "SAMPLE-PEST"}
-    dev = prow.get("P-PH-SUPPORT-READER-DEV") or {}
-    dev_scopes = [g.get("scope") for g in dev.get("azureRoles") or []]
-    rows_ok = bool(dev) and dev_scopes and all(x and in_scope(x, allowed_scopes) for x in dev_scopes) \
-        and (prow.get("P-PH-SUPPORT-READER-PRD") or {}).get("flag") == "Red"
-    out.append(Result("7. Workbook-style mapping rows (environments, red/amber, Azure roles x resources)", PASS if rows_ok else WAIT,
-                      f"{len(prow)} SAMPLE-PEST rows; Dev support-reader scopes {dev_scopes or 'none'}; Prod row red: {(prow.get('P-PH-SUPPORT-READER-PRD') or {}).get('flag') == 'Red'}",
-                      "" if rows_ok else "seed with --access-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access"))
-    fin = next((r for r in rows if r.get("projectId") == "SAMPLE-ALPHA" and r.get("rowId") == "A-FIN-VIEW"), {})
-    fin_roles = fin.get("azureRoles") or ([{"scope": fin.get("azureScope")}] if fin.get("azureRoleDefinitionId") else [])
-    fin_ok = bool(fin_roles) and all(g.get("scope") and in_scope(g["scope"], allowed_scopes) for g in fin_roles)
-    out.append(Result("7b. A-FIN-VIEW has the Azure role the agent assigns (test A)", PASS if fin_ok else WAIT,
-                      f"{len(fin_roles)} Azure role(s): {[g.get('scope') for g in fin_roles] or 'none'}",
-                      "" if fin_ok else "Mapping sheet → Azure roles the AI agent assigns → A-FIN-VIEW: Reader | rg-pmo-sample-access | /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access"))
+    # 7. The PEST Dev Support Reader row the end-to-end test uses: every Azure role ready for the agent
+    row = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == "PH-SUPPORT-READER-DEV"), {})
+    grants = row.get("azureRoles") or []
+    ready = bool(grants) and all(g.get("scope") and in_scope(g["scope"], allowed_scopes) and (TEST_ROLES.get(g.get("roleName", "").lower()) or "-") in allowed_roles
+                                 for g in grants)
+    out.append(Result("7. PEST Dev 'Support Reader' row: group to be created, every Azure role in the agent's allow-list", PASS if ready else WAIT,
+                      f"{row.get('entraGroup', 'row missing')}: {[(g.get('roleName'), (g.get('scope') or 'no scope').rsplit('/', 1)[-1]) for g in grants] or 'no roles'}",
+                      "" if ready else "import PEST with --test-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access, and step 5"))
 
     # 8–11. Flow evidence
-    def evidence(feature: str, step: str, hint: str, project: str | None = None) -> None:
-        hits = [r for r in v2 if step in steps(r) and (project is None or r.get("projectId") == project)]
+    def evidence(feature: str, step: str, hint: str) -> None:
+        hits = [r for r in v2 if step in steps(r) and not str(r.get("projectId", "")).startswith("SAMPLE-")]
         out.append(Result(feature, PASS if hits else WAIT,
                           f"requests {[r['id'][:8] + ' ' + status(r) for r in hits][:6]}" if hits else "no request has reached this yet", "" if hits else hint))
 
@@ -142,7 +151,12 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     evidence("9. Security approval given in the app", "security-approved", "a Security member (not the Owner approver) approves")
     evidence("10. Agent created user / group / membership", "agent-provisioned",
              "after both approvals wait 5–10 min; 'agent-waiting-permission' = new permission not in the token yet (up to 24 h)")
-    evidence("11. Agent assigned the Azure role(s)", "agent-role-assigned", "after the ID team records the TAP metadata, wait 5–10 min")
+    signin = [n for n in notes if n.get("kind") == "SignInDetails"]
+    sent = [n for n in signin if n.get("status") == "Sent"]
+    out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if sent else WAIT,
+                      f"{len(sent)} sent, delivered to {sorted({a for n in sent for a in n.get('deliveredTo') or []}) or 'nobody yet'}",
+                      "" if sent else "needs step 5b; then a new request (the agent mails it in the run that creates the account)"))
+    evidence("11. Agent assigned the Azure role(s)", "agent-role-assigned", "after the agent's own ID step is verified, wait 5–10 min")
     waiting = [r["id"][:8] for r in v2 if "agent-waiting-permission" in steps(r) and status(r) in ("WithIdTeam", "WithRoleTeam")]
     if waiting:
         out.append(Result("10b. Agent waiting for its new permission (F61)", WAIT, f"requests {waiting}", "retried every 5 min for up to 24 h"))
@@ -151,16 +165,12 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
         out.append(Result("10c. Work the agent left to a team (with reason)", PASS, "; ".join(f"{i}: {n}" for i, n in manual[-4:])))
 
     # 12. End to end
-    done = [r for r in v2 if status(r) == "Completed"]
-    pest_done = [r for r in done if r.get("projectId") == "SAMPLE-PEST"]
-    a = next((r for r in v2 if r["id"].startswith("05616a80")), None)
-    out.append(Result("12. End to end to Completed (test A 05616a80)", PASS if a and status(a) == "Completed" else WAIT,
-                      f"05616a80 is {status(a) if a else 'not found'} (waiting on {(a or {}).get('flow', {}).get('waitingOn', '-')})",
-                      "" if a and status(a) == "Completed" else "follow docs/NEXT_SESSION.md step 6"))
-    out.append(Result("12b. End to end to Completed (test B, SAMPLE PEST)", PASS if pest_done else WAIT,
-                      f"PEST requests: {[r['id'][:8] + ' ' + str(r.get('environment')) + ' ' + status(r) for r in v2 if r.get('projectId') == 'SAMPLE-PEST'][:6] or 'none yet'}",
-                      "" if pest_done else "New request in SAMPLE PEST data platform (Dev / SAMPLE PEST Platform (ph) / Support Reader)"))
-    prod_returned = [r["id"][:8] for r in v2 if r.get("projectId") == "SAMPLE-PEST" and r.get("environment") == "Prod" and status(r) == "Returned"]
+    pest = [r for r in v2 if r.get("projectId") == "PEST"]
+    done = [r for r in pest if status(r) == "Completed"]
+    out.append(Result("12. End to end to Completed (PEST / Dev / Support Reader)", PASS if done else WAIT,
+                      f"PEST requests: {[r['id'][:8] + ' ' + str(r.get('environment')) + ' ' + status(r) for r in pest][:6] or 'none yet'}",
+                      "" if done else "New request → Tenant PEST, Dev, the (ph) platform resource, Support Reader (docs/NEXT_SESSION.md)"))
+    prod_returned = [r["id"][:8] for r in pest if r.get("environment") == "Prod" and status(r) == "Returned"]
     if prod_returned:
         out.append(Result("12c. PEST Prod request returned (red row)", PASS, f"requests {prod_returned}"))
 
@@ -194,8 +204,8 @@ def load() -> tuple:
             print(f"  ({container} not readable: {type(e).__name__})")
             return []
 
-    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments FROM c"),
-            q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.azureRoles, c.azureRoleDefinitionId, c.azureScope FROM c"),
+    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts FROM c"),
+            q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.entraGroup, c.azureRoles, c.isSample FROM c"),
             q("requests", "SELECT c.id, c.projectId, c.environment, c.flow.status, c.flow.waitingOn, c.flow.events FROM c"),
             q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind FROM c"),
             q("issues", "SELECT c.requestId, c.kind, c.severity, c.status, c.summary FROM c"))
@@ -213,33 +223,34 @@ def flatten(requests: list[dict]) -> list[dict]:
 def self_test() -> None:
     allowed = "/subscriptions/s/resourceGroups/rg-pmo-sample-access"
     ctx = {"head": "abc", "app_deployed": "abc", "worker_deployed": "abc", "app_code_changed": False, "worker_code_changed": False,
-           "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES), "rbac_admin_scopes": [allowed],
+           "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE}), "rbac_admin_scopes": [allowed],
            "worker_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "AGENT_TENANT_ID": "T1", "NOTIFY_SENDER": "AcsEmail",
                                "ACS_ENDPOINT": "https://a", "NOTIFY_FROM": "DoNotReply@d", "AGENT_PROVISIONING": "true", "AGENT_ROLE_ASSIGNMENT": "true",
-                               "ROLE_ASSIGN_ALLOWED_ROLES": READER, "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail"}}
-    projects = [{"projectId": "SAMPLE-PEST", "tenantId": None, "environments": ["Dev", "PreProd", "Prod"]},
-                {"projectId": "SAMPLE-VESTACY", "tenantId": "00000000-0000-4000-8000-000000000001", "environments": ["Dev"]}]
-    rows = [{"projectId": "SAMPLE-PEST", "rowId": "P-PH-SUPPORT-READER-DEV", "azureRoles": [{"scope": allowed}]},
-            {"projectId": "SAMPLE-PEST", "rowId": "P-PH-SUPPORT-READER-PRD", "flag": "Red"},
-            {"projectId": "SAMPLE-ALPHA", "rowId": "A-FIN-VIEW", "azureRoleDefinitionId": READER, "azureScope": allowed}]
+                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480",
+                               "ROLE_ASSIGN_ALLOWED_ROLES": ",".join(TEST_ROLES.values()), "ROLE_ASSIGN_SCOPES": allowed},
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true"}}
+    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": {"security": ["x@y.z"]}},
+                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"]}]
+    rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
+             "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
+            {"projectId": "VESTACY", "rowId": "PH-SUPPORT-DEV", "azureRoles": []}]
     ev = lambda *s: [{"step": x, "note": ""} for x in s]  # noqa: E731
     all_steps = ev("owner-approved", "security-approved", "agent-provisioned", "agent-role-assigned", "completed")
-    requests = [{"id": "05616a80aaaa", "projectId": "SAMPLE-ALPHA", "flow": {"status": "Completed", "events": all_steps}},
-                {"id": "bbbbbbbbbbbb", "projectId": "SAMPLE-PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
-    notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}]
+    requests = [{"id": "bbbbbbbbbbbb", "projectId": "PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
+    notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}, {"status": "Sent", "kind": "SignInDetails", "deliveredTo": ["x@y.z"]}]
     res = evaluate(ctx, projects, rows, requests, notes, [])
     assert all(r.status == PASS for r in res), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
 
-    # The live state of 21 Oct: pilot env, nothing mailed yet, 05616a80 awaiting Security.
+    # The state after this commit is deployed, before the steps: SAMPLE data still there, no tenants, TAP off, Reader only.
     ctx2 = json.loads(json.dumps(ctx))
-    ctx2["worker_settings"]["APP_ENVIRONMENT"] = "pilot"
-    ctx2["swa_settings"] = {}
-    requests2 = [{"id": "05616a80aaaa", "projectId": "SAMPLE-ALPHA", "flow": {"status": "AwaitingSecurity", "waitingOn": "Security", "events": ev("owner-approved")}}]
-    res2 = {r.feature.split(".")[0] + "." + r.feature.split(".")[1][:2]: r for r in evaluate(ctx2, projects, rows, requests2, [{"status": "Recorded"}], [])}
-    got = {k: v.status for k, v in res2.items()}
-    assert got["2. E"] == WAIT and got["3. M"] == WAIT and got["4. N"] == WAIT and got["8. O"] == PASS and got["9. S"] == WAIT and got["12. E"] == WAIT, got
-    assert "environment <sub> test" in res2["2. E"].next and "deploy_free.sh app" in res2["3. M"].next
+    ctx2["worker_settings"].update({"AGENT_TAP": "false", "ROLE_ASSIGN_ALLOWED_ROLES": READER})
+    ctx2["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES)
+    sample_projects = [{"projectId": "SAMPLE-PEST", "isSample": True}, {"projectId": "SAMPLE-ALPHA", "isSample": True}]
+    sample_rows = [{"projectId": "SAMPLE-PEST", "rowId": "P-PH-SUPPORT-READER-DEV", "isSample": True, "azureRoles": [{"roleName": "Reader", "scope": allowed}]}]
+    got = {r.feature.split(" ")[0]: r for r in evaluate(ctx2, sample_projects, sample_rows, [], [{"status": "Sent"}], [])}
+    assert {k: got[k].status for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")} == {k: WAIT for k in ("5.", "5b.", "6.", "6b.", "7.", "10d.", "12.")}, \
+        {k: v.status for k, v in got.items()}
+    assert "2a2b9908" in got["5."].next and "tap <sub> on" in got["5b."].next and "--remove-sample" in got["6b."].next and "--test-scope" in got["7."].next
     ctx3 = json.loads(json.dumps(ctx))
     ctx3["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES | {"Group.ReadWrite.All"})
     assert next(r for r in evaluate(ctx3, projects, rows, requests, notes, []) if r.feature.startswith("5.")).status == FAIL

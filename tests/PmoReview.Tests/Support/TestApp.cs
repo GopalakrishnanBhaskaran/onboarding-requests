@@ -60,6 +60,8 @@ public sealed class TestApp
     /// <summary>v2.1 agent provisioning (used only when the settings switch it on; the worker holds it, never the API).</summary>
     public FakeDirectoryWriter Writer { get; }
     public FakeRoleWriter RoleWriter { get; }
+    /// <summary>Agent TAP: the sign-in details mail (sent directly, never stored).</summary>
+    public FakeDirectMail Mail { get; }
     public FakeTracker Tracker { get; } = new();
     public PilotSettings Settings { get; }
 
@@ -72,10 +74,12 @@ public sealed class TestApp
         Roles = new FakeRoles();
         Api = PilotApp.BuildWorkflow(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
         Host = PilotApp.Build(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
-        Writer = new FakeDirectoryWriter(Directory);
+        Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
+        Mail = new FakeDirectMail(settings.Workflow.MailRedirectTo);
         Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles,
-            writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null);
+            writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
+            directMail: settings.Workflow.AgentTap ? Mail : null);
     }
 
     /// <summary>The approved access resource group of the tests (fills the SAMPLE PEST rows' Azure role scopes).</summary>
@@ -102,7 +106,7 @@ public sealed class TestApp
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 
-    public static object Intake(string enterpriseId = "sample.e1001", string resource = "SAMPLE Databricks Engineering", string accessLevel = "User",
+    public static object Intake(string enterpriseId = "sample.e1001@sample-corp.invalid", string resource = "SAMPLE Databricks Engineering", string accessLevel = "User",
         string? justification = null, string owner = "sample-user-olivia@sample.invalid", bool guest = false, string first = "Sample", string last = "Joiner",
         string? environment = null) => new
     {

@@ -23,6 +23,10 @@ Examples:
   # Register a real test account after its first sign-in (userId from /.auth/me)
   COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py \
       --register-user <swa-user-id> --project SAMPLE-ALPHA --roles Requester,Owner
+
+  # Live app with the real tenants (tools/import_workbook.py): remove every SAMPLE project and everything in it
+  # (mapping rows, response records, requests, runs, notifications, issues, user access). Lists first; --yes deletes.
+  COSMOS_CONNECTION_STRING=... python3 tools/seed_sample_data.py --remove-sample [--yes]
 """
 from __future__ import annotations
 
@@ -178,6 +182,26 @@ def fill_live_scope(client, doc: dict) -> None:
     print(f"  {doc['id']}: Azure role scope set")
 
 
+def is_sample(doc: dict) -> bool:
+    """Pure: a document of the SAMPLE data set (a SAMPLE- project, or marked isSample). Real projects never match."""
+    return str(doc.get("projectId") or "").startswith("SAMPLE-") or doc.get("isSample") is True
+
+
+def remove_sample(db, really: bool) -> dict[str, int]:
+    """Every container: SAMPLE documents found (and deleted with really=True). Real tenants' data is untouched."""
+    counts: dict[str, int] = {}
+    for props in db.list_containers():
+        container = db.get_container_client(props["id"])
+        key = props["partitionKey"]["paths"][0].lstrip("/")
+        docs = [d for d in container.query_items(
+            "SELECT * FROM c WHERE STARTSWITH(c.projectId, 'SAMPLE-') OR c.isSample = true", enable_cross_partition_query=True) if is_sample(d)]
+        counts[props["id"]] = len(docs)
+        if really:
+            for d in docs:
+                container.delete_item(d["id"], partition_key=d[key])
+    return counts
+
+
 def connect(database: str):
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
@@ -202,7 +226,14 @@ def main() -> int:
     ap.add_argument("--register-user", metavar="USER_ID", help="SWA client principal userId of a test account")
     ap.add_argument("--project", help="SAMPLE- project for --register-user")
     ap.add_argument("--roles", help="comma-separated roles for --register-user")
+    ap.add_argument("--remove-sample", action="store_true", help="list (and with --yes delete) every SAMPLE document in the live database")
+    ap.add_argument("--yes", action="store_true", help="with --remove-sample: really delete")
     args = ap.parse_args()
+
+    if args.remove_sample:
+        counts = remove_sample(connect(args.database), args.yes)
+        print(("deleted" if args.yes else "would delete (dry run; add --yes)"), json.dumps({k: v for k, v in counts.items() if v}), f"total {sum(counts.values())}")
+        return 0
 
     if args.register_user:
         if not args.project or not args.roles:

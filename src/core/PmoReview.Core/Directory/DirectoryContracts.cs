@@ -1,3 +1,4 @@
+using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 
 namespace PmoReview.Core.Directory;
@@ -38,8 +39,18 @@ public sealed class DirectoryWriteException(string category, Exception? inner = 
     public bool Forbidden => Category.EndsWith("Forbidden", StringComparison.Ordinal);
 }
 
-/// <summary>A new member account. The initial password is random, sent once to Entra and never kept; the user signs in with a TAP.</summary>
+/// <summary>
+/// A new member account. The initial password (<see cref="Secret"/>) is random, sent to Entra and — only with the agent
+/// TAP on — mailed once to the joiner in the same agent run; it is never stored or logged.
+/// </summary>
 public sealed record NewUser(string UserPrincipalName, string DisplayName, string MailNickname, string? GivenName, string? Surname);
+
+/// <summary>
+/// A Temporary Access Pass the agent just created (agent TAP, off until approved). <see cref="Pass"/> is a
+/// <see cref="Secret"/>: it goes into one mail to the joiner and nowhere else; the app records only the times and the
+/// one-time flag.
+/// </summary>
+public sealed record IssuedTap(Secret Pass, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt, bool OneTime);
 
 /// <summary>
 /// Read-only view of Microsoft Entra for the AI agent: Stage 2 cross-check, Stage 4 and 6 verification, escalation.
@@ -60,16 +71,24 @@ public interface IDirectoryReader
 
 /// <summary>
 /// Agent provisioning (v2.1, worker only, only after the Owner and Security approvals): creates the user, the security
-/// group and the membership. Create calls only — no update, delete, licence or Temporary Access Pass. Every call is
-/// preceded by a read, so a repeat finds the object instead of creating it again.
+/// group and the membership, and — with the agent TAP on — one one-time Temporary Access Pass for a user it has just
+/// created. Create calls only — no update, delete or licence call. Every call is preceded by a read, so a repeat finds the
+/// object instead of creating it again.
 /// </summary>
 public interface IDirectoryWriter
 {
-    Task<DirectoryUser> CreateUserAsync(NewUser user, CancellationToken ct);
+    Task<DirectoryUser> CreateUserAsync(NewUser user, Secret initialPassword, CancellationToken ct);
     /// <summary>Security group (not mail-enabled) owned by the agent's own identity (Group.Create: no owner = unmodifiable group).</summary>
     Task<DirectoryGroup> CreateSecurityGroupAsync(string displayName, string description, CancellationToken ct);
     /// <summary>Adds the user to the group; an existing membership counts as done.</summary>
     Task AddMemberAsync(string groupObjectId, string userObjectId, CancellationToken ct);
+    /// <summary>
+    /// True when the agent's current token carries the TAP write permission (UserAuthMethod-TAP.ReadWrite.All). Checked
+    /// before a user is created, so the password and the pass go out together (a new permission can take ~24 h, F61).
+    /// </summary>
+    Task<bool> CanIssueTapAsync(CancellationToken ct);
+    /// <summary>One-time Temporary Access Pass for the user (agent TAP only; Graph's TAP create call, F66).</summary>
+    Task<IssuedTap> CreateTemporaryAccessPassAsync(string userObjectId, int lifetimeMinutes, CancellationToken ct);
 }
 
 /// <summary>

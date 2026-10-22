@@ -168,6 +168,15 @@ public sealed record AgentWork
     public string? Manual { get; init; }
     /// <summary>First refusal of the agent's write (permission not in its token yet); retried until <see cref="WorkflowSettings.PermissionWait"/>.</summary>
     public DateTimeOffset? RefusedSince { get; init; }
+    /// <summary>Agent TAP: when the one-time pass the agent created starts and expires (metadata only; never the pass).</summary>
+    public DateTimeOffset? TapIssuedAt { get; init; }
+    public DateTimeOffset? TapExpiresAt { get; init; }
+    /// <summary>Agent TAP: when the sign-in details mail went to the Enterprise ID mail (sent once, never stored).</summary>
+    public DateTimeOffset? SignInDetailsSentAt { get; init; }
+    /// <summary>The initial password was in that mail (the account was created in the same run).</summary>
+    public bool PasswordMailed { get; init; }
+    /// <summary>Agent TAP: why the pass was left to the ID team (the rest of the agent's work still counts).</summary>
+    public string? TapLeft { get; init; }
 }
 
 public sealed record StageEntry(RequestStatus Status, WaitingOn WaitingOn, DateTimeOffset EnteredAt, DateTimeOffset? LeftAt);

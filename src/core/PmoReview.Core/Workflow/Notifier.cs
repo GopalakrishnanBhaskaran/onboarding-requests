@@ -30,6 +30,14 @@ public sealed record WorkflowSettings
     /// <summary>Scopes (prefixes, e.g. /subscriptions/…/resourceGroups/rg-x) where the agent may assign roles.</summary>
     public IReadOnlyList<string> RoleAssignScopes { get; init; } = [];
     /// <summary>
+    /// Agent TAP (<c>AGENT_TAP</c>; Gokul, 22 Oct 2026; off until approved): for a user the agent has just created, it also
+    /// issues a one-time Temporary Access Pass and mails it with the initial password and the MFA set-up steps to the
+    /// Enterprise ID mail, once. Needs <see cref="AgentProvisioning"/>, a mail sender and the TAP permission.
+    /// </summary>
+    public bool AgentTap { get; init; }
+    /// <summary>Lifetime of an agent-issued TAP in minutes (the joiner reads it from mail; within the tenant's TAP policy maximum).</summary>
+    public int AgentTapLifetimeMinutes { get; init; } = 480;
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>
@@ -89,6 +97,41 @@ public sealed class Notifier(DataStores stores, IClock clock, ILogger<Notifier> 
         catch (DocumentConflictException)
         {
             // Same request + step + kind already queued: idempotent.
+        }
+    }
+
+    /// <summary>
+    /// Records a mail that was already sent directly (the agent's sign-in details). <paramref name="maskedBody"/> is what
+    /// the app keeps: built with <c>******</c> in place of the password and the pass, and masked again here.
+    /// </summary>
+    public async Task RecordSentAsync(string projectId, string requestId, string step, NotificationKind kind, IEnumerable<string?> to, string subject, string maskedBody,
+        IReadOnlyList<string> deliveredTo, CancellationToken ct)
+    {
+        var key = Ids.Key(requestId, step);
+        var n = new Notification
+        {
+            Id = Notification.MakeId(key, kind),
+            ProjectId = projectId,
+            RequestId = requestId,
+            Kind = kind,
+            IdempotencyKey = key,
+            To = to.Where(t => !string.IsNullOrWhiteSpace(t)).Select(t => t!.Trim().ToLowerInvariant()).Distinct().ToList(),
+            Subject = SecretMasker.Apply(subject)!,
+            Body = SecretMasker.Apply(maskedBody)!,
+            CreatedAt = clock.UtcNow,
+            Status = NotificationStatus.Sent,
+            SentAt = clock.UtcNow,
+            Attempts = 1,
+            DeliveredTo = deliveredTo,
+        };
+        try
+        {
+            await stores.Notifications.CreateAsync(n, ct);
+            logger.LogInformation("notify {Kind} request={RequestId} step={Step} sent directly", kind, requestId, step);
+        }
+        catch (DocumentConflictException)
+        {
+            // Already recorded.
         }
     }
 

@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Domain;
@@ -12,11 +14,23 @@ namespace PmoReview.Core.Workflow;
 /// <see cref="WorkflowSettings.AgentRoleAssignment"/>). Runs only at With ID Team / With Role Team, which are reached only
 /// after the named Owner and then Security approved — and re-checks both approvals before any write. Deterministic code,
 /// never the AI model. Reads before every write, so a repeat finds the object instead of creating it again. The Temporary
-/// Access Pass stays with the ID team. Anything outside the safe path goes to the team with the reason and an issue.
+/// Access Pass stays with the ID team unless the agent TAP is on (<see cref="WorkflowSettings.AgentTap"/>): then, for a user
+/// it has just created, the agent mails one one-time pass with the initial password and the MFA steps to the Enterprise
+/// ID mail — never stored. Anything outside the safe path goes to the team with the reason and an issue.
 /// </summary>
 public sealed partial class WorkflowAgent
 {
     public const string AgentName = "AI agent";
+
+    /// <summary>
+    /// Sign-in details already mailed in this process, by request id: if saving the request then fails (someone acted
+    /// meanwhile), the repeat reuses this instead of issuing a second pass.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, AgentWork> signInDetailsSent = new();
+
+    /// <summary>The agent mails the pass itself: switched on, a sender that really mails, a member account and a mail address.</summary>
+    private bool TapByAgent(AccessRequest r) =>
+        settings.AgentTap && directMail?.Delivers == true && !r.Guest && Services.DomainIds.MailOf(r.EnterpriseId) is not null;
 
     private bool ProvisioningPending(TeamTask task) =>
         settings.AgentProvisioning && task.State == TeamTaskState.Open && task.Agent is not ({ Completed: true } or { Manual: not null });
@@ -39,6 +53,7 @@ public sealed partial class WorkflowAgent
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
         var row = sheet.FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var work = task.Agent ?? new AgentWork { At = now };
+        if (work.SignInDetailsSentAt is null && signInDetailsSent.TryGetValue(r.Id, out var mailed)) work = mailed; // the save after the mail was lost
 
         if (!BothApprovalsCurrent(flow))
             return ToIdTeam(r, task, work with { Manual = "the Owner and Security approvals are not both current" }, project, now, IssueSeverity.High);
@@ -49,6 +64,7 @@ public sealed partial class WorkflowAgent
             : null);
         if (manual is not null) return ToIdTeam(r, task, work with { Manual = manual }, project, now, IssueSeverity.Info);
 
+        Secret? password = null;
         try
         {
             var user = await directory!.FindUserAsync(r.DomainId!, ct);
@@ -59,17 +75,16 @@ public sealed partial class WorkflowAgent
                 return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is not in the project's domain {domain}, so the agent does not create it (the requester can resubmit)" },
                     project, now, IssueSeverity.Info);
             }
-            if (user is null)
-            {
-                user = await writer!.CreateUserAsync(new NewUser(r.DomainId!.ToLowerInvariant(), $"{r.FirstName} {r.LastName}".Trim(),
-                    MailNickname(r), r.FirstName, r.LastName), ct);
-                work = work with { UserCreated = true };
-            }
-            else if (user.IsGuest)
-            {
+            if (user?.IsGuest == true)
                 return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is a guest account" }, project, now, IssueSeverity.Info);
+            // The password and the pass go out in one mail, so the account is created only once the TAP permission is in
+            // the agent's token (a new permission can take ~24 h, F61): until then this waits like any refused write;
+            // after that the agent provisions anyway and the ID team issues the pass.
+            if (user is null && work.TapLeft is null && TapByAgent(r) && !await writer!.CanIssueTapAsync(ct))
+            {
+                if (work.RefusedSince is not { } since || now - since < settings.PermissionWait) throw new DirectoryWriteException("TapForbidden");
+                work = work with { TapLeft = $"the TAP permission had not reached the agent {settings.PermissionWait.TotalHours:0} h after the first try" };
             }
-            work = work with { UserObjectId = user.ObjectId };
 
             if (work.GroupObjectId is null)
             {
@@ -98,7 +113,24 @@ public sealed partial class WorkflowAgent
                 }
             }
 
-            if (!await directory.IsMemberAsync(work.GroupObjectId!, user.ObjectId, ct))
+            // The account last: the group is in place, so its password is mailed in this same run (it is never kept).
+            if (user is null)
+            {
+                password = Secret.NewPassword();
+                user = await writer!.CreateUserAsync(new NewUser(r.DomainId!.ToLowerInvariant(), $"{r.FirstName} {r.LastName}".Trim(),
+                    MailNickname(r), r.FirstName, r.LastName), password, ct);
+                work = work with { UserCreated = true };
+            }
+            work = work with { UserObjectId = user.ObjectId };
+
+            // Agent TAP: right after the account exists (its password is only in memory now), its sign-in details go out
+            // by mail, once. A transient failure is retried next run (then without the password); any other leaves the
+            // pass to the ID team.
+            if (work.UserCreated && work.SignInDetailsSentAt is null && work.TapLeft is null && TapByAgent(r))
+                work = await SendSignInDetailsAsync(r, task, scope, project, work, password, ct);
+
+            // A user created seconds ago is in no group yet (and may not be readable yet, F58): add without the read.
+            if (password is not null || !await directory.IsMemberAsync(work.GroupObjectId!, user.ObjectId, ct))
             {
                 await writer!.AddMemberAsync(work.GroupObjectId!, user.ObjectId, ct);
                 work = work with { MemberAdded = true };
@@ -141,44 +173,105 @@ public sealed partial class WorkflowAgent
         var done = Done(work, r, scope);
         List<Func<CancellationToken, Task>> resolved = work.RefusedSince is null ? []
             : [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.DependencyFailure], c)]; // the permission arrived
-        if (work.UserCreated)
+        var informed = Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r));
+        if (work.UserCreated && work.SignInDetailsSentAt is null)
         {
-            // A new account needs a one-time TAP for the first sign-in: only the ID team issues it.
-            var tapTask = task with { Agent = work, Instructions = Messages.IdTeamTapInstructions(r, newScope, flow, done, settings.TapMaxLifetimeMinutes), SinceAt = now };
+            // A new account needs a one-time TAP for the first sign-in: the ID team issues it.
+            var why = work.TapLeft is null ? "" : $" The agent did not mail the sign-in details: {work.TapLeft}.";
+            var tapTask = task with { Agent = work, Instructions = Messages.IdTeamTapInstructions(r, newScope, flow, done + why, settings.TapMaxLifetimeMinutes), SinceAt = now };
             var next = (flow with { Scope = newScope, IdTeamTask = tapTask }).Waiting(WaitingOn.IdTeam, now)
-                .Log(now, Agent, "agent-provisioned", $"{done} The ID team issues the one-time Temporary Access Pass.");
+                .Log(now, Agent, "agent-provisioned", $"{done} The ID team issues the one-time Temporary Access Pass.{why}");
             var (subject, body) = Messages.TeamTask(r, tapTask, settings);
-            var (ps, pb) = Messages.Provisioned(r, newScope, done, "The ID team issues the one-time Temporary Access Pass next.", settings);
-            return new Step(r with { Flow = next },
+            var (ps, pb) = Messages.Provisioned(r, newScope, done, $"The ID team issues the one-time Temporary Access Pass next.{why}", settings);
+            List<Func<CancellationToken, Task>> effects =
             [
                 .. resolved,
                 c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{tapTask.Id}:tap", NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c),
-                c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:provisioned", NotificationKind.ProvisioningSummary,
-                    Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r)), ps, pb, c),
-            ], Stop: true);
+                c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:provisioned", NotificationKind.ProvisioningSummary, informed, ps, pb, c),
+            ];
+            if (work.TapLeft is not null)
+                effects.Add(c => issues.RecordAsync(r.ProjectId, r.Id, $"{task.Id}:tap", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
+                    $"Agent TAP left to the ID team: {work.TapLeft}.", null, c));
+            return new Step(r with { Flow = next }, effects, Stop: true);
         }
 
-        // Existing account: nothing left for the ID team. Verified on the next run (Entra reads lag right after a write).
+        // Existing account (no TAP needed), or a new one whose sign-in details the agent mailed: nothing left for the ID
+        // team. Verified on the next run (Entra reads lag right after a write).
+        var byMail = work.SignInDetailsSentAt is not null;
         var report = new IdTeamReport
         {
             UserPrincipalName = r.DomainId!.ToLowerInvariant(), UserObjectId = work.UserObjectId, GroupName = scope.EntraGroup,
-            GroupObjectId = work.GroupObjectId, GroupCreated = work.GroupCreated, UserCreated = false, AddedToGroup = true,
-            MappingSheetUpdated = work.MappingUpdated, Notes = "Done by the AI agent after Owner and Security approval; existing account, no TAP needed.",
+            GroupObjectId = work.GroupObjectId, GroupCreated = work.GroupCreated, UserCreated = work.UserCreated, AddedToGroup = true,
+            MappingSheetUpdated = work.MappingUpdated,
+            Tap = byMail ? new TapRecord(work.TapIssuedAt!.Value, work.TapExpiresAt!.Value, true, AgentName, now) : null,
+            Notes = byMail
+                ? $"Done by the AI agent after Owner and Security approval; one-time TAP and {(work.PasswordMailed ? "initial password" : "MFA steps (no password)")} mailed to the Enterprise ID mail (never stored)."
+                : "Done by the AI agent after Owner and Security approval; existing account, no TAP needed.",
         };
         var reported = task with
         {
             Agent = work, State = TeamTaskState.Reported, ReportedAt = now, ReportedBy = AgentName, IdReport = report,
             PickedUpAt = task.PickedUpAt ?? now, PickedUpBy = task.PickedUpBy ?? AgentName,
         };
+        var mailedNote = byMail
+            ? $"The agent mailed the sign-in details (one-time Temporary Access Pass valid until {Messages.Time(work.TapExpiresAt)}" +
+              $"{(work.PasswordMailed ? ", initial password" : "")}, MFA set-up steps) to {Services.DomainIds.MailOf(r.EnterpriseId)}. Nobody else saw them; the app keeps no copy."
+            : "Existing account: no Temporary Access Pass needed.";
         var verify = (flow with { Scope = newScope, IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
-            .Log(now, Agent, "agent-provisioned", $"{done} Existing account: no TAP needed. Verified on the next agent run.");
-        var (s1, b1) = Messages.Provisioned(r, newScope, done, "Existing account: no Temporary Access Pass needed. The agent verifies it, then the roles are assigned.", settings);
+            .Log(now, Agent, "agent-provisioned", $"{done} {mailedNote} Verified on the next agent run.");
+        var (s1, b1) = Messages.Provisioned(r, newScope, done, $"{mailedNote} The agent verifies it, then the roles are assigned.", settings);
         return new Step(r with { Flow = verify },
         [
             .. resolved,
             c => notifier.EnqueueAsync(r.ProjectId, r.Id, $"{task.Id}:provisioned", NotificationKind.ProvisioningSummary,
-                Recipients.Security(project).Concat(Recipients.Owner(r)).Concat(Recipients.Requester(r)), s1, b1, c),
+                byMail ? informed.Concat(Recipients.IdTeam(project)) : informed, s1, b1, c),
         ], Stop: true);
+    }
+
+    /// <summary>
+    /// Agent TAP: creates one one-time pass for the user the agent created and mails it — with the initial password when
+    /// it was created in this run — and the MFA steps to the Enterprise ID mail. The values exist only in memory and in
+    /// that mail; the app records a copy with both masked, plus the times. A transient Graph failure is thrown (the run is
+    /// retried); any other failure leaves the pass to the ID team.
+    /// </summary>
+    private async Task<AgentWork> SendSignInDetailsAsync(AccessRequest r, TeamTask task, ReviewedScope scope, Project? project, AgentWork work, Secret? password,
+        CancellationToken ct)
+    {
+        if (!BothApprovalsCurrent(r.Flow!)) return work with { TapLeft = "the Owner and Security approvals are not both current" };
+        IssuedTap tap;
+        try
+        {
+            tap = await writer!.CreateTemporaryAccessPassAsync(work.UserObjectId!, settings.AgentTapLifetimeMinutes, ct);
+        }
+        catch (DirectoryReadException e) when (e is DirectoryWriteException { Forbidden: true } || e.Category is not ("NotReplicated" or "GraphUnavailable" or "IdentityUnavailable"))
+        {
+            return work with { TapLeft = $"Entra did not create the Temporary Access Pass ({e.Category})" };
+        }
+        work = work with { TapIssuedAt = tap.IssuedAt, TapExpiresAt = tap.ExpiresAt };
+        var upn = r.DomainId!.ToLowerInvariant();
+        var to = Recipients.User(r).Where(x => x is not null).Select(x => x!).ToList();
+        var (subject, body) = Messages.SignInDetails(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);
+        var (_, kept) = Messages.SignInDetails(r, scope, project, upn, password is null ? null : SecretMasker.Mask, SecretMasker.Mask, tap.ExpiresAt, settings);
+        var step = $"{task.Id}:sign-in";
+        var key = Ids.Key(r.Id, step);
+        IReadOnlyList<string> delivered;
+        try
+        {
+            delivered = await directMail!.SendNowAsync(new Notification
+            {
+                Id = Notification.MakeId(key, NotificationKind.SignInDetails), ProjectId = r.ProjectId, RequestId = r.Id, Kind = NotificationKind.SignInDetails,
+                IdempotencyKey = key, To = to, Subject = subject, Body = body, CreatedAt = clock.UtcNow, Status = NotificationStatus.Pending,
+            }, ct);
+        }
+        catch (OutboundException e)
+        {
+            logger.LogWarning("sign-in details not sent {Category} request={RequestId}", e.Category, r.Id);
+            return work with { TapLeft = $"the sign-in details mail could not be sent ({e.Category}); the pass the agent created was never shown to anyone, so the ID team issues a new one (it replaces the old one)" };
+        }
+        var sent = work with { SignInDetailsSentAt = clock.UtcNow, PasswordMailed = password is not null };
+        signInDetailsSent[r.Id] = sent;
+        await notifier.RecordSentAsync(r.ProjectId, r.Id, step, NotificationKind.SignInDetails, to, subject, kept, delivered, ct);
+        return sent;
     }
 
     private static string Done(AgentWork w, AccessRequest r, ReviewedScope scope) =>

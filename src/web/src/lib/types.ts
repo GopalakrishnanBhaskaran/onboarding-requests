@@ -42,6 +42,8 @@ export interface Me {
   mailEnabled?: boolean;
   /** Test environment: every mail goes to this one address. */
   mailRedirectTo?: string | null;
+  /** Agent TAP: the agent mails a new joiner's one-time pass, initial password and MFA steps. */
+  agentTap?: boolean;
 }
 
 export type RowFlag = 'None' | 'Amber' | 'Red';

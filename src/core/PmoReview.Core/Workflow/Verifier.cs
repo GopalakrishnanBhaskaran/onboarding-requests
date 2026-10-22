@@ -106,7 +106,7 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
             if (report.Tap is not null)
             {
                 var methods = await directory.GetAuthMethodsAsync(user.ObjectId, ct);
-                checks.Add(EntraTap(methods.Tap));
+                checks.Add(EntraTap(methods.Tap, TapLimit(flow)));
             }
         }
         else
@@ -132,22 +132,31 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
         if (!report.AddedToGroup) problems.Add("The TAP must be issued only after the group membership.");
         if (!tap.OneTime) problems.Add("The TAP must be one-time use.");
         var lifetime = (tap.ExpiresAt - tap.IssuedAt).TotalMinutes;
-        if (lifetime > settings.TapMaxLifetimeMinutes) problems.Add($"TAP lifetime is {lifetime:0} minutes; use the shortest lifetime (at most {settings.TapMaxLifetimeMinutes}).");
+        var limit = TapLimit(flow);
+        if (lifetime > limit) problems.Add($"TAP lifetime is {lifetime:0} minutes; use the shortest lifetime (at most {limit}).");
         return problems.Count == 0
             ? new CheckResult(VerifyCodes.Tap, G, CheckStatus.Pass, $"TAP metadata recorded: issued {Messages.Time(tap.IssuedAt)}, expires {Messages.Time(tap.ExpiresAt)}, one-time, by {tap.IssuedBy}.")
             : new CheckResult(VerifyCodes.Tap, G, CheckStatus.Fail, string.Join(" ", problems));
     }
 
+    /// <summary>
+    /// Longest TAP lifetime allowed: the ID team's limit, or — for a pass the agent mailed (recorded only by the agent in
+    /// its own work record, never from a team's form) — the agent TAP lifetime, since the joiner reads it from mail.
+    /// </summary>
+    private int TapLimit(WorkflowState flow) => flow.IdTeamTask?.Agent?.SignInDetailsSentAt is not null
+        ? Math.Max(settings.TapMaxLifetimeMinutes, settings.AgentTapLifetimeMinutes)
+        : settings.TapMaxLifetimeMinutes;
+
     /// <summary>TAP times are recorded to the minute (datetime-local), so comparisons with approval times use minute precision.</summary>
     internal static DateTimeOffset Minute(DateTimeOffset t) => new(t.Ticks - t.Ticks % TimeSpan.TicksPerMinute, t.Offset);
 
-    private CheckResult EntraTap(TapMethod? tap)
+    private static CheckResult EntraTap(TapMethod? tap, int limit)
     {
         const string G = CheckGroups.IdTeam;
         if (tap is null) return new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Pass, "No TAP on the account now (already used or removed).");
         var problems = new List<string>();
         if (tap.IsUsableOnce == false) problems.Add("Entra shows the TAP is not one-time use.");
-        if (tap.LifetimeMinutes > settings.TapMaxLifetimeMinutes) problems.Add($"Entra shows a TAP lifetime of {tap.LifetimeMinutes} minutes (maximum {settings.TapMaxLifetimeMinutes}).");
+        if (tap.LifetimeMinutes > limit) problems.Add($"Entra shows a TAP lifetime of {tap.LifetimeMinutes} minutes (maximum {limit}).");
         return problems.Count == 0
             ? new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Pass, "Entra shows a one-time TAP within the lifetime limit.")
             : new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Fail, string.Join(" ", problems));

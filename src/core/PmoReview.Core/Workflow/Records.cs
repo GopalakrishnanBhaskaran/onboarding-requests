@@ -25,6 +25,11 @@ public enum NotificationKind
     DeveloperReport,
     /// <summary>What the AI agent created or assigned after both approvals (Security, Owner, requester).</summary>
     ProvisioningSummary,
+    /// <summary>
+    /// Agent TAP: the joiner's sign-in name, initial password, one-time TAP and MFA set-up steps, sent once to the
+    /// Enterprise ID mail. The app keeps only a copy with both secrets masked.
+    /// </summary>
+    SignInDetails,
 }
 
 /// <summary>Pending → Sent (mail sender) or Recorded (pilot: kept in the app only) or Failed (after 3 attempts).</summary>

@@ -98,6 +98,36 @@ def run(write_fixture: bool) -> None:
     assert (prod["environment"], prod["flag"], prod["groupState"]) == ("Prod", "Red", "ToBeCreated"), prod
     assert "no Prod groups" in prod["notes"]
 
+    # Pilot test scope: every role lands in the one test resource group, repeats of a role merged (names kept).
+    with tempfile.TemporaryDirectory() as tmp:
+        cpath, rpath = workbook(Path(tmp))
+        test_rg = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-test"
+        tested = iw.build("PEST", "SAMPLE-PEST-IMPORT", cpath, [rpath], {}, use_az=False, test_scope=test_rg)
+    t = {r["entraGroup"]: r for r in tested["mappingSheet"]}["azr-pes-rg-data-dev-ph-weu-support-reader"]
+    assert [(g["roleName"], g["scope"]) for g in t["azureRoles"]] == [("Storage Blob Data Reader", test_rg), ("Reader", test_rg)], t["azureRoles"]
+    assert t["azureRoles"][0]["resourceName"] == "samplestddevdaiweu01, samplestddevlogweu01", t["azureRoles"][0]
+    assert t["notes"].startswith("TEST: the roles are assigned in the test resource group rg-sample-test"), t["notes"]
+
+    # Domain labels: notes in brackets or parentheses are dropped, the code stays.
+    assert iw.clean_domain("Data Governance (domain, not role suffix)", "datagovernance") == "Data Governance (datagovernance)"
+    assert iw.clean_domain("Supply  [PEST spelling of supp] (sup)", "sup") == "Supply (sup)"
+
+    # The project document: real (not sample), tenant, domain, one test contact everywhere; live values kept otherwise.
+    doc = iw.project_doc(data, None, "", "@Sample.invalid", "00000000-0000-4000-8000-0000000000AA", "Tester@Sample.invalid")
+    assert (doc["name"], doc["tenantName"], doc["isSample"], doc["domainIdSuffix"], doc["tenantId"]) == (
+        "PEST data platform", "PEST", False, "@sample.invalid", "00000000-0000-4000-8000-0000000000aa"), doc
+    assert doc["contacts"]["security"] == ["tester@sample.invalid"] and doc["contacts"]["idTeamManager"] == "tester@sample.invalid"
+    kept = iw.project_doc(data, {**doc, "name": "PEST (live name)"}, "", None, None, None)
+    assert (kept["name"], kept["contacts"], kept["tenantId"]) == ("PEST (live name)", doc["contacts"], doc["tenantId"])
+    assert iw.users(["sample-user-1=Requester,Owner"], "PEST") == [
+        {"id": "sample-user-1:PEST", "userId": "sample-user-1", "projectId": "PEST", "roles": ["Requester", "Owner"], "isSample": False, "schemaVersion": 1}]
+    for bad in (["sample-user-1=Approver"], ["bad id!=Requester"], ["sample-user-1="]):
+        try:
+            iw.users(bad, "PEST")
+            raise AssertionError(f"accepted {bad}")
+        except SystemExit:
+            pass
+
     for r in data["mappingSheet"]:  # what MappingSheetService would accept
         assert iw.re.match(r"^[A-Za-z0-9_.:-]{1,64}$", r["rowId"]) and r["resource"] and r["accessLevel"] and r["role"] and r["sourceReference"]
 

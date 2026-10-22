@@ -67,6 +67,12 @@ param agentRoleAssignment bool = false
 @description('Comma-separated Azure role definition GUIDs the agent may assign (allow-list).')
 param roleAssignAllowedRoles string = ''
 
+@description('Agent TAP: for an account it just created, the agent mails a one-time TAP + initial password to the joiner. Approval-gated: deploy_free.sh tap.')
+param agentTap bool = false
+
+@description('Lifetime in minutes of an agent-issued TAP (within the tenant TAP policy maximum).')
+param agentTapLifetimeMinutes int = 480
+
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
@@ -174,6 +180,8 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_ROLE_ASSIGNMENT', value: agentRoleAssignment ? 'true' : 'false' }
         { name: 'ROLE_ASSIGN_ALLOWED_ROLES', value: roleAssignAllowedRoles }
         { name: 'ROLE_ASSIGN_SCOPES', value: roleAssignScopes }
+        { name: 'AGENT_TAP', value: agentTap ? 'true' : 'false' }
+        { name: 'AGENT_TAP_LIFETIME_MINUTES', value: string(agentTapLifetimeMinutes) }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }
