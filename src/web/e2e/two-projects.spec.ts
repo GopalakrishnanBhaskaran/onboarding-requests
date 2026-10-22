@@ -227,6 +227,8 @@ test('unregistered user sees their id and no data', async ({ browser }) => {
   const { ctx, page } = await as(browser, 'sample-user-nobody');
   await page.goto('/');
   await expect(page.getByText('sample-user-nobody').first()).toBeVisible();
-  await expect(page.getByText(/not registered for any pilot project/)).toBeVisible();
+  await expect(page.getByText(/not registered for any project/)).toBeVisible();
+  // The sign-in name is enough to register someone (or the user id).
+  await expect(page.locator('code', { hasText: 'sample-user-nobody@sample.invalid' })).toBeVisible();
   await ctx.close();
 });

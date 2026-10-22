@@ -40,10 +40,11 @@ tools/deploy_free.sh params $SUB
 2. **Upload the two workbooks.**
    - Cloud Shell → *Manage files* → *Upload*. Then `mv ~/Entra-Group-Classification-*.xlsx ~/Data_Response_document*.xlsx ~/onboarding-requests/.local/`
    - `.local/` and `*.xlsx` are git-ignored.
-3. **Your two user ids.** Sign in to the app as the Gmail tester, open `https://icy-smoke-04dcd4300.6.azurestaticapps.net/.auth/me` and copy `userId`. Do the same as the pilot admin.
+3. **Who to register: the two sign-in names** (new on 22 Oct: the address each person signs in with; a `/.auth/me` userId still works too). Needs the latest `app` redeploy first.
    ```bash
-   ME=<Gmail tester userId>; ADMIN=<pilot admin userId>
+   ME=<Gmail tester sign-in name>; ADMIN=<pilot admin sign-in name>
    ```
+   Later changes without re-importing: `COSMOS_CONNECTION_STRING="$CS" $PY tools/register_user.py --project PEST --user <sign-in name> --roles Owner` (`--list`, `--remove`).
 4. **Import PEST and Vestacy** (Cosmos data only, no Azure change). Pilot test mode:
    - `--test-scope`: every Azure role from the response document lands in `rg-pmo-sample-access`; the real resource names stay on each line.
    - `--tenant-id`: your tenant.

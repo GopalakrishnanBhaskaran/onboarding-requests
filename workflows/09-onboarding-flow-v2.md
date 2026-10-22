@@ -26,6 +26,8 @@
 
 v1 roles (Reviewer, Maintainer) grant nothing in v2: re-register users with v2 roles.
 
+Register a person by **sign-in name** (22 Oct 2026; the address they sign in with, matched like the named Owner, so the guest `#EXT#` and `live.com#` forms count) or by the app user id from `/.auth/me`: `tools/register_user.py --project PEST --user jane@contoso.com --roles Requester,Owner` (`--list`, `--remove`), or `--register-user jane@contoso.com=Requester,Owner` on `import_workbook.py`. Roles from both add up. If a person's sign-in name changes, register the new one. An unregistered person sees their sign-in name and user id on the start page.
+
 ## Deploy (each step needing approval is marked)
 1. `tools/deploy_free.sh params <sub>` (after a Cloud Shell reset), set `enableHandoff=true`, `deployWorker=true` in `.local/params.json` (the worker is the AI agent).
 2. `tools/deploy_free.sh whatif <sub> .local/params.json` → review `.local/whatif.txt`. Expected: + containers `mappingSheet`, `responseDocument`, `notifications`, `issues`; worker Cosmos data roles re-scoped to the containers it uses; worker app settings (`WORKFLOW_SCHEDULE`, `NOTIFY_SENDER=Outbox`, `ROLE_READER=None`, SLAs, `TAP_MAX_LIFETIME_MINUTES`); retired `ENTRA_*` settings off. No new resource types; cost unchanged (₹50–300/month from credits). **Wait for "approved".**

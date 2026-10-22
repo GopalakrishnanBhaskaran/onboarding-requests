@@ -21,7 +21,7 @@ Inputs
 
 With --apply the project (one per tenant) is created or updated in Cosmos: tenant name, environments, group naming
 pattern, and optionally --domain-suffix, --tenant-id, --test-contact (every project contact = one tester mailbox) and
---register-user USERID=Role,Role (repeatable; userId from /.auth/me).
+--register-user USER=Role,Role (repeatable; USER = the person's sign-in name, or the userId from /.auth/me).
 
 Groups the response document names but the classification does not list are rows "to be created" (amber); in an
 environment the classification says has no groups (e.g. Prod) they are red.
@@ -33,7 +33,7 @@ Examples
   # pilot test in the agent's own tenant: roles land in the approved test resource group, every mail to the tester
   COSMOS_CONNECTION_STRING=... python3 tools/import_workbook.py --tenant PEST --project PEST ... \\
       --test-scope /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --tenant-id <agent tenant guid> \\
-      --domain-suffix @contoso.onmicrosoft.com --test-contact tester@example.com --register-user <userId>=Requester,Owner --apply
+      --domain-suffix @contoso.onmicrosoft.com --test-contact tester@example.com --register-user tester@example.com=Requester,Owner --apply
 """
 from __future__ import annotations
 
@@ -264,15 +264,39 @@ CONTACT_LISTS = ("pmo", "security", "idTeam", "roleTeam", "operators")
 CONTACT_ONE = ("securityManager", "idTeamManager", "roleTeamManager", "ownerManagerFallback")
 
 
+SIGN_IN_PREFIX = "signin:"  # same as AccessService.SignInPrefix
+
+
+def user_key(user: str) -> str:
+    """The userAccess user id: the app's user id (/.auth/me userId) as is, or a sign-in name (mail form, e.g.
+    jane@contoso.com) as "signin:<lower case>" — the API matches it like the named Owner (guest #EXT# and live.com# forms
+    of that mail count as the same person)."""
+    u = user.strip()
+    if "@" in u:
+        if "#" in u or not MAIL.match(u):
+            raise SystemExit(f"{user}: give the sign-in name as a plain mail address (e.g. jane@contoso.com), not the #EXT# or live.com# form")
+        return SIGN_IN_PREFIX + u.lower()
+    if not SAFE_ID.match(u) or u.lower().startswith(SIGN_IN_PREFIX):
+        raise SystemExit(f"{user}: not a user id (letters, digits, . _ : -) or a sign-in name")
+    return u
+
+
+def user_doc(user: str, project: str, roles: list[str]) -> dict:
+    if not roles or set(roles) - ROLES:
+        raise SystemExit(f"roles must be from {sorted(ROLES)}")
+    key = user_key(user)
+    return {"id": f"{key}:{project}", "userId": key, "projectId": project, "roles": roles, "isSample": False, "schemaVersion": 1}
+
+
 def users(pairs: list[str], project: str) -> list[dict]:
-    """--register-user USERID=Role,Role -> userAccess documents for the project (not sample data)."""
+    """--register-user USER=Role,Role (USER = sign-in name or user id) -> userAccess documents (not sample data)."""
     out = []
     for pair in pairs:
         user, _, roles = pair.partition("=")
         wanted = [r.strip() for r in roles.split(",") if r.strip()]
-        if not SAFE_ID.match(user) or not wanted or set(wanted) - ROLES:
-            raise SystemExit(f"--register-user must be USERID=Role,Role with roles from {sorted(ROLES)}")
-        out.append({"id": f"{user}:{project}", "userId": user, "projectId": project, "roles": wanted, "isSample": False, "schemaVersion": 1})
+        if not user or not wanted:
+            raise SystemExit(f"--register-user must be USER=Role,Role (USER = sign-in name or user id) with roles from {sorted(ROLES)}")
+        out.append(user_doc(user, project, wanted))
     return out
 
 
@@ -352,7 +376,8 @@ def main() -> int:
     ap.add_argument("--tenant-id", help="Entra tenant GUID of this project (the agent's own tenant for a pilot test)")
     ap.add_argument("--test-scope", help="pilot test: every Azure role in this one resource group (/subscriptions/<id>/resourceGroups/<name>)")
     ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox")
-    ap.add_argument("--register-user", action="append", default=[], metavar="USERID=Role,Role", help="register a signed-in user on the project (repeatable)")
+    ap.add_argument("--register-user", action="append", default=[], metavar="USER=Role,Role",
+                    help="register a person on the project by sign-in name (jane@contoso.com) or user id (repeatable)")
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))
     args = ap.parse_args()
     if not args.classification and not args.response:

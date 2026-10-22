@@ -65,12 +65,13 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Environment settings (no resource change) | `tools/deploy_free.sh environment <subscriptionId> test --redirect <mail>` |
 | Mail (approval) | `tools/deploy_free.sh email <subscriptionId> [--redirect <mail>]` (dry run) → `… --approved-by "<name> <date>"` |
 | Import a tenant's workbooks | `python3 tools/import_workbook.py --tenant PEST --project PEST --classification <xlsx> --response <xlsx> [--resolve \| --test-scope <rg>] [--tenant-id <guid>] [--domain-suffix @…] [--test-contact <mail>] [--register-user <userId>=Role,Role] [--apply]` · test `python3 tools/test_import_workbook.py` |
+| Register people (live, by sign-in name or user id) | `python3 tools/register_user.py --project PEST --user jane@contoso.com --roles Requester,Owner` · `--list` · `--remove` · test `python3 tools/test_register_user.py` |
 | Remove SAMPLE data from the live app | `python3 tools/seed_sample_data.py --remove-sample` (lists) → `--yes` · test `python3 tools/test_seed_sample_data.py` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 
 ## Security rules for API code
 - Identity comes **only** from `x-ms-client-principal`. Ignore any user/project field in the body. The named Owner is matched on the principal's sign-in name (`userDetails`).
-- Look up `userAccess`. Deny by default (404 for a project the caller has no role in, 403 for a missing permission). Filter every query by the authorised `projectId`.
+- Look up `userAccess` by the principal's `userId`, and by its sign-in name (`signin:<name>`, same normalisation as the named-Owner match; a principal whose id starts with `signin:` gets nothing). Deny by default (404 for a project the caller has no role in, 403 for a missing permission). Filter every query by the authorised `projectId`.
 - Permissions by role: Requester submit/resubmit; Owner decide at the Owner stage (named Owner only); Security decide at the Security stage (not the Owner approver), issues, reports; IdTeam / RoleTeam their tasks; PMO edit the mapping sheet, reports; Operator issues, reports, recover runs.
 - Only the agent (`WorkflowAgent`) moves a request between stages; teams and approvers submit inputs that it validates. Idempotency key = request id + step.
 - ETag optimistic concurrency on every update.

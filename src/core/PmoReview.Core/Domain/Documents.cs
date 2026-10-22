@@ -258,7 +258,7 @@ public sealed record UserAccess : IDocument
 {
     /// <summary>"{userId}:{projectId}"</summary>
     public required string Id { get; init; }
-    /// <summary>SWA client principal userId.</summary>
+    /// <summary>SWA client principal userId, or "signin:&lt;sign-in name&gt;" for a registration by sign-in name (AccessService).</summary>
     public required string UserId { get; init; }
     public required string ProjectId { get; init; }
     public required IReadOnlyList<AppRole> Roles { get; init; }

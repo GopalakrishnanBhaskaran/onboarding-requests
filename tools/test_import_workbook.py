@@ -121,7 +121,12 @@ def run(write_fixture: bool) -> None:
     assert (kept["name"], kept["contacts"], kept["tenantId"]) == ("PEST (live name)", doc["contacts"], doc["tenantId"])
     assert iw.users(["sample-user-1=Requester,Owner"], "PEST") == [
         {"id": "sample-user-1:PEST", "userId": "sample-user-1", "projectId": "PEST", "roles": ["Requester", "Owner"], "isSample": False, "schemaVersion": 1}]
-    for bad in (["sample-user-1=Approver"], ["bad id!=Requester"], ["sample-user-1="]):
+    # By sign-in name: stored as "signin:<lower case mail>" (the API matches guest and live.com# forms of it).
+    assert iw.users(["Sample.Tester@Sample.invalid=Security"], "PEST") == [
+        {"id": "signin:sample.tester@sample.invalid:PEST", "userId": "signin:sample.tester@sample.invalid", "projectId": "PEST", "roles": ["Security"],
+         "isSample": False, "schemaVersion": 1}]
+    for bad in (["sample-user-1=Approver"], ["bad id!=Requester"], ["sample-user-1="], ["live.com#a@sample.invalid=Owner"],
+                ["a_sample.invalid#EXT#@t.invalid=Owner"], ["signin:x=Owner"], ["not a mail@x=Owner"]):
         try:
             iw.users(bad, "PEST")
             raise AssertionError(f"accepted {bad}")

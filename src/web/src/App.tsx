@@ -146,7 +146,8 @@ function Shell() {
         {me && me.projects.length === 0 && (
           <MessageBar intent="warning">
             <MessageBarBody>
-              You are signed in but not registered for any pilot project. Ask the pilot owner to register this user id: <code>{me.userId}</code>
+              You are signed in as <b>{me.displayName || me.userId}</b> but not registered for any project. Ask the pilot owner to register your
+              sign-in name{me.displayName ? <> <code>{me.displayName}</code></> : ''} (or this user id: <code>{me.userId}</code>).
             </MessageBarBody>
           </MessageBar>
         )}

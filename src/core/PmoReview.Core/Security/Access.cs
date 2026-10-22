@@ -104,13 +104,27 @@ public sealed class CallerContext(string userId, string displayName, IReadOnlyDi
 
 public sealed class AccessService(DataStores stores)
 {
-    /// <summary>Deny by default: a signed-in user with no userAccess rows gets an empty grant set.</summary>
+    /// <summary>userAccess rows registered by sign-in name carry this user id prefix (the platform's own ids never do).</summary>
+    public const string SignInPrefix = "signin:";
+
+    /// <summary>The userAccess user id of a registration by sign-in name: same normalisation as the named-Owner match.</summary>
+    public static string SignInUserId(string signIn) => SignInPrefix + CallerContext.SignInKey(signIn);
+
+    /// <summary>
+    /// Deny by default: a signed-in user with no userAccess rows gets an empty grant set. Rows match the platform user id,
+    /// or the principal's sign-in name (<see cref="SignInUserId"/>); the roles of both add up.
+    /// </summary>
     public async Task<CallerContext> ResolveAsync(ClientPrincipal principal, CancellationToken ct)
     {
-        var rows = await stores.UserAccess.ListAsync(principal.UserId, ct);
+        // A platform user id never starts with the prefix; one that does could reach a sign-in registration: deny.
+        if (principal.UserId.StartsWith(SignInPrefix, StringComparison.OrdinalIgnoreCase))
+            return new CallerContext(principal.UserId, principal.UserDetails, new Dictionary<string, IReadOnlySet<AppRole>>());
+        var keys = new List<string> { principal.UserId };
+        if (!string.IsNullOrWhiteSpace(principal.UserDetails)) keys.Add(SignInUserId(principal.UserDetails));
+        var rows = new List<UserAccess>();
+        foreach (var key in keys) rows.AddRange((await stores.UserAccess.ListAsync(key, ct)).Select(r => r.Value));
         var grants = rows
-            .Select(r => r.Value)
-            .Where(r => r.UserId == principal.UserId && !string.IsNullOrEmpty(r.ProjectId))
+            .Where(r => keys.Contains(r.UserId, StringComparer.Ordinal) && !string.IsNullOrEmpty(r.ProjectId))
             .GroupBy(r => r.ProjectId, StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
