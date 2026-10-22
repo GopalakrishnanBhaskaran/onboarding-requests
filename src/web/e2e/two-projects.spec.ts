@@ -54,6 +54,16 @@ async function submit(page: Page, fields: {
   return page.url().split('/requests/')[1];
 }
 
+/** Every cell of the table keeps its text inside its own column: long sign-in names wrap instead of running into the next cell. */
+async function expectNoOverflow(page: Page, table: string) {
+  const t = page.getByRole('table', { name: table });
+  await expect(t).toBeVisible();
+  const spilled = await t.locator('td, th').evaluateAll((cells) => cells
+    .filter((c) => c.scrollWidth > c.clientWidth + 1)
+    .map((c) => `${c.textContent?.trim().slice(0, 60)} (${c.scrollWidth}px in ${c.clientWidth}px)`));
+  expect(spilled).toEqual([]);
+}
+
 async function expectStage(page: Page, stage: string) {
   await expect(page.locator('section[aria-labelledby="status-h"]').getByText(stage, { exact: true })).toBeVisible({ timeout: 20_000 });
 }
@@ -131,6 +141,14 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
   await rose.page.getByRole('tab', { name: /Audit trail/ }).click();
   await rose.page.getByRole('button', { name: 'Show full trail' }).click();
   await expect(rose.page.getByText(/OwnerApproved|Owner approved/i).first()).toBeVisible();
+
+  // The request list: the requester's sign-in name and the stage badge each stay in their own column, on a laptop and a narrow window.
+  for (const width of [1280, 900]) {
+    await alice.page.setViewportSize({ width, height: 800 });
+    await alice.page.goto('/#/requests');
+    await expect(alice.page.getByRole('link', { name: id.slice(0, 8) })).toBeVisible();
+    await expectNoOverflow(alice.page, 'Request status');
+  }
 
   for (const u of [alice, otto, bob, olivia, sam, ivan, rose]) await u.ctx.close();
 });
@@ -220,6 +238,9 @@ test('PMO sees the mapping sheet and the response document', async ({ browser })
   await expect(paul.page.getByRole('heading', { name: 'PMO-to-Entra group mapping sheet' })).toBeVisible();
   await expect(paul.page.getByText('A-DBW-ENG-USER v1')).toBeVisible();
   await expect(paul.page.getByRole('heading', { name: 'Response document', exact: true })).toBeVisible();
+  // Long Azure scopes and user ids wrap inside their columns.
+  await expectNoOverflow(paul.page, 'Mapping sheet');
+  await expectNoOverflow(paul.page, 'Response document');
 
   // PMO corrects an existing row in place (e.g. the group's object id in this tenant): the version goes up.
   const row = paul.page.getByRole('row').filter({ hasText: 'A-SALES-READ v' });

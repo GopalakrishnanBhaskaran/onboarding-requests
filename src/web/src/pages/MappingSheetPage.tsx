@@ -134,22 +134,22 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             <TableBody>
               {shown?.map(({ value: r, etag }) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.rowId} v{r.version}<Caption1 block className={s.muted}>{r.sourceReference}</Caption1></TableCell>
-                  <TableCell>
+                  <TableCell className={s.wrap}>{r.rowId} v{r.version}<Caption1 block className={s.muted}>{r.sourceReference}</Caption1></TableCell>
+                  <TableCell className={s.wrap}>
                     {r.resource} · {r.accessLevel}{r.environment ? ` · ${r.environment}` : ''}
                     {r.jobRoles && <Caption1 block className={s.muted}>For: {r.jobRoles}</Caption1>}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={s.wrap}>
                     {r.entraGroup} {r.groupState === 'ToBeCreated' && <Badge color="warning">to be created</Badge>}
                     {r.groupObjectId && <Caption1 block className={s.muted}>{r.groupObjectId}</Caption1>}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={s.wrap}>
                     {r.role}{r.roleScope ? ` (${r.roleScope})` : ''}
                     {grants(r).map((g, i) => (
                       <Caption1 key={i} block className={s.muted}>Azure: {g.roleName} on {g.resourceName ?? scopeName(g.scope)}{g.scope ? '' : ' (scope not resolved)'}</Caption1>
                     ))}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={s.wrap}>
                     <div className={s.row}>
                       {r.privileged && <Badge color="danger">privileged</Badge>}
                       {r.sensitiveResource && <Badge color="warning">sensitive</Badge>}
@@ -159,8 +159,8 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
                     </div>
                     {r.notes && r.flag && r.flag !== 'None' && <Caption1 block className={s.pre}>{r.notes}</Caption1>}
                   </TableCell>
-                  <TableCell><Caption1>{r.updatedBy} · {dateTime(r.updatedAt)}</Caption1></TableCell>
-                  <TableCell>
+                  <TableCell className={s.wrap}><Caption1>{r.updatedBy} · {dateTime(r.updatedAt)}</Caption1></TableCell>
+                  <TableCell className={s.wrap}>
                     <div className={s.row}>
                       {isPmo && (
                         <Button size="small" appearance="primary" onClick={() => {
@@ -360,12 +360,12 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
             <TableBody>
               {records?.map(({ value: x }) => (
                 <TableRow key={x.id}>
-                  <TableCell>{x.userId}</TableCell>
-                  <TableCell>{x.resource} · {x.accessLevel}{x.environment ? ` · ${x.environment}` : ''}</TableCell>
-                  <TableCell>{x.entraGroup} · {x.role}</TableCell>
-                  <TableCell><Badge appearance="outline">{x.state}</Badge></TableCell>
-                  <TableCell>{x.assignedRoles.map((a) => a.scope ? `${a.role} (${a.scope})` : a.role).join(', ') || '—'}{x.assignedBy ? ` · ${x.assignedBy}` : ''}</TableCell>
-                  <TableCell><Caption1>{dateTime(x.updatedAt)}</Caption1></TableCell>
+                  <TableCell className={s.wrap}>{x.userId}</TableCell>
+                  <TableCell className={s.wrap}>{x.resource} · {x.accessLevel}{x.environment ? ` · ${x.environment}` : ''}</TableCell>
+                  <TableCell className={s.wrap}>{x.entraGroup} · {x.role}</TableCell>
+                  <TableCell className={s.wrap}><Badge appearance="outline">{x.state}</Badge></TableCell>
+                  <TableCell className={s.wrap}>{x.assignedRoles.map((a) => a.scope ? `${a.role} (${a.scope})` : a.role).join(', ') || '—'}{x.assignedBy ? ` · ${x.assignedBy}` : ''}</TableCell>
+                  <TableCell className={s.wrap}><Caption1>{dateTime(x.updatedAt)}</Caption1></TableCell>
                 </TableRow>
               ))}
             </TableBody>
