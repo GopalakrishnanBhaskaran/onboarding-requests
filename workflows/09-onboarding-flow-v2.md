@@ -101,6 +101,7 @@ Switch off at any time: `tools/deploy_free.sh provisioning <sub> off` (settings 
 | Mapping sheet changed mid-flow | Agent re-runs the review automatically; new approvals needed only if group or role changed. |
 | Joiner got no sign-in details mail (agent TAP) | Request trail: `agent-provisioned` says where it was mailed (test environment: the tester mailbox, check spam). "The agent did not mail the sign-in details: …" = left to the ID team with the reason (Warning issue); the ID team issues a new one-time TAP in Entra (it replaces any earlier one) and records its metadata. |
 | The pass expired before the joiner used it | The ID team issues a new one-time TAP in Entra and gives it to the joiner directly (the agent does not resend). |
+| Returned: "Entra group … has object id X, but the mapping sheet says Y" | The sheet's object id is from another tenant (e.g. the workbook's real PEST group) or out of date. PMO: Mapping sheet → *Edit* on the row → *Group object id* = this tenant's id (or empty to match by name) → *Save row*; then *Correct and resubmit* the request. A later `import_workbook.py --update` puts the workbook id back. |
 | Resource or access level list is empty on the form | The tenant's mapping sheet has no rows for that environment: PMO imports the workbooks (`import_workbook.py … --apply`). |
 
 ## Phase 2 leftovers in the tenant (decide, do not auto-delete)

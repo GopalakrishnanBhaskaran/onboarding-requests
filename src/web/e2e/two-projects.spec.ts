@@ -220,6 +220,17 @@ test('PMO sees the mapping sheet and the response document', async ({ browser })
   await expect(paul.page.getByRole('heading', { name: 'PMO-to-Entra group mapping sheet' })).toBeVisible();
   await expect(paul.page.getByText('A-DBW-ENG-USER v1')).toBeVisible();
   await expect(paul.page.getByRole('heading', { name: 'Response document', exact: true })).toBeVisible();
+
+  // PMO corrects an existing row in place (e.g. the group's object id in this tenant): the version goes up.
+  const row = paul.page.getByRole('row').filter({ hasText: 'A-SALES-READ v' });
+  await row.getByRole('button', { name: 'Edit' }).click();
+  await expect(paul.page.getByRole('heading', { name: /Edit row A-SALES-READ v\d+ \(PMO\)/ })).toBeVisible();
+  await paul.page.getByLabel('Group object id').fill('not-a-guid');
+  await expect(paul.page.getByRole('button', { name: 'Save row' })).toBeDisabled();
+  await paul.page.getByLabel('Group object id').fill('11111111-2222-4333-8444-555555555555');
+  await paul.page.getByRole('button', { name: 'Save row' }).click();
+  await expect(paul.page.getByRole('row').filter({ hasText: 'A-SALES-READ v' }).getByText('11111111-2222-4333-8444-555555555555')).toBeVisible();
+  await expect(paul.page.getByRole('heading', { name: /Edit row/ })).toHaveCount(0);
   await paul.ctx.close();
 });
 

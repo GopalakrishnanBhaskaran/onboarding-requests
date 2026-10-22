@@ -13,6 +13,20 @@ const blank = {
 };
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** What PMO can correct on an existing row (Azure roles have their own box below). */
+type EditForm = {
+  resource: string; accessLevel: string; environment: string; entraGroup: string; groupObjectId: string; role: string; roleScope: string;
+  privileged: boolean; sensitiveResource: boolean; toBeCreated: boolean; flag: 'None' | 'Amber' | 'Red'; notes: string;
+};
+
+function editFormOf(r: MappingRow): EditForm {
+  return {
+    resource: r.resource, accessLevel: r.accessLevel, environment: r.environment ?? '', entraGroup: r.entraGroup, groupObjectId: r.groupObjectId ?? '',
+    role: r.role, roleScope: r.roleScope ?? '', privileged: r.privileged, sensitiveResource: r.sensitiveResource,
+    toBeCreated: r.groupState === 'ToBeCreated', flag: r.flag ?? 'None', notes: r.notes ?? '',
+  };
+}
+
 /** The row's Azure roles: the list, else the single pair of older rows. */
 function grants(r: MappingRow): AzureRoleGrant[] {
   if (r.azureRoles && r.azureRoles.length > 0) return r.azureRoles;
@@ -48,6 +62,7 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
   const [records, setRecords] = useState<Item<ResponseRecord>[] | null>(null);
   const [form, setForm] = useState(blank);
   const [azure, setAzure] = useState({ rowId: '', lines: '' });
+  const [editing, setEditing] = useState<{ row: MappingRow; etag: string; form: EditForm } | null>(null);
   const [envFilter, setEnvFilter] = useState('');
   const [error, setError] = useState<unknown>(null);
   const environments = project.environments ?? [];
@@ -148,6 +163,14 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
                   <TableCell>
                     <div className={s.row}>
                       {isPmo && (
+                        <Button size="small" appearance="primary" onClick={() => {
+                          setEditing({ row: r, etag, form: editFormOf(r) });
+                          window.setTimeout(() => document.getElementById('edit-h')?.scrollIntoView({ behavior: 'smooth' }), 0);
+                        }}>
+                          Edit
+                        </Button>
+                      )}
+                      {isPmo && (
                         <Button size="small" onClick={() => void run(() => api.updateMappingRow(project.projectId, r.rowId, body(r, { deprecated: !r.deprecated }), etag))}>
                           {r.deprecated ? 'Undeprecate' : 'Deprecate'}
                         </Button>
@@ -165,6 +188,74 @@ export function MappingSheetPage({ project }: { project: ProjectSummary }) {
           </Table>
         </div>
       </section>
+
+      {isPmo && editing && (() => {
+        const f = editing.form;
+        const set = (change: Partial<EditForm>) => setEditing({ ...editing, form: { ...f, ...change } });
+        const idError = f.groupObjectId.trim() && !GUID.test(f.groupObjectId.trim())
+          ? 'The object id is a GUID, e.g. 00000000-0000-0000-0000-000000000000.' : undefined;
+        return (
+          <form
+            className={s.section}
+            aria-labelledby="edit-h"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (idError) return;
+              void run(async () => {
+                await api.updateMappingRow(project.projectId, editing.row.rowId, body(editing.row, {
+                  resource: f.resource, accessLevel: f.accessLevel, environment: f.environment || null, entraGroup: f.entraGroup,
+                  groupObjectId: f.groupObjectId.trim() || null, role: f.role, roleScope: f.roleScope || null, privileged: f.privileged,
+                  sensitiveResource: f.sensitiveResource, groupState: f.toBeCreated ? 'ToBeCreated' : 'Exists', flag: f.flag, notes: f.notes || null,
+                }), editing.etag);
+                setEditing(null);
+              });
+            }}
+          >
+            <Subtitle2 as="h2" id="edit-h">Edit row {editing.row.rowId} v{editing.row.version} (PMO)</Subtitle2>
+            <Caption1 className={s.muted}>Saving bumps the version: in-flight requests for this resource are reviewed again; a returned request is reviewed when it is resubmitted.</Caption1>
+            <div className={s.row}>
+              <Field label="Resource" required><Input value={f.resource} onChange={(_, d) => set({ resource: d.value })} /></Field>
+              <Field label="Access level" required><Input value={f.accessLevel} onChange={(_, d) => set({ accessLevel: d.value })} /></Field>
+              {environments.length > 0 && (
+                <Field label="Environment">
+                  <select value={f.environment} onChange={(e) => set({ environment: e.target.value })}>
+                    <option value="">Every environment</option>
+                    {environments.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </Field>
+              )}
+            </div>
+            <div className={s.row}>
+              <Field label="Entra group" required><Input value={f.entraGroup} onChange={(_, d) => set({ entraGroup: d.value })} /></Field>
+              <Field label="Group object id" validationMessage={idError}
+                hint="This tenant's Entra object id of the group (Entra admin center → Groups → the group → Object ID). Empty = the review matches by name only.">
+                <Input value={f.groupObjectId} onChange={(_, d) => set({ groupObjectId: d.value })} />
+              </Field>
+            </div>
+            <div className={s.row}>
+              <Field label="Role" required><Input value={f.role} onChange={(_, d) => set({ role: d.value })} /></Field>
+              <Field label="Role scope"><Input value={f.roleScope} onChange={(_, d) => set({ roleScope: d.value })} /></Field>
+              <Field label="Flag">
+                <select value={f.flag} onChange={(e) => set({ flag: e.target.value as EditForm['flag'] })}>
+                  <option value="None">None</option>
+                  <option value="Amber">Amber: caveat shown to the approvers</option>
+                  <option value="Red">Red: never sent for approval</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="Notes"><Textarea value={f.notes} onChange={(_, d) => set({ notes: d.value })} rows={2} resize="vertical" /></Field>
+            <div className={s.row}>
+              <Checkbox label="Privileged" checked={f.privileged} onChange={(_, d) => set({ privileged: d.checked === true })} />
+              <Checkbox label="Sensitive resource" checked={f.sensitiveResource} onChange={(_, d) => set({ sensitiveResource: d.checked === true })} />
+              <Checkbox label="Group to be created by the ID team" checked={f.toBeCreated} onChange={(_, d) => set({ toBeCreated: d.checked === true })} />
+            </div>
+            <div className={s.row}>
+              <Button appearance="primary" type="submit" disabled={Boolean(idError)}>Save row</Button>
+              <Button onClick={() => setEditing(null)}>Cancel</Button>
+            </div>
+          </form>
+        );
+      })()}
 
       {isPmo && (
         <form
