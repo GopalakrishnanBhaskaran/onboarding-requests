@@ -14,7 +14,12 @@ The commands are the same as in Cloud Shell. Each Azure permission or setting ch
    bash ~/onboarding-requests/tools/mac_setup.sh 5b9f9810-0512-49e5-b7f7-0159bc488570
    ```
    - The first `git` command may ask to install the Xcode command line tools: accept, then run it again.
-   - `mac_setup.sh` installs, with Homebrew: `azure-cli`, `bash`, `node` and `python`.
+   - `mac_setup.sh` installs ready-built tools only, so nothing is compiled:
+     - `az` from Microsoft's Homebrew cask (needs macOS 13 or later);
+     - Node 22 from nodejs.org, checksum-checked, into `~/.pmo-tools/node`;
+     - the Mac's own `python3` (3.9 or later).
+   - On an Intel Mac, Homebrew has had no new ready-built packages since September 2026. A plain `brew install python` or `node` may then compile for an hour or more with no output (F69).
+   - It is safe to run again; it skips what is already installed.
    - It also installs Rosetta 2 on Apple silicon. The Static Web Apps upload client is an Intel build (F69).
    - It installs the .NET 10 SDK into `~/.dotnet` and the Python packages into `.local/venv`.
    - It signs you in to Azure (browser) and writes `.local/params.json`.
