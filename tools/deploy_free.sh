@@ -254,9 +254,10 @@ provisioning() {
       echo "Already granted: $perm"
     fi
   done
-  local existing existing_id existing_cond
-  existing=$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "[0].[id, condition]" -o tsv)
-  existing_id=$(cut -f1 <<<"$existing"); existing_cond=$(cut -f2- <<<"$existing")
+  local existing_id existing_cond
+  # Two reads: `-o tsv` prints each element of a list on its own line, so "[0].[id, condition]" would mix them.
+  existing_id=$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "[0].id" -o tsv)
+  existing_cond=$(az role assignment list --assignee "$mi" --role "$RBAC_ADMIN_ROLE_ID" --scope "$scope" --query "[0].condition" -o tsv)
   if [[ -n "$existing_id" && "$existing_cond" != "$(rbac_condition "$roles")" ]]; then
     # Another role list (e.g. Reader -> Reader + Storage Blob Data Reader for a response document's roles): replace it.
     az role assignment delete --ids "$existing_id" -o none
@@ -264,8 +265,12 @@ provisioning() {
     existing_id=""
   fi
   if [[ -z "$existing_id" ]]; then
-    az role assignment create --assignee-object-id "$mi" --assignee-principal-type ServicePrincipal --role "$RBAC_ADMIN_ROLE_ID" \
-      --scope "$scope" --condition "$(rbac_condition "$roles")" --condition-version 2.0 -o none
+    if ! az role assignment create --assignee-object-id "$mi" --assignee-principal-type ServicePrincipal --role "$RBAC_ADMIN_ROLE_ID" \
+      --scope "$scope" --condition "$(rbac_condition "$roles")" --condition-version 2.0 -o none; then
+      echo "FAILED to assign Role Based Access Control Administrator at $scope: the agent has no role-assignment right there now"
+      echo "(its role step waits, then goes to the role team). Re-run this command; paste the error if it fails again."
+      return 1
+    fi
     echo "Assigned Role Based Access Control Administrator (constrained to roles {$roles}) at $scope"
   else
     echo "Already assigned: Role Based Access Control Administrator at $scope with the same roles"

@@ -123,6 +123,8 @@ public partial class InfraConsistencyTests
         foreach (var r in new[] { "EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All", "UserAuthenticationMethod.ReadWrite.All", "Group.ReadWrite.All" })
             Assert.Contains(r, retired);
         Assert.Contains("Would remove: $perm (dry run; pass --approved-by after explicit approval)", deploy);
+        // `-o tsv` prints a list's elements on separate lines: a "[0].[a, b]" query fed one value per line into a delete (live 22 Oct 2026).
+        Assert.DoesNotMatch(@"--query ""\[0\]\.\[", deploy);
         Assert.DoesNotContain("setup_entra", deploy);
         Assert.False(File.Exists(Path.Combine(Repo(), "tools", "setup_entra_package.ps1")));
     }
