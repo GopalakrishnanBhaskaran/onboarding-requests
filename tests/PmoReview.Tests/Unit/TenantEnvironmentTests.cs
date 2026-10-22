@@ -228,6 +228,35 @@ public class TenantEnvironmentTests
     }
 
     [Fact]
+    public async Task Once_the_roles_are_allow_listed_the_agent_takes_the_role_task_back_and_assigns_them()
+    {
+        // Live case: Storage Blob Data Contributor was not yet on the allow-list.
+        var off = TestApp.With(settings: On());
+        var id = await Approved(off, Pest(level: "Support Writer"));
+        await off.RunWorker();
+        Assert.Equal(200, (await off.ReportIdTeam(id, off.IdReport(upn: JoinerUpn, group: "sample-azr-pes-rg-data-dev-ph-weu-support-writer"), project: TestApp.Pest)).Status);
+        await off.RunWorker();
+        Assert.Contains("not on the agent's allow-list", (await off.Request(id, TestApp.Pest)).Flow!.RoleTeamTask!.Agent!.Manual);
+
+        // The approved allow-list now has the role (deploy_free.sh provisioning … --from-sheet): no click needed. The
+        // restart re-seeds the SAMPLE rows; the row the agent marked "exists" is put back as it was.
+        var row = (await off.Stores.MappingSheet.GetAsync(TestApp.Pest, "P-PH-SUPPORT-WRITER-DEV"))!.Value;
+        var settings = On();
+        var on = TestApp.On(off.Stores, settings with { Workflow = settings.Workflow with { RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader, "ba92f5b4-2d11-453d-a403-e96b0029c9fe"] } });
+        var seeded = (await on.Stores.MappingSheet.GetAsync(TestApp.Pest, row.Id))!;
+        await on.Stores.MappingSheet.ReplaceAsync(row, seeded.ETag);
+        on.Directory.AddGroup(row.EntraGroup, objectId: off.Directory.GroupId(row.EntraGroup)); // the same Entra after the restart
+        await on.RunWorker();
+        Assert.Equal(2, on.RoleWriter.Calls.Count);
+        var r = (await on.Request(id, TestApp.Pest)).Flow!;
+        Assert.Equal(TeamTaskState.Verified, r.RoleTeamTask!.State); // the agent's assignment passed the AI verification
+        Assert.Contains(r.Events, e => e.Step == "role-team-verified");
+        Assert.Contains(r.Events, e => e.Step == "agent-resumed" && e.Note.Contains("Every approved Azure role is now on the agent's allow-list", StringComparison.Ordinal));
+        Assert.Equal(WorkflowAgent.AgentName, r.RoleTeamTask!.ReportedBy);
+        Assert.DoesNotContain(await on.Issues(id, TestApp.Pest), i => i is { Kind: IssueKind.NeedsDeveloper, Status: IssueStatus.Open });
+    }
+
+    [Fact]
     public async Task A_project_in_another_tenant_is_never_read_or_changed_by_the_agent()
     {
         var app = TestApp.With(settings: On(agentTenant: "11111111-2222-4333-8444-555555555555"));

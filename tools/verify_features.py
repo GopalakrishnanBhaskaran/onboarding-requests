@@ -23,12 +23,8 @@ READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 TEST_ROLES = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"}
 TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
 # Built-in role ids by lower-case name (BuiltInRoles.Ids) and the ones the agent never assigns (BuiltInRoles.NeverByAgent).
-ROLE_IDS = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
-            "storage blob data contributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe", "storage blob data owner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
-            "key vault reader": "21090545-7ca7-4776-b22c-e363652d74d2", "key vault secrets user": "4633458b-17de-408a-b874-0445c86b69e6",
-            "key vault secrets officer": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"}
-NEVER_BY_AGENT = {"owner", "contributor", "reservations administrator", "role based access control administrator", "user access administrator",
-                  "key vault data access administrator"}
+from sheet_roles import CATALOGUE as ROLE_IDS, NEVER  # noqa: E402  (tools/ is the script's folder)
+NEVER_BY_AGENT = set(NEVER)
 # The privileged PEST row of the live test (Data Engineer, Dev).
 PRIVILEGED_ROW = "PH-DATAENGINEERS-DEV"
 
@@ -128,7 +124,6 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     never = [n for n in pnames if n in NEVER_BY_AGENT]
     missing = [n for n in pnames if n not in NEVER_BY_AGENT and ROLE_IDS.get(n, n) not in allowed_roles]
     priv_ok = on("AGENT_PRIVILEGED") and str(swa.get("AGENT_PRIVILEGED", "")).lower() == "true" and prow is not None and not never and not missing
-    want_ids = sorted({READER, *TEST_ROLES.values(), *(ROLE_IDS[n] for n in pnames if n in ROLE_IDS)})
     flagged = f", flagged privileged: {bool(prow.get('privileged'))}" if prow else ""
     out.append(Result(f"5c. Agent provisions privileged rows too ({PRIVILEGED_ROW}: user, group, membership and its roles)", PASS if priv_ok else WAIT,
                       f"AGENT_PRIVILEGED={s.get('AGENT_PRIVILEGED') or 'false'} (website {swa.get('AGENT_PRIVILEGED') or 'false'}); row {'found' if prow else 'missing'}"
@@ -136,8 +131,10 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       f"roles {pnames or '-'}; not on the allow-list {missing or 'none'}; never by the agent {never or 'none'}",
                       "" if priv_ok else
                       f"row {PRIVILEGED_ROW} has {', '.join(never)}: people assign it (the agent never does)" if never else
-                      "tools/deploy_free.sh privileged <sub> on (dry run → approval)" + (
-                          f"; and the roles: tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(want_ids)} (dry run → approval)" if missing else "")))
+                      ("tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access --from-sheet PEST (dry run → approval; "
+                       f"adds {', '.join(missing)})" if missing else "") +
+                      ("; " if missing and not on("AGENT_PRIVILEGED") else "") +
+                      ("tools/deploy_free.sh privileged <sub> on (dry run → approval)" if not on("AGENT_PRIVILEGED") else "")))
 
     # 6. Real tenants (from the shared workbooks), no SAMPLE data left
     p = {x.get("projectId"): x for x in projects}
@@ -284,7 +281,7 @@ def self_test() -> None:
     ctx4 = json.loads(json.dumps(ctx))
     ctx4["worker_settings"]["ROLE_ASSIGN_ALLOWED_ROLES"] = ",".join(TEST_ROLES.values())
     p4 = next(r for r in evaluate(ctx4, projects, rows, requests, notes, []) if r.feature.startswith("5c."))
-    assert p4.status == WAIT and ROLE_IDS["key vault secrets officer"] in p4.next and "storage blob data contributor" in p4.detail, (p4.detail, p4.next)
+    assert p4.status == WAIT and "--from-sheet PEST" in p4.next and "key vault secrets officer" in p4.next and "privileged <sub> on" not in p4.next, (p4.detail, p4.next)
     rows5 = [dict(r, azureRoles=[{"roleName": "Owner", "scope": allowed}]) if r["rowId"] == PRIVILEGED_ROW else r for r in rows]
     p5 = next(r for r in evaluate(ctx, projects, rows5, requests, notes, []) if r.feature.startswith("5c."))
     assert p5.status == WAIT and "never does" in p5.next, (p5.detail, p5.next)

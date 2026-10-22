@@ -45,9 +45,9 @@ public sealed class FakeDirectory : IDirectoryReader
         return u;
     }
 
-    public DirectoryGroup AddGroup(string name, bool security = true)
+    public DirectoryGroup AddGroup(string name, bool security = true, string? objectId = null)
     {
-        var g = new DirectoryGroup(Guid.NewGuid().ToString("D"), name, security);
+        var g = new DirectoryGroup(objectId ?? Guid.NewGuid().ToString("D"), name, security);
         _groups.AddOrUpdate(name, [g], (_, list) => [.. list, g]);
         return g;
     }

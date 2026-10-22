@@ -31,11 +31,13 @@
 #       Removes the retired Phase 2b/2c Graph permissions (access packages, ReadWrite.All roles) from the worker
 #       identity. Security change: without --approved-by it only lists what it would remove.
 #
-#   tools/deploy_free.sh provisioning <subscriptionId> on <scope> [<roleIds>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh provisioning <subscriptionId> on <scope> [<roleIds> | --from-sheet <PROJECT>] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh provisioning <subscriptionId> off [--approved-by "<name> <date>"]
 #       v2.1 agent provisioning after both approvals. "on": Graph User.Create, Group.Create, GroupMember.ReadWrite.All;
 #       Role Based Access Control Administrator on <scope> constrained to <roleIds> (default Reader) and user/group
 #       principals; worker + SWA settings; creates the empty resource group <scope> if it is missing (free).
+#       --from-sheet <PROJECT>: the roles are every Azure role on the project's mapping sheet that the agent can resolve at
+#       <scope> (tools/sheet_roles.py; never a privileged administrator role), added to the roles already allowed.
 #       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
 #
@@ -243,6 +245,17 @@ provisioning() {
 
   [[ "$scope" =~ ^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]+$ ]] \
     || { echo "Scope must be a resource group: /subscriptions/<id>/resourceGroups/<name>"; return 1; }
+  if [[ -n "${FROM_SHEET:-}" ]]; then
+    local cosmos sheet_ids current
+    cosmos=$(az cosmosdb list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+    sheet_ids=$(COSMOS_CONNECTION_STRING="$(az cosmosdb keys list -g "$RG_DEFAULT" -n "$cosmos" --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)" \
+      "$("$ROOT/tools/cosmos_python.sh")" "$ROOT/tools/sheet_roles.py" "$FROM_SHEET" "$scope") \
+      || { echo "No Azure role on the $FROM_SHEET mapping sheet that the agent may assign at $scope."; return 1; }
+    current=$(worker_setting "$name" ROLE_ASSIGN_ALLOWED_ROLES)
+    # Additive: the roles already approved stay, the sheet's roles are added.
+    roles=$(printf '%s\n' ${current//,/ } ${sheet_ids//,/ } | tr '[:upper:]' '[:lower:]' | sort -u | paste -sd, -)
+    echo "Allow-list from the $FROM_SHEET mapping sheet plus the roles already allowed: $roles"
+  fi
   check_role_ids "$roles" || return 1
   rg_name="${scope##*/}"; rg_sub=$(cut -d/ -f3 <<<"$scope")
   rg_loc=$(az group show -n "$RG_DEFAULT" --query location -o tsv)
@@ -400,7 +413,7 @@ agent_privileged() {
   done
   echo "  A privileged row whose roles are not all in that list: the agent creates the user, group and membership; the"
   echo "  role assignment team assigns its roles. To let the agent assign them too, add them with:"
-  echo "    tools/deploy_free.sh provisioning <subscriptionId> on <scope> <roleIds incl. the new ones>   (approval)"
+  echo "    tools/deploy_free.sh provisioning <subscriptionId> on <scope> --from-sheet <PROJECT>   (approval; reads the roles from the mapping sheet)"
   echo "Plan for $name and $swa, expected cost 0, no permission change:"
   echo "  Settings: AGENT_PRIVILEGED=true (worker + SWA)"
   echo "  Effect: after the Owner and then Security approved, the agent also provisions rows flagged privileged (same checks,"
@@ -685,6 +698,8 @@ PY
     while [[ $# -gt 0 ]]; do
       if [[ "$1" == "--approved-by" && -n "${2:-}" ]]; then
         APPROVED_BY="$2"; echo "Approval recorded (provisioning $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2
+      elif [[ "$1" == "--from-sheet" && -n "${2:-}" ]]; then
+        FROM_SHEET="$2"; shift 2
       else
         ARGS+=("$1"); shift
       fi

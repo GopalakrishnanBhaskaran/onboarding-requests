@@ -57,7 +57,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | App-only redeploy | `tools/deploy_free.sh app <subscriptionId>` (no SAMPLE seed unless `SEED_SAMPLE=1`) |
 | Worker redeploy | `tools/deploy_free.sh worker <subscriptionId>` |
 | Worker Graph read permissions | `tools/deploy_free.sh grant-graph <subscriptionId>` |
-| Agent provisioning (v2.1) | `tools/deploy_free.sh provisioning <subscriptionId> on <rgScope> [roleIds]` (dry run) → `… --approved-by "<name> <date>"`; `… off` to switch off. Another role list replaces the constrained RBAC assignment (approval). |
+| Agent provisioning (v2.1) | `tools/deploy_free.sh provisioning <subscriptionId> on <rgScope> [roleIds \| --from-sheet <PROJECT>]` (dry run) → `… --approved-by "<name> <date>"`; `… off` to switch off. Another role list replaces the constrained RBAC assignment (approval). `--from-sheet` adds every role of the project's mapping sheet the agent can resolve at that scope (`tools/sheet_roles.py`, never the privileged administrator roles) to the roles already allowed. |
 | Agent TAP | `tools/deploy_free.sh tap <subscriptionId> on [--lifetime <minutes>]` (dry run, shows the tenant TAP policy) → `… --approved-by "<name> <date>"`; `… off` |
 | Agent privileged rows | `tools/deploy_free.sh privileged <subscriptionId> on` (dry run, lists the allow-listed roles) → `… --approved-by "<name> <date>"`; `… off` |
 | Deploy from a Mac (instead of Cloud Shell) | `bash tools/mac_setup.sh <subscriptionId>` once, then type `bash` in Terminal and use the same commands (`docs/MAC_DEPLOY.md`) |

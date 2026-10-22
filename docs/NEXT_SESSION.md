@@ -88,10 +88,11 @@ tools/deploy_free.sh params $SUB
    - It shows that the constrained RBAC Administrator assignment on `rg-pmo-sample-access` is replaced with one that allows both roles.
    - After you approve: add `--approved-by "Gokul <date>"`.
 6b. **Privileged rows by the agent** (security changes: needs your "approved"). Needed for the PEST Data Engineer request.
-   - First add the Data Engineer roles to the allow-list (dry run, then `--approved-by`). The list is Reader, Storage Blob Data Reader, Storage Blob Data Contributor and Key Vault Secrets Officer:
+   - First add the PEST sheet's roles to the allow-list (dry run, then `--approved-by`). For the Data Engineer row these are Storage Blob Data Contributor and Key Vault Secrets Officer, next to Reader and Storage Blob Data Reader:
      ```bash
-     tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access acdd72a7-3385-48ef-bd42-f606fba81ae7,2a2b9908-6ea1-4ae2-8e65-a410df84e7d1,ba92f5b4-2d11-453d-a403-e96b0029c9fe,b86a8fe4-44ce-4948-aee5-eccb2c155cd7
+     tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access --from-sheet PEST
      ```
+   - A role task the agent left "not on the agent's allow-list" then goes back to the agent on its own, if nobody picked it up.
    - Then `tools/deploy_free.sh privileged $SUB on` (dry run), then add `--approved-by "Gokul <date>"`.
    - If someone already clicked *Pick up task*, open the request and click **Hand back to the AI agent**. Without that, the agent does not take a picked-up task.
    - Within 5–10 minutes the agent takes the Data Engineer task back from the ID team:

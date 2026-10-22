@@ -197,6 +197,14 @@ public partial class InfraConsistencyTests
         Assert.Contains("check_role_ids \"$roles\" || return 1", deploy); // provisioning refuses them in the RBAC condition
         Assert.Contains("agent_privileged \"$MODE\"", deploy);
         Assert.Contains("\"AGENT_PRIVILEGED=${priv:-false}\"", deploy); // the website follows the worker
+
+        // --from-sheet: the Python catalogue and never-list are the code's (tools/sheet_roles.py).
+        Assert.Contains("\"$ROOT/tools/sheet_roles.py\" \"$FROM_SHEET\" \"$scope\"", deploy);
+        var py = Read("tools", "sheet_roles.py");
+        Dictionary<string, string> Dict(string name) => Regex.Matches(Regex.Match(py, name + @" = \{(?<b>[^}]*)\}").Groups["b"].Value, "\"(?<k>[^\"]+)\": \"(?<v>[0-9a-f-]{36})\"")
+            .ToDictionary(m => m.Groups["k"].Value, m => m.Groups["v"].Value);
+        Assert.Equal(BuiltInRoles.Ids.ToDictionary(p => p.Key.ToLowerInvariant(), p => p.Value).OrderBy(p => p.Key), Dict("CATALOGUE").OrderBy(p => p.Key));
+        Assert.Equal(BuiltInRoles.NeverByAgent.ToDictionary(p => p.Key.ToLowerInvariant(), p => p.Value).OrderBy(p => p.Key), Dict("NEVER").OrderBy(p => p.Key));
     }
 
     [Fact]

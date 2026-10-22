@@ -298,8 +298,8 @@ public sealed partial class WorkflowAgent(
     {
         RequestStatus.AwaitingOwner => WaitingOn.Owner,
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
-        RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t)) ? WaitingOn.Agent : WaitingOn.IdTeam,
-        RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
+        RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.IdTeam,
+        RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
         RequestStatus.Verifying => WaitingOn.User,
         _ => WaitingOn.Agent,
     };
@@ -482,7 +482,7 @@ public sealed partial class WorkflowAgent(
             var (taskSubject, taskBody) = Messages.TeamTask(r, created, settings);
             return new Step(r with { Flow = next }, [c => notifier.EnqueueAsync(r.ProjectId, r.Id, created.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), taskSubject, taskBody, c)]);
         }
-        if (ProvisioningPending(task))
+        if (ProvisioningPending(task, flow.Scope))
             return writer is null || directory is null ? null : await ProvisionAsync(r, task, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
@@ -584,7 +584,7 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         var task = flow.RoleTeamTask;
         if (task is null) return null;
-        if (RoleAssignmentPending(task))
+        if (RoleAssignmentPending(task, flow.Scope))
             return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
