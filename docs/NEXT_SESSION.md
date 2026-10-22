@@ -93,7 +93,8 @@ tools/deploy_free.sh params $SUB
      tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access acdd72a7-3385-48ef-bd42-f606fba81ae7,2a2b9908-6ea1-4ae2-8e65-a410df84e7d1,ba92f5b4-2d11-453d-a403-e96b0029c9fe,b86a8fe4-44ce-4948-aee5-eccb2c155cd7
      ```
    - Then `tools/deploy_free.sh privileged $SUB on` (dry run), then add `--approved-by "Gokul <date>"`.
-   - Within 5–10 minutes the agent takes the Data Engineer task back from the ID team, provided nobody picked it up:
+   - If someone already clicked *Pick up task*, open the request and click **Hand back to the AI agent**. Without that, the agent does not take a picked-up task.
+   - Within 5–10 minutes the agent takes the Data Engineer task back from the ID team:
      - it creates the account;
      - it mails the sign-in details;
      - it adds the membership of `azr-pes-rg-data-dev-ph-weu-dataengineers`;

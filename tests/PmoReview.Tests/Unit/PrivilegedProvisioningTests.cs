@@ -187,6 +187,53 @@ public class PrivilegedProvisioningTests
     }
 
     [Fact]
+    public async Task The_id_team_hands_a_picked_up_task_back_and_the_agent_runs_every_check_again()
+    {
+        // Live case: the ID team member clicked "Pick up task" before privileged rows were switched on.
+        var off = TestApp.With(settings: On(privileged: false));
+        var id = await Approved(off);
+        await off.RunWorker();
+        var handBack = $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/handback";
+        Assert.Equal(200, (await off.Call(TestApp.Ivan, "POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/pickup")).Status);
+        Assert.Equal(403, (await off.Call(TestApp.Alice, "POST", handBack, new { })).Status); // a requester is not the ID team
+
+        // Handed back while the reason still holds: the agent leaves it again, with the reason.
+        Assert.Equal(200, (await off.Call(TestApp.Ivan, "POST", handBack, new { })).Status);
+        var r = (await off.Request(id)).Flow!;
+        Assert.Equal((WaitingOn.Agent, (DateTimeOffset?)null), (r.WaitingOn, r.IdTeamTask!.PickedUpAt));
+        Assert.Contains(r.Events, e => e.Step == "id-team-handed-back" && e.Note.Contains("privileged access", StringComparison.Ordinal));
+        await off.RunWorker();
+        r = (await off.Request(id)).Flow!;
+        Assert.Equal(WaitingOn.IdTeam, r.WaitingOn);
+        Assert.Contains("privileged access", r.IdTeamTask!.Agent!.Manual);
+        Assert.Empty(off.Writer.Calls);
+
+        // Privileged rows on, task picked up again: the agent does not take it on its own; handed back, it does.
+        Assert.Equal(200, (await off.Call(TestApp.Ivan, "POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/pickup")).Status);
+        var on = TestApp.On(off.Stores, On(privileged: true));
+        await on.RunWorker();
+        Assert.Empty(on.Writer.Calls);
+        Assert.Equal(200, (await on.Call(TestApp.Ivan, "POST", handBack, new { })).Status);
+        await on.RunWorker();
+        Assert.Equal([$"create-user {Joiner}", $"add-member {Joiner} {AdminGroup}"], on.Writer.Calls);
+        r = (await on.Request(id)).Flow!;
+        Assert.True(r.IdTeamTask!.Agent is { Completed: true, Manual: null });
+
+        // Nothing left by the agent any more: nothing to hand back.
+        Assert.Equal(409, (await on.Call(TestApp.Ivan, "POST", handBack, new { })).Status);
+    }
+
+    [Fact]
+    public async Task Hand_back_is_refused_while_agent_provisioning_is_off()
+    {
+        var app = TestApp.Create(); // provisioning off: the ID team has the whole task, the agent left nothing
+        var id = await Approved(app);
+        var resp = await app.Call(TestApp.Ivan, "POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/handback", new { });
+        Assert.Equal(409, resp.Status);
+        Assert.Contains("switched off", resp.Json.GetRawText());
+    }
+
+    [Fact]
     public void Privileged_rows_are_off_unless_switched_on_and_the_never_list_is_the_privileged_administrator_roles()
     {
         Assert.False(PilotSettings.FromEnvironment(_ => null).Workflow.AgentPrivileged);

@@ -78,6 +78,8 @@ public static class Endpoints
             Ok(await workflow.ApproveAsync(c.Caller, c["projectId"], c["requestId"], c.Body<ApprovalInput>(), c.Request.CorrelationId, c.Ct)));
         host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/pickup", async c =>
             Ok(await workflow.PickUpAsync(c.Caller, c["projectId"], c["requestId"], WorkflowService.TeamFromRoute(c["team"]), c.Ct)));
+        host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/handback", async c =>
+            Ok(await workflow.HandBackAsync(c.Caller, c["projectId"], c["requestId"], WorkflowService.TeamFromRoute(c["team"]), c.Ct)));
         host.Map("POST", "projects/{projectId}/requests/{requestId}/tasks/{team}/report", async c =>
         {
             var team = WorkflowService.TeamFromRoute(c["team"]);

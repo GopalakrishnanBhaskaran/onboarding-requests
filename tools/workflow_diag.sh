@@ -65,12 +65,17 @@ for p in q("projects", "SELECT c.projectId, c.domainIdSuffix, c.tenantName, c.te
     print(f"  project {p['projectId']}: tenant {p.get('tenantName') or '-'} ({p.get('tenantId') or 'agent tenant'}), "
           f"environments {', '.join(p.get('environments') or []) or '-'}, domain-specific IDs end with {p.get('domainIdSuffix')}, "
           f"Security contacts {', '.join(p.get('security') or []) or '-'}")
-reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt FROM c ORDER BY c.updatedAt DESC")
+reqs = q("requests", "SELECT TOP 15 c.id, c.projectId, c.domainId, c.resource, c.accessLevel, c.revision, c.flow.status, c.flow.waitingOn, c.flow.events, c.updatedAt, "
+              "c.flow.idTeamTask.agent.manual AS idLeft, c.flow.idTeamTask.pickedUpAt AS idPicked, "
+              "c.flow.roleTeamTask.agent.manual AS roleLeft, c.flow.roleTeamTask.pickedUpAt AS rolePicked FROM c ORDER BY c.updatedAt DESC")
 for r in reqs:
     print(f"  {r['id'][:8]} {r.get('projectId')} {r.get('status') or 'legacy-v1'} waiting={r.get('waitingOn')} r{r.get('revision')} {r.get('domainId')} '{r.get('accessLevel')}' on '{r.get('resource')}' updated={r.get('updatedAt')}")
     if r.get("events"):
         last = r["events"][-1]
         print(f"      last step: {last.get('step')} by {last.get('actor')} at {last.get('at')}")
+    for team, left, picked in (("ID team", r.get("idLeft"), r.get("idPicked")), ("role team", r.get("roleLeft"), r.get("rolePicked"))):
+        if left and r.get("status") in ("WithIdTeam", "WithRoleTeam"):
+            print(f"      agent left it to the {team}: {left}; picked up: {'yes, ' + picked if picked else 'no'} (Hand back to the AI agent on the request page once fixed)")
 issues = q("issues", "SELECT c.requestId, c.kind, c.status, c.severity, c.step, c.detail, c.occurrences, c.lastSeenAt FROM c")
 print("  open issues:", dict(Counter((i["kind"], i["severity"]) for i in issues if i.get("status") == "Open")) or "none")
 for i in issues:

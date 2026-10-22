@@ -67,7 +67,11 @@ describe('scope guardrails', () => {
     // Privileged rows on: still never approves, never privileged administrator roles.
     expect(whoDoesWhat(true, true, true)[0][1]).toMatch(/Never approves\. Only after both approvals.*privileged rows too, never Owner, Contributor, User Access Administrator/);
     expect(whoDoesWhat(true, true, true).find(([who]) => who === 'ID team')?.[1]).toMatch(/privileged administrator roles/);
-    const form =readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
+    // A task the agent left can be handed back by the team (picked up or not); the agent re-checks everything.
+    const panel = readFileSync(join(__dirname, 'components', 'TeamTaskPanel.tsx'), 'utf8');
+    expect(panel).toContain('Hand back to the AI agent');
+    expect(panel).toContain("!task?.agent?.manual || task.state !== 'Open'");
+    const form = readFileSync(join(__dirname, 'pages', 'RequestFormPage.tsx'), 'utf8');
     expect(form).toContain('FLOW_OVERVIEW.map');
     expect(form).toContain('whoDoesWhat(agent, tap, privileged).map');
   });

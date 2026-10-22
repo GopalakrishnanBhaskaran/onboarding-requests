@@ -165,6 +165,7 @@ public class CrossProjectTests
                  {
                      ("GET", $"projects/{TestApp.Alpha}/requests/{id}"), ("GET", $"projects/{TestApp.Alpha}/requests/{id}/runs"),
                      ("GET", $"projects/{TestApp.Alpha}/requests/{id}/trail"), ("POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/pickup"),
+                     ("POST", $"projects/{TestApp.Alpha}/requests/{id}/tasks/id-team/handback"),
                      ("GET", $"projects/{TestApp.Alpha}/mapping-sheet"), ("GET", $"projects/{TestApp.Alpha}/issues"),
                  })
             Assert.Equal(404, (await app.Call(TestApp.Bob, method, path, method == "POST" ? new { } : null)).Status);

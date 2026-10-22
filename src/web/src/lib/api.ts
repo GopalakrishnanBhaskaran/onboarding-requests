@@ -92,6 +92,9 @@ export const api = {
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/approvals`, { decision, remarks: remarks || null, reviewRunId }),
   pickUp: (projectId: string, requestId: string, team: 'id-team' | 'role-team') =>
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/${team}/pickup`, {}),
+  /** A task the AI agent left to the team goes back to the agent (it runs every check again). */
+  handBack: (projectId: string, requestId: string, team: 'id-team' | 'role-team') =>
+    call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/${team}/handback`, {}),
   reportIdTeam: (projectId: string, requestId: string, report: IdTeamReportInput) =>
     call<RequestView>('POST', `${p(projectId)}/requests/${id(requestId)}/tasks/id-team/report`, report),
   reportRoleTeam: (projectId: string, requestId: string, assignedRoles: AssignedRole[], notes: string) =>
