@@ -85,6 +85,10 @@ def run(write_fixture: bool) -> None:
         ("Storage Blob Data Contributor", "samplestddevdaiweu01"), ("Reader", "pes-rg-data-dev-dai-weu-001"), ("Reader", "pes-rg-data-dev-acq-weu-001")]
     assert [g["scope"] for g in support["azureRoles"]] == [None, scope, None]
 
+    # Privileged exactly as the review reads the role ("CONTRIBUTOR - whole platform"): flagged, so requests are not returned for it.
+    assert support["privileged"] is True and rows["azr-pes-rg-data-dev-fin-weu-powerbidevelopers"]["privileged"] is False
+    assert iw.has_word("CONTRIBUTOR - data read/write", iw.PRIVILEGED_WORDS) and not iw.has_word("Support Reader", iw.PRIVILEGED_WORDS)
+    assert iw.has_word("Full Control of the vault", iw.PRIVILEGED_WORDS) and not iw.has_word("Storage Blob Data Contributors list", ["contributor"])
     assert rows["azr-pes-rg-data-dev-fin-weu-powerbidevelopers"]["azureRoles"] == []
     typo = rows["azr-pes-rg-data-dev-sup-weu-powerbideveloper"]
     assert (typo["flag"], typo["groupObjectId"], typo["resource"]) == ("Red", None, "SAMPLE PEST Supply (sup)")

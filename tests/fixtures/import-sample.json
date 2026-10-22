@@ -45,7 +45,7 @@
       "jobRoles": "Application / Production Support",
       "flag": "Amber",
       "notes": "• BROAD ACCESS: whole platform",
-      "privileged": false,
+      "privileged": true,
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",

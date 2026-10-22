@@ -58,6 +58,9 @@ LEVELS = {
     "analysts": "Analyst", "datagovernance": "Data Governance", "support": "Support", "support-reader": "Support Reader",
     "support-writer": "Support Writer",
 }
+# Same words and matching as the AI review (ReviewPolicy.PrivilegedWords, ReviewChecks.HasWord): a row whose role reads
+# as privileged must be flagged, or the review returns every request for it ("PMO must flag it").
+PRIVILEGED_WORDS = ["owner", "admin", "administrator", "contributor", "user access administrator", "global", "privileged", "elevated", "full control", "manage"]
 RESOURCE_TYPES = {"rg": "Microsoft.Resources/resourceGroups", "st": "Microsoft.Storage/storageAccounts", "kv": "Microsoft.KeyVault/vaults"}
 
 
@@ -86,6 +89,14 @@ def clean_domain(label: str, code: str) -> str:
 
 def text(v) -> str:
     return "" if v is None else str(v).strip()
+
+
+def has_word(text: str, words: list[str]) -> bool:
+    """ReviewChecks.HasWord: whole words of the lower-cased text (letters, digits, dashes), or a multi-word phrase."""
+    if not text or not text.strip():
+        return False
+    t = " " + re.sub(r"[^a-z0-9-]+", " ", text.lower()) + " "
+    return any(f" {w} " in t or (" " in w and w in t) for w in words)
 
 
 def level_of(role: str) -> str:
@@ -246,7 +257,7 @@ def build(tenant: str, project: str, classification: Path | None, responses: lis
 
 def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, notes, jobs, oid, state, source, now, prefix) -> dict:
     row_id = re.sub(r"[^A-Za-z0-9_.:-]", "-", f"{g['domain']}-{g['role']}-{env}".upper())[:64]
-    privileged = g["role"].lower() == "admins" or role.upper().startswith("ADMIN")
+    privileged = g["role"].lower() == "admins" or has_word(role, PRIVILEGED_WORDS)
     return {
         "id": row_id, "projectId": project, "rowId": row_id, "resource": f"{prefix}{tenant} {domain_label}".strip(),
         "accessLevel": level_of(g["role"]), "environment": env, "entraGroup": name, "groupObjectId": oid, "role": role[:200],

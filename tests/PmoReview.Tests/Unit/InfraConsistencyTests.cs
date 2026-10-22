@@ -123,6 +123,10 @@ public partial class InfraConsistencyTests
         foreach (var r in new[] { "EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All", "UserAuthenticationMethod.ReadWrite.All", "Group.ReadWrite.All" })
             Assert.Contains(r, retired);
         Assert.Contains("Would remove: $perm (dry run; pass --approved-by after explicit approval)", deploy);
+        // The importer flags rows privileged with the review's own word list, or every request for them is returned.
+        var importer = Read("tools", "import_workbook.py");
+        var words = Regex.Match(importer, @"PRIVILEGED_WORDS = \[(?<w>[^\]]*)\]").Groups["w"].Value.Split(',').Select(w => w.Trim().Trim('"')).ToArray();
+        Assert.Equal(new PmoReview.Core.Review.ReviewPolicy().PrivilegedWords, words);
         // Registration by sign-in name: the tools write the same user id prefix the API reads.
         Assert.Contains($"SIGN_IN_PREFIX = \"{PmoReview.Core.Security.AccessService.SignInPrefix}\"", Read("tools", "import_workbook.py"));
         // `-o tsv` prints a list's elements on separate lines: a "[0].[a, b]" query fed one value per line into a delete (live 22 Oct 2026).
