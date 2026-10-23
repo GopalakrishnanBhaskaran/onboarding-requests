@@ -401,8 +401,8 @@ no-go.</li>
 <ul>
 <li>approves the design (private access, sign-in, encrypted mail,
 password or no password);</li>
-<li>approves every Graph permission, including
-<code>Mail.Send</code>;</li>
+<li>approves every Graph permission, and the scoped
+<code>Mail.Send</code> in Exchange;</li>
 <li>approves provisioning, TAP and privileged rows "on".</li>
 </ul></li>
 <li><strong>Network admin:</strong>
@@ -430,7 +430,9 @@ PIM):</strong> grants the worker's Graph app roles.
 <li>Create: <code>User.Create</code>, <code>Group.Create</code>,
 <code>GroupMember.ReadWrite.All</code>.</li>
 <li>TAP: <code>UserAuthMethod-TAP.ReadWrite.All</code>.</li>
-<li>Mail: <code>Mail.Send</code>.</li>
+<li><strong>Not</strong> <code>Mail.Send</code>: it is granted in
+Exchange, scoped to one mailbox (an Entra grant would be
+tenant-wide).</li>
 </ul></li>
 <li><strong>Application Administrator:</strong> the sign-in app
 registration, "assignment required", assigns the user groups.</li>
@@ -443,8 +445,8 @@ on, one-time, maximum lifetime of at least
 <ul>
 <li>the shared mailbox
 <code>onboarding-signin@&lt;domain&gt;</code>;</li>
-<li>Exchange RBAC for Applications, so <code>Mail.Send</code> works only
-for that mailbox;</li>
+<li>Exchange RBAC for Applications: the role "Application Mail.Send",
+scoped to that mailbox only;</li>
 <li>the mail flow rule that encrypts mail with
 <code>x-pmo-sensitivity: signin</code>.</li>
 </ul></li>
@@ -535,10 +537,12 @@ answer</strong>;</li>
 <li>Cosmos and Key Vault refuse public access. Who: network admin and
 DevOps.</li>
 </ul></li>
-<li><p><strong>Graph roles for the worker:</strong> read roles, then
-<code>Mail.Send</code> (then finish the Exchange RBAC part of step 8).
-Who: Privileged Role Admin (Exchange Admin for step 8). Gate:
-Security.</p></li>
+<li><p><strong>Rights for the worker:</strong></p>
+<ul>
+<li>the Graph read roles (Privileged Role Admin);</li>
+<li>the scoped <code>Mail.Send</code> in Exchange: the RBAC for
+Applications part of step 8 (Exchange Admin). Gate: Security.</li>
+</ul></li>
 <li><p><strong>Import PEST</strong> from the in-VNet agent, signed in
 with Entra:
 <code>import_workbook.py --tenant PEST --resolve --tenant-id &lt;PEST tenant id&gt;</code>.

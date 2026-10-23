@@ -34,6 +34,89 @@ Full v2 steps, approvals and the live end-to-end test: `workflows/09-onboarding-
 | Where is a request stuck? | `bash tools/workflow_diag.sh <sub>` (worker, settings, Graph roles, latest requests, open issues) |
 | Stop the agent (cost or incident) | `az functionapp stop -g rg-pmo-review-pilot -n <worker>`; requests keep their state; Entra checks, SLA reminders and the outbox wait until it is started again |
 
+## Pilot session start (Azure Cloud Shell, Bash)
+
+Cloud Shell's home folder is reset after a short idle time. Start every session with:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; az account set --subscription $SUB
+cd ~/onboarding-requests 2>/dev/null || { cd ~ && git clone -q -b claude/eager-ride-lx6he8 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests; }
+git fetch -q origin claude/eager-ride-lx6he8 && git checkout -q claude/eager-ride-lx6he8 && git pull -q origin claude/eager-ride-lx6he8   # an old clone gets the latest code
+git log --oneline -1
+```
+
+## Register people (who may use the app)
+
+- **Who runs it:** someone who can read the Cosmos keys, i.e. Contributor on `rg-pmo-review-pilot`.
+- **Before:** the person needs an account that can sign in to the app.
+- They don't need to sign in first: registration by **sign-in name** works straight away. The user id also works.
+- **Roles** (comma-separated; one person can have several):
+
+| Role | Can do |
+|---|---|
+| `Requester` | submit and resubmit requests |
+| `Owner` | approve or reject at the Owner stage, only for requests that name them as Owner |
+| `Security` | approve or reject at the Security stage (never on a request they approved as Owner); issues and reports |
+| `IdTeam` | ID team tasks: pick up, hand back, report |
+| `RoleTeam` | role assignment team tasks: pick up, hand back, report |
+| `PMO` | edit the mapping sheet and the Contact inventory; reports |
+| `Operator` | issues, reports, recover runs, resume after a fix; the Contact inventory |
+
+```bash
+# after "Pilot session start"
+PY=$(tools/cosmos_python.sh)
+CS=$(az cosmosdb keys list -g rg-pmo-review-pilot -n cosmos-pmo-pilot-pkt2ofpqmlf3e --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+
+# Register by sign-in name (pick the roles this person needs)
+COSMOS_CONNECTION_STRING="$CS" $PY tools/register_user.py --project PEST --user <sign-in name> --roles Requester
+
+# Several roles, another project
+COSMOS_CONNECTION_STRING="$CS" $PY tools/register_user.py --project VESTACY --user <sign-in name> --roles Owner,Security
+
+# Check who is registered
+COSMOS_CONNECTION_STRING="$CS" $PY tools/register_user.py --project PEST --list
+
+# Remove access
+COSMOS_CONNECTION_STRING="$CS" $PY tools/register_user.py --project PEST --user <sign-in name> --remove
+
+unset CS
+```
+
+**Check:**
+- the person signs in, picks the tenant at the top right, and sees the pages for their roles;
+- `--list` shows them.
+
+**Rules:**
+- Give the sign-in name as a plain mail address, not the `#EXT#` or `live.com#` form.
+- Security must be a different person from the Owner approver on a request.
+- Never paste or record personal user ids in docs.
+- A Contact inventory address only routes mail. It gives no right in the app.
+
+## Go live to prod (pilot tenant)
+
+Full detail: `docs/GO_LIVE.md`. No Azure resource or permission change, so no approval is needed. Gokul gives the go / no-go.
+
+1. **Before:**
+   - `worker` and `app` are deployed at the latest commit (`tools/deploy_free.sh worker $SUB`, `tools/deploy_free.sh app $SUB`);
+   - the Contact inventory is filled for **PEST and Vestacy** (PMO, in the app);
+   - the smoke test passed in test mode (the completion mail is meant for the requester, not the Owner).
+2. **Switch and check** (after "Pilot session start"):
+   ```bash
+   tools/deploy_free.sh environment $SUB prod          # settings only: APP_ENVIRONMENT=prod, no redirect, on worker and website
+   bash tools/verify_features.sh $SUB | tee .local/verify.txt
+   ```
+   - Lines **6c** (contacts), **14** (no failed or stuck mail) and **15** (prod, no redirect) must be PASS.
+   - The website header shows **PROD**, and the yellow test bar is gone.
+3. **Announce:** send the go-live mail (template in `docs/GO_LIVE.md`).
+4. **Rollback** (mail back to the test mailbox at once):
+   ```bash
+   tools/deploy_free.sh environment $SUB test --redirect gopalakrishnan.baskaran@gmail.com
+   ```
+
+## Actual tenant (private endpoint only)
+
+- Steps, roles and inputs: `docs/GO_LIVE_ACTUAL_TENANT.md` section 6.
+- The same `register_user.py` and `environment prod` commands run from the jump box or agent **inside the VNet**, signed in with Entra instead of the Cosmos key (after prompt A task A12).
+
 ## Operations
 
 | Situation | Action |
@@ -44,7 +127,7 @@ Full v2 steps, approvals and the live end-to-end test: `workflows/09-onboarding-
 | Team task not picked up | Same SLA handling (`ID_TEAM_SLA_HOURS`, `ROLE_TEAM_SLA_HOURS`); issue `TaskSlaBreached`. |
 | Unauthorized approval issue | Someone other than the named Owner / a Security member tried to decide. Ignored; Security reviews. |
 | User reports an error | Ask for the "Reference" (correlation id) shown in the error bar; search logs for it. |
-| New tester | Sign in once, `/.auth/me` → `userId`; `python3 tools/seed_sample_data.py --register-user <userId> --project SAMPLE-ALPHA --roles <v2 roles>`. Unregistered users see their own user id and no data. |
+| New person needs access | Register them by sign-in name (section *Register people*). They don't need to sign in first. Unregistered people see no data. |
 | Change the mapping sheet | PMO edits it in the app (Mapping sheet page). In-flight requests for that resource are re-reviewed automatically. |
 | Rotate Cosmos key | `az cosmosdb keys regenerate --key-kind primary`; re-run the app-setting step from `deploy_free.sh`. |
 | Cost alert | `workflows/incident-recovery.md`. |

@@ -2,7 +2,8 @@
 
 Written 23 Oct 2026, for code on branch `claude/great-archimedes-cjr4rl`.
 This is the fast path: the pilot scripts run unchanged, in a subscription of the actual tenant. For the hardened enterprise build, see `docs/ENTERPRISE_HANDOFF.md`.
-This path deploys a **public** Static Web Apps site. For the agreed private-endpoint-only hosting, use `docs/SECURE_HOSTING_AND_MAIL.md`, and run these commands from a self-hosted agent or jump box inside the VNet, not Cloud Shell.
+Sections 1–5 deploy a **public** Static Web Apps site, with the scripts as they are today.
+**Section 6 is the agreed design: private endpoint only.** It needs prompt A tasks A10–A12 to be built first.
 
 
 ## 1. Who runs it: not a Global Administrator alone
@@ -175,3 +176,131 @@ Send the go-live mail from `docs/GO_LIVE.md`, with the **new website URL** from 
 **Vestacy:**
 - In another tenant: repeat steps 0–13 there with its own `TID`, `SUB`, `DOMAIN`, `SCOPE` and `--tenant VESTACY`.
 - In the same tenant: repeat step 5 (`--tenant Vestacy --project VESTACY`), step 6 and step 8 (`--from-sheet VESTACY`) on the same stack.
+
+
+## 6. Private endpoint path (the agreed design)
+
+**Status:** this path needs code that is not built yet. Prompt A, `docs/ENTERPRISE_CLAUDE_PROMPTS.md`, adds:
+- the App Service host (A10);
+- encrypted sign-in mail (A11);
+- private endpoints in Bicep and admin tools that sign in with Entra (A12).
+
+The steps below use those commands. Where a command name may still change, it is marked *(after A12)*.
+Design: `docs/ARCHITECTURE.md` section 12. Settings: `docs/SECURE_HOSTING_AND_MAIL.md`.
+
+### What changes from sections 1–5
+- **Where you run commands:** a **jump box** (Azure Bastion) or a **self-hosted Azure DevOps agent** inside the spoke VNet. Cloud Shell outside the VNet can't reach the private app, its deployment site or Cosmos.
+- **Database access:** no key. Your own Entra account (or the jump box identity) gets the Cosmos data role. The tools read `COSMOS_ENDPOINT` instead of `COSMOS_CONNECTION_STRING`.
+- **Hosting:** App Service (website and API in one app) instead of Static Web Apps. The URL is private: `https://<app>.azurewebsites.net`, which resolves to a private IP.
+- **Password and TAP mail:** sent through Graph from a shared mailbox, and encrypted by an Exchange rule.
+- **Extra people:**
+  - network admin (before you start);
+  - Exchange Admin and Compliance Admin (mail);
+  - Conditional Access Admin (sign-in policy).
+
+### Extra inputs (on top of section 4)
+- `VNET_ID`, plus the subnet ids for the private endpoints and for worker integration.
+- The private DNS zone ids, linked to the hub: `privatelink.azurewebsites.net`, `privatelink.documents.azure.com`, `privatelink.vaultcore.azure.net`, and `privatelink.blob/queue/table.core.windows.net`.
+- `APP`: the App Service app name.
+- `SIGNIN_MAILBOX`: the shared mailbox, for example `onboarding-signin@<domain>`.
+- A confirmation that the firewall allow-list is in place: `login.microsoftonline.com`, `graph.microsoft.com`, `management.azure.com`, the ACS endpoint, and monitoring.
+- `JUMP`: the jump box or the agent pool name.
+
+### Steps
+
+**P1. Network. Who: network admin.**
+- spoke VNet, peering, the private-endpoint subnet and the worker integration subnet *(verify the subnet delegation Flex needs)*;
+- private DNS zones linked to the hub;
+- on-premises DNS forwarders to the DNS Private Resolver;
+- the firewall allow-list.
+
+**P2. Jump box or agent. Who: DevOps.**
+- A VM in the VNet (Bastion, no public IP), or a self-hosted agent.
+- Install the Azure CLI, Bicep, the .NET 10 SDK, Node.js 22, Python 3.11+, git and zip.
+- Clone the repo from the org's repo.
+
+**P3. Session start on the jump box. Who: the platform admin.**
+```bash
+TID=<tenant id>; SUB=<subscription id>; RG=<resource group>; APP=<app name>; COSMOS=<cosmos account>
+az login --tenant $TID --use-device-code
+az account set --subscription $SUB && az account show --query "{tenant:tenantId, sub:id}" -o table
+cd ~/onboarding-requests && git pull -q && git log --oneline -1
+```
+
+**P4. Infrastructure. Who: Owner. Approval: Gokul (cost) and Security (design).**
+Run the what-if through the pipeline, or `tools/deploy.sh whatif $SUB <params>` *(after A12)*.
+Check that the app, Cosmos, Key Vault and storage show `publicNetworkAccess: Disabled`, each with a private endpoint. Then apply with `--approved-by`.
+
+**P5. Private access check. Who: network admin and DevOps.**
+```bash
+nslookup $APP.azurewebsites.net            # from a corporate laptop or the jump box: a private IP (10.x / 172.16-31.x / 192.168.x)
+nslookup $COSMOS.documents.azure.com       # private IP
+curl -sS -o /dev/null -w "%{http_code}\n" https://$APP.azurewebsites.net    # from the jump box: 302 (to the Entra sign-in)
+```
+Then:
+- from a laptop outside the network, the site must **not answer**;
+- an account from another tenant must be refused at sign-in.
+
+**P6. Cosmos data role for operators. Who: Owner.** This replaces the Cosmos key.
+```bash
+az cosmosdb sql role assignment create -g $RG -a $COSMOS --scope "/" \
+  --role-definition-id 00000000-0000-0000-0000-000000000002 \
+  --principal-id $(az ad signed-in-user show --query id -o tsv)      # Cosmos DB Built-in Data Contributor, for this operator
+```
+Give it only to named operators. Use a group if there are several.
+
+**P7. Worker rights. Who: Privileged Role Administrator, and Exchange Admin for mail. Approval: Security.**
+- The Graph read roles: `tools/deploy.sh grant-graph $SUB` *(after A12; today `deploy_free.sh grant-graph`)*.
+- **Mail.Send, scoped to one mailbox**, in Exchange Online PowerShell. Do **not** grant it in Entra *(verify the cmdlets)*:
+  ```powershell
+  Connect-ExchangeOnline
+  New-ServicePrincipal -AppId <worker MI app id> -ObjectId <worker MI object id> -DisplayName "pmo-worker"
+  New-ManagementScope -Name "pmo-signin-mailbox" -RecipientRestrictionFilter "PrimarySmtpAddress -eq '<SIGNIN_MAILBOX>'"
+  New-ManagementRoleAssignment -App <worker MI app id> -Role "Application Mail.Send" -CustomResourceScope "pmo-signin-mailbox"
+  ```
+- **Encryption rule. Who: Exchange Admin, with Compliance Admin for the template.** *(Verify the parameters.)*
+  ```powershell
+  New-TransportRule -Name "PMO sign-in mail encryption" -From "<SIGNIN_MAILBOX>" `
+    -HeaderMatchesMessageHeader "x-pmo-sensitivity" -HeaderMatchesPatterns "signin" `
+    -ApplyRightsProtectionTemplate "Encrypt"      # or "Do Not Forward"
+  ```
+- Test: one mail to a test mailbox inside the tenant and one outside. Both must arrive encrypted.
+
+**P8. Import and register people. Who: an operator with the P6 role, on the jump box. Approval: PMO (data).**
+```bash
+PY=$(tools/cosmos_python.sh); export COSMOS_ENDPOINT=https://$COSMOS.documents.azure.com:443/     # Entra sign-in, no key (after A12)
+$PY tools/import_workbook.py --tenant PEST --project PEST --project-name "PEST data platform" \
+  --classification .local/<classification>.xlsx --response .local/<response>.xlsx --resolve --tenant-id $TID --domain-suffix @<domain>           # dry run
+# same command + --apply
+$PY tools/register_user.py --project PEST --user <sign-in name> --roles Requester      # once per person (roles: docs/RUNBOOK.md)
+$PY tools/register_user.py --project PEST --list
+```
+
+**P9. Contact inventory. Who: PMO, in the app, from the corporate network.**
+
+**P10. Test mode. Who: Contributor.**
+```bash
+tools/deploy.sh environment $SUB test --redirect <UAT mailbox>     # (after A12)
+az functionapp config appsettings set -g $RG -n <worker> --settings DIRECT_MAIL_SENDER=GraphMail DIRECT_MAIL_FROM=<SIGNIN_MAILBOX> REQUIRE_ENCRYPTED_SIGNIN_MAIL=true
+```
+The `DIRECT_MAIL_*` / `REQUIRE_ENCRYPTED_SIGNIN_MAIL` settings arrive with A11.
+
+**P11. Provisioning and TAP. Who: Privileged Role Admin + Owner/UAA on the scope. Approval: Security.**
+Use the same commands as section 5, steps 8–10, run from the jump box (`deploy.sh` *(after A12)*).
+
+**P12. Check and smoke test. Who: platform admin, then UAT testers on the corporate network or VPN.**
+```bash
+bash tools/verify_features.sh $SUB | tee .local/verify.txt     # every line PASS except 15
+```
+In the smoke test, the sign-in mail must arrive **encrypted**, and the request must reach **Completed**.
+
+**P13. Go live to prod. Who: Contributor. Go / no-go: Gokul.**
+```bash
+tools/deploy.sh environment $SUB prod      # (after A12; today deploy_free.sh): no redirect; the encrypted sign-in mail is required
+bash tools/verify_features.sh $SUB | tee .local/verify.txt     # lines 6c, 14, 15 PASS
+```
+Send the go-live mail from `docs/GO_LIVE.md`, with the **private URL** and "open from the corporate network or VPN".
+
+**Rollback (always allowed):** `provisioning off`, `tap off`, `environment test --redirect …`, or stop the worker. All of these run from the jump box.
+
+**Vestacy:** repeat P1–P13 in the Vestacy tenant, or only P8, P9 and P11 if it is in the same tenant.

@@ -467,11 +467,14 @@ If the encrypted path fails, the TAP goes to the ID team, as today.</li>
 <p><strong>Permissions</strong> (the Mail.Send permission needs Security
 approval):</p>
 <ul>
-<li>Graph application permission <code>Mail.Send</code> for the worker
-identity, granted by a Privileged Role Administrator.</li>
-<li><strong>Exchange RBAC for Applications</strong> limits that
-<code>Mail.Send</code> to the one shared mailbox, so the worker can't
-send as anyone else. An Exchange Administrator sets this up.</li>
+<li><code>Mail.Send</code> is granted <strong>only in Exchange
+Online</strong>, with <strong>Exchange RBAC for Applications</strong>:
+the role "Application Mail.Send", scoped to the one shared mailbox. An
+Exchange Administrator sets this up.</li>
+<li><strong>Do not</strong> also grant Graph <code>Mail.Send</code>
+through Entra admin consent. An Entra grant is tenant-wide and adds to
+the Exchange scope, so the worker could then send as any mailbox
+<em>(verify)</em>.</li>
 </ul>
 <p><strong>Licensing:</strong> Purview Message Encryption comes with
 Microsoft 365 E3/E5 or Office 365 E3/E5, or with an add-on <em>(verify
@@ -530,13 +533,14 @@ device policy for the app.</li>
 <li><strong>Exchange Administrator:</strong>
 <ul>
 <li>the shared mailbox;</li>
-<li>Exchange RBAC for Applications;</li>
+<li>Exchange RBAC for Applications (the scoped <code>Mail.Send</code>,
+after Security approval);</li>
 <li>the mail flow rule for encryption.</li>
 </ul></li>
 <li><strong>Compliance Administrator:</strong> Purview Message
 Encryption templates and branding.</li>
-<li><strong>Privileged Role Administrator:</strong> Graph
-<code>Mail.Send</code> for the worker (after Security approval).</li>
+<li><strong>Privileged Role Administrator:</strong> nothing for mail.
+<code>Mail.Send</code> is not granted in Entra.</li>
 <li><strong>Security approver:</strong> signs off the design, the WAF
 rules, <code>Mail.Send</code>, and whether the password is mailed at
 all.</li>

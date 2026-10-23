@@ -251,12 +251,10 @@ in the actual tenant (Cloud Shell, scripts as they are)</h1>
 <code>claude/great-archimedes-cjr4rl</code>. This is the fast path: the
 pilot scripts run unchanged, in a subscription of the actual tenant. For
 the hardened enterprise build, see
-<code>docs/ENTERPRISE_HANDOFF.md</code>. This path deploys a
-<strong>public</strong> Static Web Apps site. For the agreed
-private-endpoint-only hosting, use
-<code>docs/SECURE_HOSTING_AND_MAIL.md</code>, and run these commands
-from a self-hosted agent or jump box inside the VNet, not Cloud
-Shell.</p>
+<code>docs/ENTERPRISE_HANDOFF.md</code>. Sections 1–5 deploy a
+<strong>public</strong> Static Web Apps site, with the scripts as they
+are today. <strong>Section 6 is the agreed design: private endpoint
+only.</strong> It needs prompt A tasks A10–A12 to be built first.</p>
 <h2 id="1-who-runs-it-not-a-global-administrator-alone">1. Who runs it:
 not a Global Administrator alone</h2>
 <p>Two facts decide who runs what:</p>
@@ -516,5 +514,178 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb11-1"><a href=
 (<code>--tenant Vestacy --project VESTACY</code>), step 6 and step 8
 (<code>--from-sheet VESTACY</code>) on the same stack.</li>
 </ul>
+<h2 id="6-private-endpoint-path-the-agreed-design">6. Private endpoint
+path (the agreed design)</h2>
+<p><strong>Status:</strong> this path needs code that is not built yet.
+Prompt A, <code>docs/ENTERPRISE_CLAUDE_PROMPTS.md</code>, adds:</p>
+<ul>
+<li>the App Service host (A10);</li>
+<li>encrypted sign-in mail (A11);</li>
+<li>private endpoints in Bicep and admin tools that sign in with Entra
+(A12).</li>
+</ul>
+<p>The steps below use those commands. Where a command name may still
+change, it is marked <em>(after A12)</em>. Design:
+<code>docs/ARCHITECTURE.md</code> section 12. Settings:
+<code>docs/SECURE_HOSTING_AND_MAIL.md</code>.</p>
+<h3 id="what-changes-from-sections-15">What changes from sections
+1–5</h3>
+<ul>
+<li><strong>Where you run commands:</strong> a <strong>jump box</strong>
+(Azure Bastion) or a <strong>self-hosted Azure DevOps agent</strong>
+inside the spoke VNet. Cloud Shell outside the VNet can't reach the
+private app, its deployment site or Cosmos.</li>
+<li><strong>Database access:</strong> no key. Your own Entra account (or
+the jump box identity) gets the Cosmos data role. The tools read
+<code>COSMOS_ENDPOINT</code> instead of
+<code>COSMOS_CONNECTION_STRING</code>.</li>
+<li><strong>Hosting:</strong> App Service (website and API in one app)
+instead of Static Web Apps. The URL is private:
+<code>https://&lt;app&gt;.azurewebsites.net</code>, which resolves to a
+private IP.</li>
+<li><strong>Password and TAP mail:</strong> sent through Graph from a
+shared mailbox, and encrypted by an Exchange rule.</li>
+<li><strong>Extra people:</strong>
+<ul>
+<li>network admin (before you start);</li>
+<li>Exchange Admin and Compliance Admin (mail);</li>
+<li>Conditional Access Admin (sign-in policy).</li>
+</ul></li>
+</ul>
+<h3 id="extra-inputs-on-top-of-section-4">Extra inputs (on top of
+section 4)</h3>
+<ul>
+<li><code>VNET_ID</code>, plus the subnet ids for the private endpoints
+and for worker integration.</li>
+<li>The private DNS zone ids, linked to the hub:
+<code>privatelink.azurewebsites.net</code>,
+<code>privatelink.documents.azure.com</code>,
+<code>privatelink.vaultcore.azure.net</code>, and
+<code>privatelink.blob/queue/table.core.windows.net</code>.</li>
+<li><code>APP</code>: the App Service app name.</li>
+<li><code>SIGNIN_MAILBOX</code>: the shared mailbox, for example
+<code>onboarding-signin@&lt;domain&gt;</code>.</li>
+<li>A confirmation that the firewall allow-list is in place:
+<code>login.microsoftonline.com</code>,
+<code>graph.microsoft.com</code>, <code>management.azure.com</code>, the
+ACS endpoint, and monitoring.</li>
+<li><code>JUMP</code>: the jump box or the agent pool name.</li>
+</ul>
+<h3 id="steps">Steps</h3>
+<p><strong>P1. Network. Who: network admin.</strong></p>
+<ul>
+<li>spoke VNet, peering, the private-endpoint subnet and the worker
+integration subnet <em>(verify the subnet delegation Flex
+needs)</em>;</li>
+<li>private DNS zones linked to the hub;</li>
+<li>on-premises DNS forwarders to the DNS Private Resolver;</li>
+<li>the firewall allow-list.</li>
+</ul>
+<p><strong>P2. Jump box or agent. Who: DevOps.</strong></p>
+<ul>
+<li>A VM in the VNet (Bastion, no public IP), or a self-hosted
+agent.</li>
+<li>Install the Azure CLI, Bicep, the .NET 10 SDK, Node.js 22, Python
+3.11+, git and zip.</li>
+<li>Clone the repo from the org's repo.</li>
+</ul>
+<p><strong>P3. Session start on the jump box. Who: the platform
+admin.</strong></p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="va">TID</span><span class="op">=&lt;</span>tenant <span class="fu">id</span><span class="op">&gt;</span><span class="kw">;</span> <span class="va">SUB</span><span class="op">=&lt;</span>subscription <span class="fu">id</span><span class="op">&gt;</span><span class="kw">;</span> <span class="va">RG</span><span class="op">=&lt;</span>resource <span class="ex">group</span><span class="op">&gt;</span><span class="kw">;</span> <span class="va">APP</span><span class="op">=&lt;</span>app <span class="ex">name</span><span class="op">&gt;</span><span class="kw">;</span> <span class="va">COSMOS</span><span class="op">=&lt;</span>cosmos <span class="ex">account</span><span class="op">&gt;</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="ex">az</span> login <span class="at">--tenant</span> <span class="va">$TID</span> <span class="at">--use-device-code</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="ex">az</span> account set <span class="at">--subscription</span> <span class="va">$SUB</span> <span class="kw">&amp;&amp;</span> <span class="ex">az</span> account show <span class="at">--query</span> <span class="st">&quot;{tenant:tenantId, sub:id}&quot;</span> <span class="at">-o</span> table</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/onboarding-requests <span class="kw">&amp;&amp;</span> <span class="fu">git</span> pull <span class="at">-q</span> <span class="kw">&amp;&amp;</span> <span class="fu">git</span> log <span class="at">--oneline</span> <span class="at">-1</span></span></code></pre></div>
+<p><strong>P4. Infrastructure. Who: Owner. Approval: Gokul (cost) and
+Security (design).</strong> Run the what-if through the pipeline, or
+<code>tools/deploy.sh whatif $SUB &lt;params&gt;</code> <em>(after
+A12)</em>. Check that the app, Cosmos, Key Vault and storage show
+<code>publicNetworkAccess: Disabled</code>, each with a private
+endpoint. Then apply with <code>--approved-by</code>.</p>
+<p><strong>P5. Private access check. Who: network admin and
+DevOps.</strong></p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="ex">nslookup</span> <span class="va">$APP</span>.azurewebsites.net            <span class="co"># from a corporate laptop or the jump box: a private IP (10.x / 172.16-31.x / 192.168.x)</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="ex">nslookup</span> <span class="va">$COSMOS</span>.documents.azure.com       <span class="co"># private IP</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-sS</span> <span class="at">-o</span> /dev/null <span class="at">-w</span> <span class="st">&quot;%{http_code}\n&quot;</span> https://<span class="va">$APP</span>.azurewebsites.net    <span class="co"># from the jump box: 302 (to the Entra sign-in)</span></span></code></pre></div>
+<p>Then:</p>
+<ul>
+<li>from a laptop outside the network, the site must <strong>not
+answer</strong>;</li>
+<li>an account from another tenant must be refused at sign-in.</li>
+</ul>
+<p><strong>P6. Cosmos data role for operators. Who: Owner.</strong> This
+replaces the Cosmos key.</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="ex">az</span> cosmosdb sql role assignment create <span class="at">-g</span> <span class="va">$RG</span> <span class="at">-a</span> <span class="va">$COSMOS</span> <span class="at">--scope</span> <span class="st">&quot;/&quot;</span> <span class="dt">\</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--role-definition-id</span> 00000000-0000-0000-0000-000000000002 <span class="dt">\</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--principal-id</span> <span class="va">$(</span><span class="ex">az</span> ad signed-in-user show <span class="at">--query</span> id <span class="at">-o</span> tsv<span class="va">)</span>      <span class="co"># Cosmos DB Built-in Data Contributor, for this operator</span></span></code></pre></div>
+<p>Give it only to named operators. Use a group if there are
+several.</p>
+<p><strong>P7. Worker rights. Who: Privileged Role Administrator, and
+Exchange Admin for mail. Approval: Security.</strong></p>
+<ul>
+<li>The Graph read roles: <code>tools/deploy.sh grant-graph $SUB</code>
+<em>(after A12; today
+<code>deploy_free.sh grant-graph</code>)</em>.</li>
+<li><strong>Mail.Send, scoped to one mailbox</strong>, in Exchange
+Online PowerShell. Do <strong>not</strong> grant it in Entra <em>(verify
+the cmdlets)</em>:
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>Connect<span class="op">-</span>ExchangeOnline</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>New<span class="op">-</span>ServicePrincipal <span class="op">-</span>AppId <span class="op">&lt;</span>worker <span class="fu">MI</span> app id<span class="op">&gt;</span> <span class="op">-</span>ObjectId <span class="op">&lt;</span>worker <span class="fu">MI</span> <span class="dt">object</span> id<span class="op">&gt;</span> <span class="op">-</span>DisplayName <span class="st">&quot;pmo-worker&quot;</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>New<span class="op">-</span>ManagementScope <span class="op">-</span>Name <span class="st">&quot;pmo-signin-mailbox&quot;</span> <span class="op">-</span>RecipientRestrictionFilter <span class="st">&quot;PrimarySmtpAddress -eq &#39;&lt;SIGNIN_MAILBOX&gt;&#39;&quot;</span></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>New<span class="op">-</span>ManagementRoleAssignment <span class="op">-</span>App <span class="op">&lt;</span>worker <span class="fu">MI</span> app id<span class="op">&gt;</span> <span class="op">-</span>Role <span class="st">&quot;Application Mail.Send&quot;</span> <span class="op">-</span>CustomResourceScope <span class="st">&quot;pmo-signin-mailbox&quot;</span></span></code></pre></div></li>
+<li><strong>Encryption rule. Who: Exchange Admin, with Compliance Admin
+for the template.</strong> <em>(Verify the parameters.)</em>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>New<span class="op">-</span>TransportRule <span class="op">-</span>Name <span class="st">&quot;PMO sign-in mail encryption&quot;</span> <span class="op">-</span>From <span class="st">&quot;&lt;SIGNIN_MAILBOX&gt;&quot;</span> `</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">-</span>HeaderMatchesMessageHeader <span class="st">&quot;x-pmo-sensitivity&quot;</span> <span class="op">-</span>HeaderMatchesPatterns <span class="st">&quot;signin&quot;</span> `</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">-</span>ApplyRightsProtectionTemplate <span class="st">&quot;Encrypt&quot;</span>      <span class="co"># or &quot;Do Not Forward&quot;</span></span></code></pre></div></li>
+<li>Test: one mail to a test mailbox inside the tenant and one outside.
+Both must arrive encrypted.</li>
+</ul>
+<p><strong>P8. Import and register people. Who: an operator with the P6
+role, on the jump box. Approval: PMO (data).</strong></p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="va">PY</span><span class="op">=</span><span class="va">$(</span><span class="ex">tools/cosmos_python.sh</span><span class="va">)</span><span class="kw">;</span> <span class="bu">export</span> <span class="va">COSMOS_ENDPOINT</span><span class="op">=</span>https://<span class="va">$COSMOS</span>.documents.azure.com:443/     <span class="co"># Entra sign-in, no key (after A12)</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="va">$PY</span> tools/import_workbook.py <span class="at">--tenant</span> PEST <span class="at">--project</span> PEST <span class="at">--project-name</span> <span class="st">&quot;PEST data platform&quot;</span> <span class="dt">\</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--classification</span> .local/<span class="op">&lt;</span>classification<span class="op">&gt;</span>.xlsx <span class="at">--response</span> .local/<span class="op">&lt;</span>response<span class="op">&gt;</span>.xlsx <span class="at">--resolve</span> <span class="at">--tenant-id</span> <span class="va">$TID</span> <span class="at">--domain-suffix</span> @<span class="op">&lt;</span>domain<span class="op">&gt;</span>           # dry run</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co"># same command + --apply</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> PEST <span class="at">--user</span> <span class="op">&lt;</span>sign-in name<span class="op">&gt;</span> --roles Requester      <span class="co"># once per person (roles: docs/RUNBOOK.md)</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> PEST <span class="at">--list</span></span></code></pre></div>
+<p><strong>P9. Contact inventory. Who: PMO, in the app, from the
+corporate network.</strong></p>
+<p><strong>P10. Test mode. Who: Contributor.</strong></p>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tools/deploy.sh</span> environment <span class="va">$SUB</span> test <span class="at">--redirect</span> <span class="op">&lt;</span>UAT mailbox<span class="op">&gt;</span>     # <span class="er">(</span><span class="ex">after</span> A12<span class="kw">)</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">az</span> functionapp config appsettings set <span class="at">-g</span> <span class="va">$RG</span> <span class="at">-n</span> <span class="op">&lt;</span>worker<span class="op">&gt;</span> --settings DIRECT_MAIL_SENDER=GraphMail DIRECT_MAIL_FROM=<span class="op">&lt;</span>SIGNIN_MAILBOX<span class="op">&gt;</span> REQUIRE_ENCRYPTED_SIGNIN_MAIL=true</span></code></pre></div>
+<p>The <code>DIRECT_MAIL_*</code> /
+<code>REQUIRE_ENCRYPTED_SIGNIN_MAIL</code> settings arrive with A11.</p>
+<p><strong>P11. Provisioning and TAP. Who: Privileged Role Admin +
+Owner/UAA on the scope. Approval: Security.</strong> Use the same
+commands as section 5, steps 8–10, run from the jump box
+(<code>deploy.sh</code> <em>(after A12)</em>).</p>
+<p><strong>P12. Check and smoke test. Who: platform admin, then UAT
+testers on the corporate network or VPN.</strong></p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> tools/verify_features.sh <span class="va">$SUB</span> <span class="kw">|</span> <span class="fu">tee</span> .local/verify.txt     <span class="co"># every line PASS except 15</span></span></code></pre></div>
+<p>In the smoke test, the sign-in mail must arrive
+<strong>encrypted</strong>, and the request must reach
+<strong>Completed</strong>.</p>
+<p><strong>P13. Go live to prod. Who: Contributor. Go / no-go:
+Gokul.</strong></p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tools/deploy.sh</span> environment <span class="va">$SUB</span> prod      <span class="co"># (after A12; today deploy_free.sh): no redirect; the encrypted sign-in mail is required</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> tools/verify_features.sh <span class="va">$SUB</span> <span class="kw">|</span> <span class="fu">tee</span> .local/verify.txt     <span class="co"># lines 6c, 14, 15 PASS</span></span></code></pre></div>
+<p>Send the go-live mail from <code>docs/GO_LIVE.md</code>, with the
+<strong>private URL</strong> and "open from the corporate network or
+VPN".</p>
+<p><strong>Rollback (always allowed):</strong>
+<code>provisioning off</code>, <code>tap off</code>,
+<code>environment test --redirect …</code>, or stop the worker. All of
+these run from the jump box.</p>
+<p><strong>Vestacy:</strong> repeat P1–P13 in the Vestacy tenant, or
+only P8, P9 and P11 if it is in the same tenant.</p>
 </body>
 </html>

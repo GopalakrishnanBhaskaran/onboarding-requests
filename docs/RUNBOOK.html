@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Runbook</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <style>
+  :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--code:#f3f5f7;--accent:#0b5cad}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}}
+  :root[data-theme="dark"]{--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}
+  html,body{background:var(--bg);color:var(--fg)}
+  body{font:16px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;max-width:860px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:1.6em;margin:.2em 0 .4em}h2{font-size:1.25em;margin-top:2em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  a{color:var(--accent)}code{background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.9em;overflow-wrap:anywhere}
+  pre{background:var(--code);padding:12px;border-radius:8px;overflow-x:auto;white-space:pre}pre code{padding:0;overflow-wrap:normal}
+  li{margin:.25em 0}hr{border:0;border-top:2px solid var(--line);margin:3em 0}
+  header#title-block-header{display:none}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Runbook</h1>
+</header>
+<h1 id="runbook--pmo-onboarding-flow-v2">Runbook — PMO onboarding flow
+(v2)</h1>
+<h2 id="local-development">Local development</h2>
+<p>Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure
+Functions Core Tools v4 (to run the real Functions host), Docker (Cosmos
+emulator).</p>
+<p><strong>Cosmos contract test.</strong> The in-memory store cannot
+show Cosmos-only behaviour (17 Oct 2026: v1 review runs broke the live
+submit). Before a release that touches stored documents:
+<code>docker run -d -p 8081:8081 mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview</code>,
+set <code>PMO_COSMOS_EMULATOR</code> to the emulator connection string
+(well-known emulator key from Microsoft Learn; never a real account),
+run
+<code>dotnet test --project tests/PmoReview.Tests -f net10.0 -- --filter-class '*CosmosEmulatorTests'</code>.
+It runs the whole flow to Completed next to v1 documents; without the
+variable it is skipped.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Task</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Build everything</td>
+<td><code>dotnet build PmoReview.slnx</code></td>
+</tr>
+<tr class="even">
+<td>All .NET tests (unit, contract, security, acceptance)</td>
+<td><code>dotnet test --project tests/PmoReview.Tests -f net10.0</code></td>
+</tr>
+<tr class="odd">
+<td>Acceptance suite + <code>docs/PILOT_REPORT.md</code></td>
+<td><code>tools/run_acceptance.sh</code> (<code>E2E=1</code> to include
+browser tests)</td>
+</tr>
+<tr class="even">
+<td>SPA unit checks</td>
+<td><code>npm --prefix src/web test</code></td>
+</tr>
+<tr class="odd">
+<td>Local end-to-end (SWA CLI emulator + in-memory SAMPLE API)</td>
+<td><code>tools/run_local.sh</code> → open http://localhost:4280</td>
+</tr>
+<tr class="even">
+<td>Browser E2E (with <code>run_local.sh</code> running)</td>
+<td><code>npm --prefix src/web run e2e</code></td>
+</tr>
+<tr class="odd">
+<td>Validate sample data</td>
+<td><code>python3 tools/seed_sample_data.py --dry-run</code></td>
+</tr>
+<tr class="even">
+<td>Validate a result file</td>
+<td><code>python3 tools/validate_result_schema.py &lt;file.json&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mock sign-in locally.</strong> The SWA CLI emulator shows a
+login form: choose provider <code>aad</code>, enter a SAMPLE user id
+from <code>tools/sample_data/sample-data.json</code> as the user id and
+<code>&lt;id&gt;@sample.invalid</code> as the user details (the named
+Owner is matched on that sign-in name). Alpha:
+<code>sample-user-alice</code> (Requester),
+<code>sample-user-olivia</code> / <code>sample-user-otto</code> (Owner),
+<code>sample-user-sam</code> (Security), <code>sample-user-dual</code>
+(Owner + Security), <code>sample-user-ivan</code> (ID team),
+<code>sample-user-rose</code> (role team), <code>sample-user-paul</code>
+(PMO), <code>sample-user-oscar</code> (Operator). Beta:
+<code>sample-user-bob</code> (Requester), <code>sample-user-bella</code>
+(Owner + Security + PMO). Locally there is no worker or Entra: the agent
+runs inline and Entra checks show "not checked (local development)", so
+a request can go all the way to Completed.</p>
+<p><strong>Why <code>tools/local-api</code> exists.</strong> Azure
+Functions Core Tools could not be downloaded in the build environment.
+<code>tools/local-api</code> is a loopback-only, dev-only host that
+serves the <em>same</em> <code>ApiHost</code> (routing, auth,
+processing) as the Functions entry point. It refuses to start without
+<code>PILOT_LOCAL_DEV=true</code>. With Core Tools installed you can
+instead run <code>func start</code> in
+<code>src/api/PmoReview.Api</code> (copy
+<code>local.settings.example.json</code> to
+<code>local.settings.json</code>).</p>
+<p><strong>API runtime.</strong> The managed API runs on
+<code>dotnet-isolated:9.0</code> because SWA CLI 2.0.10 rejects 10.0
+(F21). To move to .NET 10 later: set
+<code>&lt;TargetFramework&gt;net10.0&lt;/TargetFramework&gt;</code> in
+<code>src/api/PmoReview.Api/PmoReview.Api.csproj</code> and
+<code>platform.apiRuntime</code> to <code>dotnet-isolated:10.0</code>,
+run <code>dotnet test</code>, then
+<code>tools/deploy_free.sh app &lt;subscriptionId&gt;</code>.</p>
+<h2 id="deploy-only-after-approval">Deploy (only after approval)</h2>
+<p>Full v2 steps, approvals and the live end-to-end test:
+<code>workflows/09-onboarding-flow-v2.md</code>. In short:
+<code>params</code> → <code>whatif</code> → <strong>approved</strong> →
+<code>apply --approved-by</code> → <code>grant-graph</code> (read roles;
+<strong>approval</strong>) → <code>revoke-graph-writes</code> dry run →
+<strong>approved</strong> → <code>--approved-by</code> → seed with
+<code>--domain-suffix</code> → register testers with v2 roles →
+<code>tools/workflow_diag.sh</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Situation</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>App code change</td>
+<td><code>tools/deploy_free.sh app &lt;sub&gt;</code> (no infrastructure
+change)</td>
+</tr>
+<tr class="even">
+<td>Worker code change</td>
+<td><code>tools/deploy_free.sh worker &lt;sub&gt;</code></td>
+</tr>
+<tr class="odd">
+<td>Where is a request stuck?</td>
+<td><code>bash tools/workflow_diag.sh &lt;sub&gt;</code> (worker,
+settings, Graph roles, latest requests, open issues)</td>
+</tr>
+<tr class="even">
+<td>Stop the agent (cost or incident)</td>
+<td><code>az functionapp stop -g rg-pmo-review-pilot -n &lt;worker&gt;</code>;
+requests keep their state; Entra checks, SLA reminders and the outbox
+wait until it is started again</td>
+</tr>
+</tbody>
+</table>
+<h2 id="pilot-session-start-azure-cloud-shell-bash">Pilot session start
+(Azure Cloud Shell, Bash)</h2>
+<p>Cloud Shell's home folder is reset after a short idle time. Start
+every session with:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">SUB</span><span class="op">=</span>5b9f9810-0512-49e5-b7f7-0159bc488570<span class="kw">;</span> <span class="ex">az</span> account set <span class="at">--subscription</span> <span class="va">$SUB</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/onboarding-requests <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">||</span> <span class="kw">{</span> <span class="bu">cd</span> ~ <span class="kw">&amp;&amp;</span> <span class="fu">git</span> clone <span class="at">-q</span> <span class="at">-b</span> claude/eager-ride-lx6he8 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> onboarding-requests<span class="kw">;</span> <span class="kw">}</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch <span class="at">-q</span> origin claude/eager-ride-lx6he8 <span class="kw">&amp;&amp;</span> <span class="fu">git</span> checkout <span class="at">-q</span> claude/eager-ride-lx6he8 <span class="kw">&amp;&amp;</span> <span class="fu">git</span> pull <span class="at">-q</span> origin claude/eager-ride-lx6he8   <span class="co"># an old clone gets the latest code</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> log <span class="at">--oneline</span> <span class="at">-1</span></span></code></pre></div>
+<h2 id="register-people-who-may-use-the-app">Register people (who may
+use the app)</h2>
+<ul>
+<li><strong>Who runs it:</strong> someone who can read the Cosmos keys,
+i.e. Contributor on <code>rg-pmo-review-pilot</code>.</li>
+<li><strong>Before:</strong> the person needs an account that can sign
+in to the app.</li>
+<li>They don't need to sign in first: registration by <strong>sign-in
+name</strong> works straight away. The user id also works.</li>
+<li><strong>Roles</strong> (comma-separated; one person can have
+several):</li>
+</ul>
+<table>
+<thead>
+<tr class="header">
+<th>Role</th>
+<th>Can do</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>Requester</code></td>
+<td>submit and resubmit requests</td>
+</tr>
+<tr class="even">
+<td><code>Owner</code></td>
+<td>approve or reject at the Owner stage, only for requests that name
+them as Owner</td>
+</tr>
+<tr class="odd">
+<td><code>Security</code></td>
+<td>approve or reject at the Security stage (never on a request they
+approved as Owner); issues and reports</td>
+</tr>
+<tr class="even">
+<td><code>IdTeam</code></td>
+<td>ID team tasks: pick up, hand back, report</td>
+</tr>
+<tr class="odd">
+<td><code>RoleTeam</code></td>
+<td>role assignment team tasks: pick up, hand back, report</td>
+</tr>
+<tr class="even">
+<td><code>PMO</code></td>
+<td>edit the mapping sheet and the Contact inventory; reports</td>
+</tr>
+<tr class="odd">
+<td><code>Operator</code></td>
+<td>issues, reports, recover runs, resume after a fix; the Contact
+inventory</td>
+</tr>
+</tbody>
+</table>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># after &quot;Pilot session start&quot;</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="va">PY</span><span class="op">=</span><span class="va">$(</span><span class="ex">tools/cosmos_python.sh</span><span class="va">)</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="va">CS</span><span class="op">=</span><span class="va">$(</span><span class="ex">az</span> cosmosdb keys list <span class="at">-g</span> rg-pmo-review-pilot <span class="at">-n</span> cosmos-pmo-pilot-pkt2ofpqmlf3e <span class="at">--type</span> connection-strings <span class="at">--query</span> <span class="st">&quot;connectionStrings[0].connectionString&quot;</span> <span class="at">-o</span> tsv<span class="va">)</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Register by sign-in name (pick the roles this person needs)</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="va">COSMOS_CONNECTION_STRING</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CS</span><span class="st">&quot;</span> <span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> PEST <span class="at">--user</span> <span class="op">&lt;</span>sign-in name<span class="op">&gt;</span> --roles Requester</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Several roles, another project</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="va">COSMOS_CONNECTION_STRING</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CS</span><span class="st">&quot;</span> <span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> VESTACY <span class="at">--user</span> <span class="op">&lt;</span>sign-in name<span class="op">&gt;</span> --roles Owner,Security</span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Check who is registered</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a><span class="va">COSMOS_CONNECTION_STRING</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CS</span><span class="st">&quot;</span> <span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> PEST <span class="at">--list</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="co"># Remove access</span></span>
+<span id="cb2-15"><a href="#cb2-15" aria-hidden="true" tabindex="-1"></a><span class="va">COSMOS_CONNECTION_STRING</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$CS</span><span class="st">&quot;</span> <span class="va">$PY</span> tools/register_user.py <span class="at">--project</span> PEST <span class="at">--user</span> <span class="op">&lt;</span>sign-in name<span class="op">&gt;</span> --remove</span>
+<span id="cb2-16"><a href="#cb2-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-17"><a href="#cb2-17" aria-hidden="true" tabindex="-1"></a><span class="bu">unset</span> <span class="va">CS</span></span></code></pre></div>
+<p><strong>Check:</strong></p>
+<ul>
+<li>the person signs in, picks the tenant at the top right, and sees the
+pages for their roles;</li>
+<li><code>--list</code> shows them.</li>
+</ul>
+<p><strong>Rules:</strong></p>
+<ul>
+<li>Give the sign-in name as a plain mail address, not the
+<code>#EXT#</code> or <code>live.com#</code> form.</li>
+<li>Security must be a different person from the Owner approver on a
+request.</li>
+<li>Never paste or record personal user ids in docs.</li>
+<li>A Contact inventory address only routes mail. It gives no right in
+the app.</li>
+</ul>
+<h2 id="go-live-to-prod-pilot-tenant">Go live to prod (pilot
+tenant)</h2>
+<p>Full detail: <code>docs/GO_LIVE.md</code>. No Azure resource or
+permission change, so no approval is needed. Gokul gives the go /
+no-go.</p>
+<ol type="1">
+<li><strong>Before:</strong>
+<ul>
+<li><code>worker</code> and <code>app</code> are deployed at the latest
+commit (<code>tools/deploy_free.sh worker $SUB</code>,
+<code>tools/deploy_free.sh app $SUB</code>);</li>
+<li>the Contact inventory is filled for <strong>PEST and
+Vestacy</strong> (PMO, in the app);</li>
+<li>the smoke test passed in test mode (the completion mail is meant for
+the requester, not the Owner).</li>
+</ul></li>
+<li><strong>Switch and check</strong> (after "Pilot session start"):
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tools/deploy_free.sh</span> environment <span class="va">$SUB</span> prod          <span class="co"># settings only: APP_ENVIRONMENT=prod, no redirect, on worker and website</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">bash</span> tools/verify_features.sh <span class="va">$SUB</span> <span class="kw">|</span> <span class="fu">tee</span> .local/verify.txt</span></code></pre></div>
+<ul>
+<li>Lines <strong>6c</strong> (contacts), <strong>14</strong> (no failed
+or stuck mail) and <strong>15</strong> (prod, no redirect) must be
+PASS.</li>
+<li>The website header shows <strong>PROD</strong>, and the yellow test
+bar is gone.</li>
+</ul></li>
+<li><strong>Announce:</strong> send the go-live mail (template in
+<code>docs/GO_LIVE.md</code>).</li>
+<li><strong>Rollback</strong> (mail back to the test mailbox at once):
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="ex">tools/deploy_free.sh</span> environment <span class="va">$SUB</span> test <span class="at">--redirect</span> gopalakrishnan.baskaran@gmail.com</span></code></pre></div></li>
+</ol>
+<h2 id="actual-tenant-private-endpoint-only">Actual tenant (private
+endpoint only)</h2>
+<ul>
+<li>Steps, roles and inputs: <code>docs/GO_LIVE_ACTUAL_TENANT.md</code>
+section 6.</li>
+<li>The same <code>register_user.py</code> and
+<code>environment prod</code> commands run from the jump box or agent
+<strong>inside the VNet</strong>, signed in with Entra instead of the
+Cosmos key (after prompt A task A12).</li>
+</ul>
+<h2 id="operations">Operations</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Situation</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Review stuck in Queued/Running</td>
+<td>Issues and reports → "Recover stuck reviews" (Operator; marks &gt;
+<code>STUCK_RUN_MINUTES</code> as Failed/Timeout); the agent retries, at
+most 3 times, then Failed-Needs-Dev.</td>
+</tr>
+<tr class="even">
+<td>Request in Failed-Needs-Dev</td>
+<td>Issues and reports → developer issue report; fix the cause (and
+redeploy if it was code); Operator opens the request → <strong>Resume
+after fix</strong> (back to the stage that failed, attempts reset; a
+failed review starts a new review).</td>
+</tr>
+<tr class="odd">
+<td>Approval waiting too long</td>
+<td>Agent reminds at SLA, escalates to the manager at 2× SLA
+(<code>OWNER_SLA_HOURS</code>, <code>SECURITY_SLA_HOURS</code>). Never
+auto-approves.</td>
+</tr>
+<tr class="even">
+<td>Team task not picked up</td>
+<td>Same SLA handling (<code>ID_TEAM_SLA_HOURS</code>,
+<code>ROLE_TEAM_SLA_HOURS</code>); issue
+<code>TaskSlaBreached</code>.</td>
+</tr>
+<tr class="odd">
+<td>Unauthorized approval issue</td>
+<td>Someone other than the named Owner / a Security member tried to
+decide. Ignored; Security reviews.</td>
+</tr>
+<tr class="even">
+<td>User reports an error</td>
+<td>Ask for the "Reference" (correlation id) shown in the error bar;
+search logs for it.</td>
+</tr>
+<tr class="odd">
+<td>New person needs access</td>
+<td>Register them by sign-in name (section <em>Register people</em>).
+They don't need to sign in first. Unregistered people see no data.</td>
+</tr>
+<tr class="even">
+<td>Change the mapping sheet</td>
+<td>PMO edits it in the app (Mapping sheet page). In-flight requests for
+that resource are re-reviewed automatically.</td>
+</tr>
+<tr class="odd">
+<td>Rotate Cosmos key</td>
+<td><code>az cosmosdb keys regenerate --key-kind primary</code>; re-run
+the app-setting step from <code>deploy_free.sh</code>.</td>
+</tr>
+<tr class="even">
+<td>Cost alert</td>
+<td><code>workflows/incident-recovery.md</code>.</td>
+</tr>
+<tr class="odd">
+<td>Tear down</td>
+<td><code>az group delete -n rg-pmo-review-pilot</code> (deletes data;
+frees the Cosmos free-tier slot). Needs Gokul's written decision.</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

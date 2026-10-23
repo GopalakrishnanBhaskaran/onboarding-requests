@@ -143,7 +143,7 @@ Do not use in the real tenants:
 - **Sponsor (Gokul):** cost and scope approval, go / no-go.
 - **Security approver:**
   - approves the design (private access, sign-in, encrypted mail, password or no password);
-  - approves every Graph permission, including `Mail.Send`;
+  - approves every Graph permission, and the scoped `Mail.Send` in Exchange;
   - approves provisioning, TAP and privileged rows "on".
 - **Network admin:**
   - spoke VNet and peering;
@@ -159,13 +159,13 @@ Do not use in the real tenants:
   - Read: `User.Read.All`, `GroupMember.Read.All`, `UserAuthenticationMethod.Read.All`.
   - Create: `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All`.
   - TAP: `UserAuthMethod-TAP.ReadWrite.All`.
-  - Mail: `Mail.Send`.
+  - **Not** `Mail.Send`: it is granted in Exchange, scoped to one mailbox (an Entra grant would be tenant-wide).
 - **Application Administrator:** the sign-in app registration, "assignment required", assigns the user groups.
 - **Conditional Access Administrator:** the MFA and compliant-device policy for the app.
 - **Authentication Policy Administrator:** TAP policy: on, one-time, maximum lifetime of at least `AGENT_TAP_LIFETIME_MINUTES`, target group.
 - **Exchange Administrator:**
   - the shared mailbox `onboarding-signin@<domain>`;
-  - Exchange RBAC for Applications, so `Mail.Send` works only for that mailbox;
+  - Exchange RBAC for Applications: the role "Application Mail.Send", scoped to that mailbox only;
   - the mail flow rule that encrypts mail with `x-pmo-sensitivity: signin`.
 - **Compliance Administrator:** Purview Message Encryption templates (Encrypt-Only or Do Not Forward) and branding.
 - **DNS admin:** the records for the custom mail domain.
@@ -234,8 +234,10 @@ Do not use in the real tenants:
     - Cosmos and Key Vault refuse public access.
     Who: network admin and DevOps.
 
-12. **Graph roles for the worker:** read roles, then `Mail.Send` (then finish the Exchange RBAC part of step 8).
-    Who: Privileged Role Admin (Exchange Admin for step 8). Gate: Security.
+12. **Rights for the worker:**
+    - the Graph read roles (Privileged Role Admin);
+    - the scoped `Mail.Send` in Exchange: the RBAC for Applications part of step 8 (Exchange Admin).
+    Gate: Security.
 
 13. **Import PEST** from the in-VNet agent, signed in with Entra: `import_workbook.py --tenant PEST --resolve --tenant-id <PEST tenant id>`. Then give people their roles with `register_user.py --project PEST --user <sign-in name> --roles …`.
     Who: platform engineer with PMO. Gate: data owner.

@@ -160,8 +160,8 @@ flowchart LR
 6. **Prod guard:** a new setting `REQUIRE_ENCRYPTED_SIGNIN_MAIL=true`. With it, the worker refuses to send the sign-in mail through Azure Communication Services. If the encrypted path fails, the TAP goes to the ID team, as today.
 
 **Permissions** (the Mail.Send permission needs Security approval):
-- Graph application permission `Mail.Send` for the worker identity, granted by a Privileged Role Administrator.
-- **Exchange RBAC for Applications** limits that `Mail.Send` to the one shared mailbox, so the worker can't send as anyone else. An Exchange Administrator sets this up.
+- `Mail.Send` is granted **only in Exchange Online**, with **Exchange RBAC for Applications**: the role "Application Mail.Send", scoped to the one shared mailbox. An Exchange Administrator sets this up.
+- **Do not** also grant Graph `Mail.Send` through Entra admin consent. An Entra grant is tenant-wide and adds to the Exchange scope, so the worker could then send as any mailbox *(verify)*.
 
 **Licensing:** Purview Message Encryption comes with Microsoft 365 E3/E5 or Office 365 E3/E5, or with an add-on *(verify the org's plan)*.
 
@@ -195,10 +195,10 @@ flowchart LR
 - **Conditional Access Administrator:** the MFA and device policy for the app.
 - **Exchange Administrator:**
   - the shared mailbox;
-  - Exchange RBAC for Applications;
+  - Exchange RBAC for Applications (the scoped `Mail.Send`, after Security approval);
   - the mail flow rule for encryption.
 - **Compliance Administrator:** Purview Message Encryption templates and branding.
-- **Privileged Role Administrator:** Graph `Mail.Send` for the worker (after Security approval).
+- **Privileged Role Administrator:** nothing for mail. `Mail.Send` is not granted in Entra.
 - **Security approver:** signs off the design, the WAF rules, `Mail.Send`, and whether the password is mailed at all.
 
 
