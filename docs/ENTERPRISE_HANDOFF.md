@@ -2,7 +2,7 @@
 
 Updated 22 Oct 2026 (evening).
 Code: branch `claude/great-archimedes-cjr4rl`. It includes all of v3 up to commit `fd5491c` from the session "Onboarding v3 test notifications and edge cases".
-Pilot go-live steps (the pilot tenant, 23 Oct): `docs/GO_LIVE.md`. Go-live in the actual tenant with the scripts as they are (who runs what, inputs, commands): `docs/GO_LIVE_ACTUAL_TENANT.md`. This file covers the hardened enterprise build.
+Pilot go-live steps (the pilot tenant, 23 Oct): `docs/GO_LIVE.md`. Go-live in the actual tenant with the scripts as they are (who runs what, inputs, commands): `docs/GO_LIVE_ACTUAL_TENANT.md`. This file covers the hardened enterprise build. Secure hosting (App Service, private, WAF) and encrypted sign-in mail: `docs/SECURE_HOSTING_AND_MAIL.md`.
 
 
 ## 1. Where it stands
