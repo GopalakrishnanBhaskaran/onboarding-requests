@@ -204,7 +204,9 @@ weak points are elsewhere:
 <ul>
 <li>HTTPS only, minimum TLS 1.2;</li>
 <li>App Service sign-in (Entra, single tenant);</li>
-<li>no public access: a private endpoint, behind a WAF;</li>
+<li><strong>private endpoint only</strong> (confirmed 23 Oct 2026):
+reachable only from the corporate network. No Front Door, no public
+URL;</li>
 <li>managed identity to Cosmos, with Cosmos keys off.</li>
 </ul></li>
 <li><strong>Encrypted mail, only for the password and TAP mail:</strong>
@@ -246,15 +248,16 @@ the change is small.</li>
 <h2 id="3-recommended-design-option-b">3. Recommended design (option
 B)</h2>
 <pre class="mermaid">flowchart LR
-  U[&quot;Users (actual tenant)&lt;br/&gt;Conditional Access: MFA, compliant device&quot;] --&gt; WAF[&quot;Front Door Premium + WAF&lt;br/&gt;(or Application Gateway WAF v2 if internal only)&lt;br/&gt;custom domain, managed certificate, TLS 1.2+&quot;]
-  WAF -- &quot;Private Link&quot; --&gt; APP[&quot;App Service (Linux, .NET 10)&lt;br/&gt;website + API in one app&lt;br/&gt;App Service sign-in: Entra single tenant&lt;br/&gt;HTTPS only · public access off&quot;]
-  APP -- &quot;managed identity, private endpoint&quot; --&gt; COSMOS[(&quot;Cosmos DB&lt;br/&gt;keys off&quot;)]
-  APP -- &quot;managed identity, private endpoint&quot; --&gt; KV[&quot;Key Vault&quot;]
-  WRK[&quot;Worker (Flex Consumption)&lt;br/&gt;VNet integration, managed identity&quot;] -- &quot;private endpoint&quot; --&gt; COSMOS
-  WRK --&gt; GRAPH[&quot;Microsoft Graph&quot;]
-  WRK --&gt; ARM[&quot;Azure RBAC&quot;]
-  WRK --&gt; ACS[&quot;ACS Email: normal mail&quot;]
-  WRK --&gt; EXO[&quot;Graph sendMail from a shared mailbox&lt;br/&gt;→ Exchange rule → Purview Message Encryption&lt;br/&gt;password + TAP mail only&quot;]</pre>
+  U[&quot;Users on the corporate network / VPN&lt;br/&gt;Conditional Access: MFA, compliant device&quot;] -- &quot;DNS: private zone via the DNS Private Resolver&quot; --&gt; PE[&quot;Private endpoint&lt;br/&gt;(hub/spoke VNet)&quot;]
+  PE -.-&gt; AGW[&quot;Optional: Application Gateway WAF v2&lt;br/&gt;private front end only&quot;]
+  PE --&gt; APP[&quot;App Service (Linux, .NET 10)&lt;br/&gt;website + API in one app&lt;br/&gt;Entra sign-in · HTTPS only · public access off&quot;]
+  AGW -.-&gt; APP
+  APP -- &quot;private endpoint&quot; --&gt; COSMOS[(&quot;Cosmos DB&lt;br/&gt;keys off, public access off&quot;)]
+  APP -- &quot;private endpoint&quot; --&gt; KV[&quot;Key Vault&quot;]
+  WRK[&quot;Worker (Flex Consumption)&lt;br/&gt;VNet integration · inbound off&quot;] -- &quot;private endpoint&quot; --&gt; COSMOS
+  WRK -- &quot;private endpoint&quot; --&gt; ST[&quot;Worker storage&quot;]
+  WRK -- &quot;outbound allow-list&quot; --&gt; MS[&quot;Microsoft cloud services&lt;br/&gt;Graph · Azure RBAC · Entra · ACS Email&lt;br/&gt;Graph sendMail → Purview encryption&quot;]
+  AGENT[&quot;Self-hosted build agent or jump box in the VNet&lt;br/&gt;(deploys and admin tools)&quot;] --&gt; PE</pre>
 <h3 id="settings-checklist">Settings checklist</h3>
 <p><strong>App Service</strong></p>
 <ul>
@@ -262,8 +265,9 @@ B)</h2>
 <li>Minimum TLS: 1.2 (1.3 if every client supports it).</li>
 <li>FTP and basic publishing credentials: off.</li>
 <li>Remote debugging: off.</li>
-<li>Public network access: off, with a private endpoint; or access
-restrictions that allow only Front Door.</li>
+<li>Public network access: <strong>off</strong>, with the private
+endpoint as the only way in. The deployment (SCM) site goes private with
+it.</li>
 </ul>
 <p><strong>Sign-in</strong></p>
 <ul>
@@ -277,9 +281,14 @@ hybrid-joined device.</li>
 </ul>
 <p><strong>Certificates</strong></p>
 <ul>
-<li>A custom domain with an App Service or Front Door managed
-certificate; or a certificate from Key Vault if the org requires its own
-certificate authority.</li>
+<li>The simplest choice: keep the default
+<code>&lt;app&gt;.azurewebsites.net</code> name. It already has a
+Microsoft certificate, and the private DNS zone resolves it to the
+private endpoint.</li>
+<li>For a custom domain, use a certificate from the org's certificate
+authority (or a public one) stored in Key Vault. App Service managed
+certificates need the app to be publicly reachable <em>(verify)</em>, so
+they don't fit a private-only app.</li>
 </ul>
 <p><strong>Security headers</strong> (added in the host)</p>
 <ul>
@@ -300,11 +309,33 @@ worker.</li>
 </ul>
 <p><strong>Network</strong></p>
 <ul>
-<li>One VNet with subnets for the private endpoints and for the worker's
-VNet integration.</li>
-<li>Private DNS zones for <code>privatelink.azurewebsites.net</code>,
-<code>privatelink.documents.azure.com</code> and
-<code>privatelink.vaultcore.azure.net</code>.</li>
+<li>A spoke VNet peered to the org's hub, with subnets for the private
+endpoints and for the worker's VNet integration.</li>
+<li>Private DNS zones, linked to the hub:
+<ul>
+<li><code>privatelink.azurewebsites.net</code> (the app and its
+deployment site);</li>
+<li><code>privatelink.documents.azure.com</code>;</li>
+<li><code>privatelink.vaultcore.azure.net</code>;</li>
+<li><code>privatelink.blob/queue/table.core.windows.net</code> (the
+worker's storage).</li>
+</ul></li>
+<li>The on-premises DNS forwards those zones to the Azure DNS Private
+Resolver, so laptops on the corporate network or VPN find the private
+IP.</li>
+<li>The worker: inbound public access off (it is a timer, so nobody
+calls it).</li>
+<li>Outbound through the org's firewall needs an allow-list <em>(verify
+the full list)</em>:
+<ul>
+<li><code>login.microsoftonline.com</code> and
+<code>graph.microsoft.com</code>;</li>
+<li><code>management.azure.com</code>;</li>
+<li>the Azure Communication Services endpoint
+(<code>*.communication.azure.com</code>);</li>
+<li>Application Insights ingestion, or an Azure Monitor Private Link
+Scope if the org requires one.</li>
+</ul></li>
 </ul>
 <p><strong>Logs</strong></p>
 <ul>
@@ -345,6 +376,49 @@ denied;</li>
 <li>the security headers are present;</li>
 <li>the existing access tests run on both principal formats.</li>
 </ul></li>
+</ol>
+<h3 id="what-private-endpoint-only-access-changes">What
+private-endpoint-only access changes</h3>
+<ol type="1">
+<li><strong>Deploys come from inside the network.</strong> Cloud Shell
+and Microsoft-hosted pipeline agents can't reach the private app or its
+deployment site. Use one of these:
+<ul>
+<li>a self-hosted Azure DevOps agent in the VNet (recommended);</li>
+<li>Cloud Shell deployed into the VNet;</li>
+<li>a jump box reached through Azure Bastion. This also applies to the
+commands in <code>docs/GO_LIVE_ACTUAL_TENANT.md</code>.</li>
+</ul></li>
+<li><strong>Admin tools stop using the Cosmos key.</strong>
+<ul>
+<li>With Cosmos keys and public access off,
+<code>import_workbook.py</code>, <code>register_user.py</code>,
+<code>verify_features.sh</code> and <code>workflow_diag.sh</code> must
+sign in with Entra: the operator's account, or the jump box's managed
+identity, with a Cosmos data role.</li>
+<li>They must run inside the VNet.</li>
+<li>This is a code change (task A12).</li>
+</ul></li>
+<li><strong>Approvers must be on the network.</strong> Owners, Security
+and the teams need the corporate network or VPN to open the app from a
+mail link.
+<ul>
+<li>Joiners don't need the app.</li>
+<li>They use <code>aka.ms/mysecurityinfo</code> and
+<code>myapps.microsoft.com</code>, which are public Microsoft
+services.</li>
+</ul></li>
+<li><strong>Sign-in still works.</strong> The browser goes to
+<code>login.microsoftonline.com</code> (public, as for Microsoft 365)
+and returns to the private address. The app itself needs outbound access
+to Entra to check the sign-in.</li>
+<li><strong>A WAF is optional.</strong> Entra sign-in, Conditional
+Access and private-only access already block anonymous traffic. Add
+Application Gateway WAF v2 with a private front end only if Security
+requires a WAF.</li>
+<li><strong>Mail is unchanged.</strong> The worker reaches Azure
+Communication Services and Graph over its outbound allow-list;
+encryption is still applied in Exchange Online.</li>
 </ol>
 <h2 id="4-encrypted-mail-only-the-password-and-tap-mail">4. Encrypted
 mail: only the password and TAP mail</h2>
@@ -436,8 +510,16 @@ the TAP to the requester.</li>
 </ul>
 <h2 id="5-who-does-what">5. Who does what</h2>
 <ul>
-<li><strong>Network admin:</strong> VNet, subnets, private endpoints,
-private DNS zones, Front Door or Application Gateway with WAF.</li>
+<li><strong>Network admin:</strong>
+<ul>
+<li>VNet peering;</li>
+<li>private endpoints and private DNS zones;</li>
+<li>the DNS Private Resolver and the on-premises forwarders;</li>
+<li>the firewall outbound allow-list;</li>
+<li>optional private Application Gateway WAF.</li>
+</ul></li>
+<li><strong>DevOps engineer:</strong> a self-hosted build agent (or jump
+box) in the VNet, used for every deploy and admin tool.</li>
 <li><strong>Subscription Owner:</strong> App Service plan and app, Key
 Vault, the Cosmos private endpoint, role assignments for the managed
 identities.</li>
@@ -465,10 +547,11 @@ Cost inputs (no prices; use the Azure Pricing Calculator)</h2>
 <li>An App Service plan on a tier that supports private endpoints
 <em>(verify the tier)</em>. One instance for test, two for prod
 availability.</li>
-<li>Front Door Premium (needed for Private Link to the app), only if
-users reach the app from outside the corporate network. Otherwise
-Application Gateway WAF v2, or only a private endpoint with VPN or
-ExpressRoute.</li>
+<li>No Front Door: access is private only.</li>
+<li>Optional Application Gateway WAF v2 (private front end).</li>
+<li>An Azure DNS Private Resolver, if the hub doesn't have one
+already.</li>
+<li>A self-hosted build agent VM or a jump box, plus Bastion.</li>
 <li>Private endpoints (per endpoint and GB) and the private DNS
 zones.</li>
 <li>Key Vault operations.</li>

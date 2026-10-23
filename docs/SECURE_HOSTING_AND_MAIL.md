@@ -14,7 +14,7 @@ Items marked *(verify)* must be checked on Microsoft Learn before the build and 
 - **Recommended:** host the website and the API in **one Azure App Service app** in the actual tenant:
   - HTTPS only, minimum TLS 1.2;
   - App Service sign-in (Entra, single tenant);
-  - no public access: a private endpoint, behind a WAF;
+  - **private endpoint only** (confirmed 23 Oct 2026): reachable only from the corporate network. No Front Door, no public URL;
   - managed identity to Cosmos, with Cosmos keys off.
 - **Encrypted mail, only for the password and TAP mail:**
   - send that one mail through **Microsoft Graph from a shared mailbox** in the actual tenant, with a marker header;
@@ -44,15 +44,16 @@ Items marked *(verify)* must be checked on Microsoft Learn before the build and 
 
 ```mermaid
 flowchart LR
-  U["Users (actual tenant)<br/>Conditional Access: MFA, compliant device"] --> WAF["Front Door Premium + WAF<br/>(or Application Gateway WAF v2 if internal only)<br/>custom domain, managed certificate, TLS 1.2+"]
-  WAF -- "Private Link" --> APP["App Service (Linux, .NET 10)<br/>website + API in one app<br/>App Service sign-in: Entra single tenant<br/>HTTPS only · public access off"]
-  APP -- "managed identity, private endpoint" --> COSMOS[("Cosmos DB<br/>keys off")]
-  APP -- "managed identity, private endpoint" --> KV["Key Vault"]
-  WRK["Worker (Flex Consumption)<br/>VNet integration, managed identity"] -- "private endpoint" --> COSMOS
-  WRK --> GRAPH["Microsoft Graph"]
-  WRK --> ARM["Azure RBAC"]
-  WRK --> ACS["ACS Email: normal mail"]
-  WRK --> EXO["Graph sendMail from a shared mailbox<br/>→ Exchange rule → Purview Message Encryption<br/>password + TAP mail only"]
+  U["Users on the corporate network / VPN<br/>Conditional Access: MFA, compliant device"] -- "DNS: private zone via the DNS Private Resolver" --> PE["Private endpoint<br/>(hub/spoke VNet)"]
+  PE -.-> AGW["Optional: Application Gateway WAF v2<br/>private front end only"]
+  PE --> APP["App Service (Linux, .NET 10)<br/>website + API in one app<br/>Entra sign-in · HTTPS only · public access off"]
+  AGW -.-> APP
+  APP -- "private endpoint" --> COSMOS[("Cosmos DB<br/>keys off, public access off")]
+  APP -- "private endpoint" --> KV["Key Vault"]
+  WRK["Worker (Flex Consumption)<br/>VNet integration · inbound off"] -- "private endpoint" --> COSMOS
+  WRK -- "private endpoint" --> ST["Worker storage"]
+  WRK -- "outbound allow-list" --> MS["Microsoft cloud services<br/>Graph · Azure RBAC · Entra · ACS Email<br/>Graph sendMail → Purview encryption"]
+  AGENT["Self-hosted build agent or jump box in the VNet<br/>(deploys and admin tools)"] --> PE
 ```
 
 ### Settings checklist
@@ -62,7 +63,7 @@ flowchart LR
 - Minimum TLS: 1.2 (1.3 if every client supports it).
 - FTP and basic publishing credentials: off.
 - Remote debugging: off.
-- Public network access: off, with a private endpoint; or access restrictions that allow only Front Door.
+- Public network access: **off**, with the private endpoint as the only way in. The deployment (SCM) site goes private with it.
 
 **Sign-in**
 - App Service authentication with an Entra app registration (single tenant).
@@ -71,7 +72,8 @@ flowchart LR
 - A Conditional Access policy on the app: MFA, and a compliant or hybrid-joined device.
 
 **Certificates**
-- A custom domain with an App Service or Front Door managed certificate; or a certificate from Key Vault if the org requires its own certificate authority.
+- The simplest choice: keep the default `<app>.azurewebsites.net` name. It already has a Microsoft certificate, and the private DNS zone resolves it to the private endpoint.
+- For a custom domain, use a certificate from the org's certificate authority (or a public one) stored in Key Vault. App Service managed certificates need the app to be publicly reachable *(verify)*, so they don't fit a private-only app.
 
 **Security headers** (added in the host)
 - `Strict-Transport-Security`
@@ -84,8 +86,19 @@ flowchart LR
 - Cosmos: `disableLocalAuth: true`, a private endpoint, and the role Cosmos DB Built-in Data Contributor for the app and the worker.
 
 **Network**
-- One VNet with subnets for the private endpoints and for the worker's VNet integration.
-- Private DNS zones for `privatelink.azurewebsites.net`, `privatelink.documents.azure.com` and `privatelink.vaultcore.azure.net`.
+- A spoke VNet peered to the org's hub, with subnets for the private endpoints and for the worker's VNet integration.
+- Private DNS zones, linked to the hub:
+  - `privatelink.azurewebsites.net` (the app and its deployment site);
+  - `privatelink.documents.azure.com`;
+  - `privatelink.vaultcore.azure.net`;
+  - `privatelink.blob/queue/table.core.windows.net` (the worker's storage).
+- The on-premises DNS forwards those zones to the Azure DNS Private Resolver, so laptops on the corporate network or VPN find the private IP.
+- The worker: inbound public access off (it is a timer, so nobody calls it).
+- Outbound through the org's firewall needs an allow-list *(verify the full list)*:
+  - `login.microsoftonline.com` and `graph.microsoft.com`;
+  - `management.azure.com`;
+  - the Azure Communication Services endpoint (`*.communication.azure.com`);
+  - Application Insights ingestion, or an Azure Monitor Private Link Scope if the org requires one.
 
 **Logs**
 - Application Insights and Log Analytics.
@@ -108,6 +121,24 @@ flowchart LR
    - the security headers are present;
    - the existing access tests run on both principal formats.
 
+
+### What private-endpoint-only access changes
+
+1. **Deploys come from inside the network.** Cloud Shell and Microsoft-hosted pipeline agents can't reach the private app or its deployment site. Use one of these:
+   - a self-hosted Azure DevOps agent in the VNet (recommended);
+   - Cloud Shell deployed into the VNet;
+   - a jump box reached through Azure Bastion.
+   This also applies to the commands in `docs/GO_LIVE_ACTUAL_TENANT.md`.
+2. **Admin tools stop using the Cosmos key.**
+   - With Cosmos keys and public access off, `import_workbook.py`, `register_user.py`, `verify_features.sh` and `workflow_diag.sh` must sign in with Entra: the operator's account, or the jump box's managed identity, with a Cosmos data role.
+   - They must run inside the VNet.
+   - This is a code change (task A12).
+3. **Approvers must be on the network.** Owners, Security and the teams need the corporate network or VPN to open the app from a mail link.
+   - Joiners don't need the app.
+   - They use `aka.ms/mysecurityinfo` and `myapps.microsoft.com`, which are public Microsoft services.
+4. **Sign-in still works.** The browser goes to `login.microsoftonline.com` (public, as for Microsoft 365) and returns to the private address. The app itself needs outbound access to Entra to check the sign-in.
+5. **A WAF is optional.** Entra sign-in, Conditional Access and private-only access already block anonymous traffic. Add Application Gateway WAF v2 with a private front end only if Security requires a WAF.
+6. **Mail is unchanged.** The worker reaches Azure Communication Services and Graph over its outbound allow-list; encryption is still applied in Exchange Online.
 
 ## 4. Encrypted mail: only the password and TAP mail
 
@@ -152,7 +183,13 @@ flowchart LR
 
 ## 5. Who does what
 
-- **Network admin:** VNet, subnets, private endpoints, private DNS zones, Front Door or Application Gateway with WAF.
+- **Network admin:**
+  - VNet peering;
+  - private endpoints and private DNS zones;
+  - the DNS Private Resolver and the on-premises forwarders;
+  - the firewall outbound allow-list;
+  - optional private Application Gateway WAF.
+- **DevOps engineer:** a self-hosted build agent (or jump box) in the VNet, used for every deploy and admin tool.
 - **Subscription Owner:** App Service plan and app, Key Vault, the Cosmos private endpoint, role assignments for the managed identities.
 - **Application Administrator:** the app registration for App Service sign-in, and "assignment required".
 - **Conditional Access Administrator:** the MFA and device policy for the app.
@@ -167,7 +204,10 @@ flowchart LR
 
 ## 6. Cost inputs (no prices; use the Azure Pricing Calculator)
 - An App Service plan on a tier that supports private endpoints *(verify the tier)*. One instance for test, two for prod availability.
-- Front Door Premium (needed for Private Link to the app), only if users reach the app from outside the corporate network. Otherwise Application Gateway WAF v2, or only a private endpoint with VPN or ExpressRoute.
+- No Front Door: access is private only.
+- Optional Application Gateway WAF v2 (private front end).
+- An Azure DNS Private Resolver, if the hub doesn't have one already.
+- A self-hosted build agent VM or a jump box, plus Bastion.
 - Private endpoints (per endpoint and GB) and the private DNS zones.
 - Key Vault operations.
 - Application Insights and Log Analytics ingestion.

@@ -2,6 +2,7 @@
 
 Written 23 Oct 2026, for code on branch `claude/great-archimedes-cjr4rl`.
 This is the fast path: the pilot scripts run unchanged, in a subscription of the actual tenant. For the hardened enterprise build, see `docs/ENTERPRISE_HANDOFF.md`.
+This path deploys a **public** Static Web Apps site. For the agreed private-endpoint-only hosting, use `docs/SECURE_HOSTING_AND_MAIL.md`, and run these commands from a self-hosted agent or jump box inside the VNet, not Cloud Shell.
 
 
 ## 1. Who runs it: not a Global Administrator alone

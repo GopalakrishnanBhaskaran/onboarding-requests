@@ -76,6 +76,11 @@ A11 Encrypted sign-in mail (section 4): DIRECT_MAIL_SENDER=GraphMail + DIRECT_MA
    x-pmo-sensitivity: signin on the TAP/password mail only; REQUIRE_ENCRYPTED_SIGNIN_MAIL (prod default on) refuses
    ACS for that mail; optional AGENT_SEND_PASSWORD=false. Document the Exchange rule + RBAC for Applications steps.
 
+A12 Private-endpoint-only (section 3, "What private-endpoint-only access changes"): Bicep with public network access
+   off on the app, worker (inbound), Cosmos, Key Vault and storage; private endpoints + private DNS zones (parameters
+   for the hub VNet/zone ids); admin tools (import_workbook, register_user, verify_features, workflow_diag) sign in to
+   Cosmos with Entra (DefaultAzureCredential), no key; pipeline uses a self-hosted agent pool in the VNet.
+
 Done when: dotnet test (net10.0), npm --prefix src/web test, bicep build for every params file and
 tools/run_acceptance.sh all pass; no hardcoded RG/tenant/sub ids remain (grep proof); a summary lists
 each change, test output, and the open decisions for me.
