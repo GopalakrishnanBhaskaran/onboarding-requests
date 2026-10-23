@@ -7,7 +7,7 @@ Run each prompt in its **own session**, from the repo root on the imported branc
 - **Model:**
   - prompt A (security-sensitive infra and sign-in): the most capable model your org allows (Opus class);
   - prompts B and C (reading output, runbook steps): a smaller, faster model (Sonnet class).
-- **Effort:** `high` by default. Use `xhigh` or max only for prompt A, tasks A2–A3 (sign-in and identity).
+- **Effort:** `high` by default. Use `xhigh` or max only for prompt A, tasks A2–A3 and A10–A12 (sign-in, identity, private network).
 - **Mode:** start prompt A in plan mode (Shift+Tab), approve the plan, then let it run.
 - **Context:**
   - one session per prompt;
@@ -41,7 +41,7 @@ Constraints:
 Target: one stack per tenant (PEST, Vestacy) and per environment (test, prod), each in its own tenant's
 subscription. The worker's AGENT_TENANT_ID = that tenant. No cross-tenant provisioning.
 
-Tasks (close gaps G1-G9 in docs/ENTERPRISE_HANDOFF.md):
+Tasks (close gaps G1-G11 in docs/ENTERPRISE_HANDOFF.md):
 A1 Parameterise tenant/env/RG/name prefix in infra/ and in all tools/*.sh (no hardcoded
    rg-pmo-review-pilot). One params file per tenant+env under infra/params/ (placeholders only).
    Rename deploy_free.sh -> deploy.sh (keep the same subcommands and approval gates).
@@ -100,7 +100,7 @@ At the end, write the DEPLOYMENT_LOG.md rows (no TAP, password or user ids) and 
 ## Prompt C — UAT end-to-end check
 
 ```
-Read docs/ENTERPRISE_HANDOFF.md step 15 and workflows/09-onboarding-flow-v2.md. I paste
+Read docs/ENTERPRISE_HANDOFF.md step 19 and workflows/09-onboarding-flow-v2.md. I paste
 verify_features.sh and workflow_diag.sh output for <TENANT>-<ENV>. For each WAIT or FAIL, give the
 cause, the next step and who owns it. When all rows PASS and a request shows Completed, write the UAT
 sign-off summary (facts only, with evidence).

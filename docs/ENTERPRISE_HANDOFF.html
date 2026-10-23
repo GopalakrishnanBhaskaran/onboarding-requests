@@ -184,16 +184,22 @@
 id="enterprise-handoff-onboarding-flow-to-the-real-azure-tenants-pest-and-vestacy">Enterprise
 handoff: onboarding flow to the real Azure tenants (PEST and
 Vestacy)</h1>
-<p>Updated 22 Oct 2026 (evening). Code: branch
+<p>Updated 23 Oct 2026: <strong>private endpoint only</strong> (agreed),
+App Service hosting, encrypted sign-in mail. Code: branch
 <code>claude/great-archimedes-cjr4rl</code>. It includes all of v3 up to
 commit <code>fd5491c</code> from the session "Onboarding v3 test
-notifications and edge cases". Pilot go-live steps (the pilot tenant, 23
-Oct): <code>docs/GO_LIVE.md</code>. Go-live in the actual tenant with
-the scripts as they are (who runs what, inputs, commands):
-<code>docs/GO_LIVE_ACTUAL_TENANT.md</code>. This file covers the
-hardened enterprise build. Secure hosting (App Service, private, WAF)
-and encrypted sign-in mail:
-<code>docs/SECURE_HOSTING_AND_MAIL.md</code>.</p>
+notifications and edge cases".</p>
+<p>Related docs:</p>
+<ul>
+<li>Target architecture: <code>docs/ARCHITECTURE.md</code> section
+12.</li>
+<li>Settings and <em>(verify)</em> items:
+<code>docs/SECURE_HOSTING_AND_MAIL.md</code>.</li>
+<li>Pilot go-live: <code>docs/GO_LIVE.md</code>.</li>
+<li>Fast path with the scripts as they are:
+<code>docs/GO_LIVE_ACTUAL_TENANT.md</code>. It deploys a public site, so
+it is not the agreed design.</li>
+</ul>
 <h2 id="1-where-it-stands">1. Where it stands</h2>
 <p>Done in the pilot:</p>
 <ul>
@@ -219,98 +225,156 @@ table-layout fix <code>fd5491c</code>.</li>
 <li>Follow <code>docs/GO_LIVE.md</code>: real contacts, then
 <code>environment prod</code>.</li>
 </ul>
-<p>Not ready yet for the real tenants: the tools are built for one
-free-tier pilot. Section 2 lists the gaps.</p>
+<p><strong>Not ready yet for the real tenants.</strong> The tools are
+built for one public, free-tier pilot. Section 2 lists the gaps; prompt
+A closes them (tasks A1–A12).</p>
 <h2 id="2-gaps-to-close-before-the-real-deploy-code-work-prompt-a">2.
 Gaps to close before the real deploy (code work, prompt A)</h2>
-<p>G1. Names are hardcoded. <code>rg-pmo-review-pilot</code> and the
-resource names are fixed in deploy_free.sh, verify_features.sh,
-workflow_diag.sh, cost_check.sh and check_free_tier.sh. Fix: parameters
-for tenant, environment, resource group and name prefix, with one params
-file per tenant and environment.</p>
-<p>G2. Anyone with a Microsoft account can sign in (F10). Fix: Static
-Web Apps <strong>Standard</strong> with your own Entra app registration
-(single tenant, "assignment required").</p>
-<p>G3. The database key sits in the website settings, and the API runs
-on .NET 9 (support ends <strong>10 Nov 2026</strong>). Fix: move the API
-to its own Function App on .NET 10 with a managed identity. Turn off
-Cosmos keys (<code>disableLocalAuth</code>).</p>
-<p>G4. The free-tier setup does not fit an enterprise subscription. Fix:
-Cosmos serverless or provisioned with an RU cap; the org's budget; Bicep
-that passes the org's Azure Policy (tags, regions, public network,
-diagnostics, storage keys off).</p>
-<p>G5. Mail limit. The Azure-managed mail domain sends at most
-<strong>10 mails an hour</strong>, and one request needs about 7 (F70).
-Fix: ACS with a <strong>custom verified domain</strong> (DNS records),
-then raise <code>MAIL_MAX_PER_MINUTE</code> /
-<code>MAIL_MAX_PER_HOUR</code>. Or use Graph mail from a shared
-mailbox.</p>
-<p>G6. Test-only switches must not reach prod:
+<p>G1. <strong>Names are hardcoded.</strong>
+<code>rg-pmo-review-pilot</code> and the resource names are fixed in
+deploy_free.sh, verify_features.sh, workflow_diag.sh, cost_check.sh and
+check_free_tier.sh. Fix: parameters for tenant, environment, resource
+group and name prefix, with one params file per tenant and environment.
+(A1)</p>
+<p>G2. <strong>Anyone with a Microsoft account can sign in</strong>
+(F10). Fix: App Service sign-in with Entra (single tenant, "assignment
+required"), and Conditional Access (MFA, compliant device). The API
+rejects a <code>tid</code> other than the tenant's. (A10)</p>
+<p>G3. <strong>Static Web Apps hosting.</strong> The database key sits
+in the website settings, and the API runs on .NET 9 (support ends
+<strong>10 Nov 2026</strong>). Fix: <strong>one App Service app</strong>
+(Linux, .NET 10) serving the website and the API
+(<code>src/webhost</code>), with a managed identity to Cosmos and Cosmos
+keys off (<code>disableLocalAuth</code>). (A3, A10)</p>
+<p>G4. <strong>The free-tier setup does not fit an enterprise
+subscription.</strong> Fix: Cosmos serverless or provisioned with an RU
+cap; the org's budget; Bicep that passes the org's Azure Policy (tags,
+regions, diagnostics, storage keys off). (A4, A6)</p>
+<p>G5. <strong>Mail limit.</strong> The Azure-managed mail domain sends
+at most <strong>10 mails an hour</strong>, and one request needs about 7
+(F70). Fix: ACS with a <strong>custom verified domain</strong>, then
+raise <code>MAIL_MAX_PER_MINUTE</code> / <code>MAIL_MAX_PER_HOUR</code>.
+(A5)</p>
+<p>G6. <strong>Test-only switches must not reach prod:</strong>
 <code>--test-scope</code>, <code>--test-contact</code>,
 <code>NOTIFY_REDIRECT_TO</code>. Fix:</p>
 <ul>
 <li>import with <code>--resolve</code> or <code>--scope-map</code> and
 the real tenant id;</li>
-<li>fill the Contact inventory page with real team addresses;</li>
-<li>run with <code>APP_ENVIRONMENT=prod</code>.</li>
+<li>the Contact inventory page with real team addresses;</li>
+<li><code>APP_ENVIRONMENT=prod</code>.</li>
 </ul>
-<p>G7. Deploys are run by hand from Cloud Shell. Fix: an Azure DevOps
-pipeline per tenant and environment, with workload identity federation
-and approval checks.</p>
-<p>G8. Logs go to the console only. Fix: App Insights and Log Analytics
-with a daily cap.</p>
-<p>G9. Least privilege.</p>
+<p>G7. <strong>Deploys are run by hand from Cloud Shell.</strong> Fix:
+an Azure DevOps pipeline per tenant and environment, with workload
+identity federation, approval checks, and a <strong>self-hosted agent
+pool in the VNet</strong>. (A8, A12)</p>
+<p>G8. <strong>Logs go to the console only.</strong> Fix: App Insights
+and Log Analytics with a daily cap, through an Azure Monitor Private
+Link Scope if the org requires one. (A7)</p>
+<p>G9. <strong>Least privilege.</strong></p>
 <ul>
-<li><code>AuditLog.Read.All</code> is no longer used (there is no
-sign-in check). Do not grant it in the real tenants.</li>
+<li><code>AuditLog.Read.All</code> is no longer used: do not grant
+it.</li>
 <li>Privileged rows (<code>privileged … on</code>) stay off until
-Security decides which rows the agent may do.</li>
+Security decides. (A5b)</li>
 </ul>
-<h2 id="3-target-design">3. Target design</h2>
+<p>G10. <strong>Public access.</strong> Today everything has a public
+endpoint. Fix: <strong>private endpoint only</strong>:</p>
+<ul>
+<li>public network access off on the app (and its deployment site),
+Cosmos, Key Vault and the worker's storage;</li>
+<li>worker inbound off, with VNet integration;</li>
+<li>private DNS zones;</li>
+<li>an outbound firewall allow-list;</li>
+<li>the admin tools sign in to Cosmos with Entra, not a key, and run
+inside the VNet. (A12)</li>
+</ul>
+<p>G11. <strong>The password and TAP mail is not encrypted</strong> (TLS
+in transit only). Fix: send it through Graph from one shared mailbox
+with the header <code>x-pmo-sensitivity: signin</code>. An Exchange rule
+applies Purview Message Encryption.
+<code>REQUIRE_ENCRYPTED_SIGNIN_MAIL</code> is on in prod. Optional: do
+not mail the password. (A11)</p>
+<h2 id="3-target-design-per-tenant-see-docsarchitecturemd-section-12">3.
+Target design (per tenant: see <code>docs/ARCHITECTURE.md</code> section
+12)</h2>
 <p>One stack per tenant:</p>
 <ul>
 <li>PEST in a subscription of the PEST tenant;</li>
 <li>Vestacy in a subscription of the Vestacy tenant.</li>
 </ul>
-<p>Each worker identity lives in its own tenant, so
-<code>AGENT_TENANT_ID</code> is that tenant and the agent can create
+<p><code>AGENT_TENANT_ID</code> is that tenant, so the agent can create
 accounts there. Cross-tenant provisioning is not built, and this design
-does not need it.</p>
+does not need it. Users reach the app <strong>only from the corporate
+network or VPN</strong>, at a private IP.</p>
 <p>Each stack, for test and then prod (each resource needs written cost
 approval):</p>
 <ul>
-<li>Static Web Apps Standard</li>
-<li>API Function App (Flex Consumption, .NET 10, managed identity)</li>
-<li>worker Function App (Flex Consumption, managed identity) and its
-storage account</li>
-<li>Cosmos DB for NoSQL</li>
-<li>Azure Communication Services and Email Service (custom domain)</li>
-<li>Key Vault (the sign-in app secret)</li>
-<li>App Insights and Log Analytics</li>
-<li>a budget</li>
+<li><strong>App Service plan and app</strong> (Linux, .NET 10): the
+website and API, Entra sign-in, HTTPS only, TLS 1.2+, public access
+off.</li>
+<li><strong>Worker Function App</strong> (Flex Consumption, managed
+identity, VNet integration, inbound off) and its storage account.</li>
+<li><strong>Cosmos DB for NoSQL</strong>: keys off, public access
+off.</li>
+<li><strong>Key Vault</strong>: the sign-in app secret and any
+certificate.</li>
+<li><strong>Private endpoints</strong>: app, Cosmos, Key Vault, storage
+(blob, queue, table).</li>
+<li><strong>Private DNS zones</strong>, linked to the hub:
+<ul>
+<li><code>privatelink.azurewebsites.net</code>;</li>
+<li><code>privatelink.documents.azure.com</code>;</li>
+<li><code>privatelink.vaultcore.azure.net</code>;</li>
+<li><code>privatelink.blob/queue/table.core.windows.net</code>.</li>
+</ul></li>
+<li><strong>Spoke VNet</strong> peered to the hub, with subnets for the
+private endpoints and for worker integration.</li>
+<li><strong>Azure Communication Services and Email Service</strong> with
+a custom domain, for normal mail.</li>
+<li><strong>Exchange Online shared mailbox</strong> and a mail flow
+rule, for the encrypted password and TAP mail (no Azure cost).</li>
+<li><strong>App Insights and Log Analytics.</strong></li>
+<li><strong>Self-hosted build agent VM</strong> (or a jump box with
+Bastion) in the VNet.</li>
+<li>Optional: <strong>Application Gateway WAF v2</strong> with a private
+front end, if Security asks for a WAF.</li>
+<li>A budget.</li>
 </ul>
 <h2 id="4-tools-for-the-real-environment">4. Tools for the real
 environment</h2>
-<p>To run the steps:</p>
+<p>To run the steps (all deploys and admin tools run <strong>inside the
+VNet</strong>):</p>
 <ul>
+<li><strong>Azure DevOps Pipelines</strong>
+(<code>pipelines/azure-pipelines.yml</code>):
+<ul>
+<li>a <strong>self-hosted agent pool in the VNet</strong>;</li>
+<li>a service connection with workload identity federation;</li>
+<li>Environments with approval checks;</li>
+<li>a Key Vault-linked variable group.</li>
+</ul></li>
 <li>Azure CLI (latest) and Bicep (<code>az bicep install</code>):
 what-if, deploy, role grants.</li>
-<li>Azure DevOps Pipelines (<code>pipelines/azure-pipelines.yml</code>),
-service connection with workload identity federation, Environments with
-approval checks, Key Vault-linked variable group.</li>
-<li>.NET 10 SDK: API and worker build and tests.</li>
-<li>Node.js 22 LTS and npm (the SWA CLI or the
-<code>AzureStaticWebApp@0</code> task): website build and deploy.</li>
+<li>.NET 10 SDK: build and test the web host, API and worker.</li>
+<li>Node.js 22 LTS and npm: website build (copied into the web host's
+<code>wwwroot</code>).</li>
+<li>App deploy: the <code>AzureWebApp@1</code> and
+<code>AzureFunctionApp@2</code> tasks, from the self-hosted agent (the
+deployment sites are private).</li>
 <li>Python 3.11+ with <code>tools/requirements.txt</code>: import and
-checks.</li>
-<li>git, bash, zip, curl.</li>
+checks, signed in with Entra.</li>
+<li>git, bash, zip, curl, nslookup.</li>
 <li>Azure Portal, Entra admin center, PIM: admin consent, app
-registration, TAP policy, role activation.</li>
+registration, TAP policy, Conditional Access, role activation.</li>
+<li>Exchange admin center and Exchange Online PowerShell: shared
+mailbox, RBAC for Applications, mail flow rule.</li>
+<li>Microsoft Purview portal: message encryption templates.</li>
 </ul>
-<p>Repo tools (after G1 is done):</p>
+<p>Repo tools (after G1 and G10 are done):</p>
 <ul>
-<li><code>deploy_free.sh</code> (to become <code>deploy.sh</code>):
-deploy, permissions, environment switch.</li>
+<li><code>deploy.sh</code> (was <code>deploy_free.sh</code>): deploy,
+permissions, environment switch.</li>
 <li><code>import_workbook.py</code>: imports a tenant's workbooks.</li>
 <li><code>register_user.py</code>: gives people roles by sign-in name
 (<code>--list</code>, <code>--remove</code>).</li>
@@ -319,19 +383,37 @@ deploy, permissions, environment switch.</li>
 the mapping sheet.</li>
 <li><code>verify_features.sh</code>: PASS / WAIT / FAIL checklist.
 <code>workflow_diag.sh</code>: where a request is stuck.</li>
-<li><code>cost_check.sh</code>, <code>run_acceptance.sh</code>,
-<code>mac_setup.sh</code> (deploy from a Mac).</li>
+<li><code>cost_check.sh</code>, <code>run_acceptance.sh</code>.</li>
 </ul>
-<p>Do not use in the real tenants: <code>seed_sample_data.py</code>
-(SAMPLE data), <code>--test-scope</code>, <code>--test-contact</code>,
-<code>--redirect</code>.</p>
+<p>Do not use in the real tenants:</p>
+<ul>
+<li><code>seed_sample_data.py</code> (SAMPLE data);</li>
+<li><code>--test-scope</code>, <code>--test-contact</code>,
+<code>--redirect</code>;</li>
+<li>Cloud Shell outside the VNet;</li>
+<li>Cosmos keys.</li>
+</ul>
 <h2 id="5-who-does-what-per-tenant">5. Who does what (per tenant)</h2>
 <ul>
 <li><strong>Sponsor (Gokul):</strong> cost and scope approval, go /
 no-go.</li>
-<li><strong>Security approver:</strong> approves sign-in (G2), identity
-(G3), every Graph permission, and provisioning, TAP and privileged rows
-"on".</li>
+<li><strong>Security approver:</strong>
+<ul>
+<li>approves the design (private access, sign-in, encrypted mail,
+password or no password);</li>
+<li>approves every Graph permission, including
+<code>Mail.Send</code>;</li>
+<li>approves provisioning, TAP and privileged rows "on".</li>
+</ul></li>
+<li><strong>Network admin:</strong>
+<ul>
+<li>spoke VNet and peering;</li>
+<li>private endpoints and private DNS zones;</li>
+<li>the DNS Private Resolver and the on-premises forwarders;</li>
+<li>the firewall outbound allow-list (Entra, Graph,
+<code>management.azure.com</code>, ACS, monitoring);</li>
+<li>optional private Application Gateway WAF.</li>
+</ul></li>
 <li><strong>Subscription Owner or User Access Administrator:</strong>
 <ul>
 <li>creates the subscription and resource group;</li>
@@ -348,16 +430,33 @@ PIM):</strong> grants the worker's Graph app roles.
 <li>Create: <code>User.Create</code>, <code>Group.Create</code>,
 <code>GroupMember.ReadWrite.All</code>.</li>
 <li>TAP: <code>UserAuthMethod-TAP.ReadWrite.All</code>.</li>
+<li>Mail: <code>Mail.Send</code>.</li>
 </ul></li>
-<li><strong>Application Administrator:</strong> sign-in app
+<li><strong>Application Administrator:</strong> the sign-in app
 registration, "assignment required", assigns the user groups.</li>
+<li><strong>Conditional Access Administrator:</strong> the MFA and
+compliant-device policy for the app.</li>
 <li><strong>Authentication Policy Administrator:</strong> TAP policy:
 on, one-time, maximum lifetime of at least
 <code>AGENT_TAP_LIFETIME_MINUTES</code>, target group.</li>
-<li><strong>DNS admin (or Exchange admin for Graph mail):</strong> mail
-domain records.</li>
-<li><strong>DevOps / platform engineer:</strong> pipeline, what-if,
-deploy, checks, cost check.</li>
+<li><strong>Exchange Administrator:</strong>
+<ul>
+<li>the shared mailbox
+<code>onboarding-signin@&lt;domain&gt;</code>;</li>
+<li>Exchange RBAC for Applications, so <code>Mail.Send</code> works only
+for that mailbox;</li>
+<li>the mail flow rule that encrypts mail with
+<code>x-pmo-sensitivity: signin</code>.</li>
+</ul></li>
+<li><strong>Compliance Administrator:</strong> Purview Message
+Encryption templates (Encrypt-Only or Do Not Forward) and branding.</li>
+<li><strong>DNS admin:</strong> the records for the custom mail
+domain.</li>
+<li><strong>DevOps / platform engineer:</strong>
+<ul>
+<li>the self-hosted agent (or jump box) in the VNet;</li>
+<li>the pipeline, what-if, deploy, checks and cost check.</li>
+</ul></li>
 <li><strong>PMO:</strong>
 <ul>
 <li>supplies the classification and response workbooks;</li>
@@ -365,83 +464,143 @@ deploy, checks, cost check.</li>
 <li>fills the <strong>Contact inventory</strong> per tenant.</li>
 </ul></li>
 <li><strong>UAT testers:</strong> Requester, named Owner, Security
-approver (a different person), ID team, role assignment team.</li>
+approver (a different person), ID team, role assignment team. All on the
+corporate network or VPN.</li>
 <li><strong>FinOps:</strong> budget and alerts.</li>
 </ul>
 <h2 id="6-steps-in-order-pest-first-then-the-same-for-vestacy">6. Steps
 in order (PEST first, then the same for Vestacy)</h2>
 <ol type="1">
-<li><strong>Pilot go-live</strong> (<code>docs/GO_LIVE.md</code>) and
-the <code>app</code> redeploy for <code>fd5491c</code>. Who: Gokul.</li>
-<li><strong>Bring the code into the org:</strong>
+<li><p><strong>Pilot go-live</strong> (<code>docs/GO_LIVE.md</code>) and
+the <code>app</code> redeploy for <code>fd5491c</code>. Who:
+Gokul.</p></li>
+<li><p><strong>Bring the code into the org:</strong>
 <code>git bundle create pmo.bundle claude/great-archimedes-cjr4rl</code>,
 then import it into the org repo. Never commit the workbooks. Who:
-DevOps. Gate: the org's code-intake rules.</li>
-<li><strong>Close gaps G1–G9</strong> with enterprise Claude Code
-(prompt A). All tests and <code>bicep build</code> green. Who: developer
-with Claude. Gate: PR review.</li>
-<li><strong>Written approvals:</strong>
+DevOps. Gate: the org's code-intake rules.</p></li>
+<li><p><strong>Close gaps G1–G11</strong> with enterprise Claude Code
+(prompt A, tasks A1–A12). All tests and <code>bicep build</code> green.
+Who: developer with Claude. Gate: PR review.</p></li>
+<li><p><strong>Written approvals:</strong></p>
 <ul>
-<li>cost: the resource list from step 6;</li>
-<li>security: G2, G3, permissions, privileged rows;</li>
+<li>cost: the resource list in section 3;</li>
+<li>security: the private-only design, sign-in, encrypted mail, password
+or no password, permissions, privileged rows;</li>
 <li>data: the workbook import. Who: Sponsor, Security, PMO.</li>
 </ul></li>
-<li><strong>Tenant prerequisites:</strong> subscription and resource
-group, pipeline connection, sign-in app registration, TAP policy, mail
-domain DNS. Who: Subscription Owner, App Admin, Authentication Policy
-Admin, DNS admin.</li>
-<li><strong>What-if for pest-test</strong>, then review the resources
-and cost. Who: DevOps, then Sponsor. Gate: "approved".</li>
-<li><strong>Deploy pest-test</strong> (infra, API, website, worker)
-through the pipeline. Who: DevOps. Gate: environment check.</li>
-<li><strong>Graph read roles</strong> for the worker. Who: Privileged
-Role Admin. Gate: Security.</li>
-<li><strong>Import PEST</strong> with
+<li><p><strong>Network prerequisites:</strong></p>
+<ul>
+<li>spoke VNet and peering;</li>
+<li>private DNS zones linked to the hub;</li>
+<li>on-premises DNS forwarders to the Private Resolver;</li>
+<li>the firewall outbound allow-list. Who: network admin.</li>
+</ul></li>
+<li><p><strong>Build agent:</strong> a self-hosted Azure DevOps agent
+(or a jump box with Bastion) in the VNet, registered in the agent pool.
+Who: DevOps.</p></li>
+<li><p><strong>Tenant prerequisites:</strong></p>
+<ul>
+<li>subscription and resource group, and the pipeline connection;</li>
+<li>the sign-in app registration ("assignment required") and the
+Conditional Access policy;</li>
+<li>the TAP policy;</li>
+<li>the custom mail domain DNS. Who: Subscription Owner, App Admin,
+Conditional Access Admin, Authentication Policy Admin, DNS admin.</li>
+</ul></li>
+<li><p><strong>Encrypted mail setup:</strong></p>
+<ul>
+<li>the shared mailbox;</li>
+<li>Exchange RBAC for Applications for the worker identity on that
+mailbox only (after step 10 creates the identity);</li>
+<li>the mail flow rule for <code>x-pmo-sensitivity: signin</code>, with
+Purview encryption;</li>
+<li>a test with one mail to a test mailbox inside and outside the
+tenant. Who: Exchange Admin, Compliance Admin.</li>
+</ul></li>
+<li><p><strong>What-if for pest-test</strong> from the pipeline. Check
+that every resource has public access off and a private endpoint, then
+review the resources and cost. Who: DevOps, then Sponsor. Gate:
+"approved".</p></li>
+<li><p><strong>Deploy pest-test</strong> (infra, web host, worker)
+through the pipeline on the self-hosted agent. Who: DevOps. Gate:
+environment check.</p></li>
+<li><p><strong>Private access check:</strong></p>
+<ul>
+<li>from a corporate laptop,
+<code>nslookup &lt;app&gt;.azurewebsites.net</code> returns a
+<strong>private IP</strong>, and the site opens with Entra sign-in;</li>
+<li>from outside the network, the site <strong>does not
+answer</strong>;</li>
+<li>an account from another tenant is refused;</li>
+<li>Cosmos and Key Vault refuse public access. Who: network admin and
+DevOps.</li>
+</ul></li>
+<li><p><strong>Graph roles for the worker:</strong> read roles, then
+<code>Mail.Send</code> (then finish the Exchange RBAC part of step 8).
+Who: Privileged Role Admin (Exchange Admin for step 8). Gate:
+Security.</p></li>
+<li><p><strong>Import PEST</strong> from the in-VNet agent, signed in
+with Entra:
 <code>import_workbook.py --tenant PEST --resolve --tenant-id &lt;PEST tenant id&gt;</code>.
 Then give people their roles with
 <code>register_user.py --project PEST --user &lt;sign-in name&gt; --roles …</code>.
-Who: platform engineer with PMO. Gate: data owner.</li>
-<li><strong>Contact inventory</strong> for PEST in the app (Security, ID
-team, role assignment team, PMO, Operators, escalation managers). Who:
-PMO.</li>
-<li><strong>Test mode with mail:</strong>
-<code>environment test --redirect &lt;UAT mailbox&gt;</code>. Who:
-platform engineer. Gate: mail approval.</li>
-<li><strong>Provisioning on</strong> with <code>--from-sheet PEST</code>
-on the real scopes (dry run, then <code>--approved-by</code>). Who:
-Subscription Owner and Privileged Role Admin. Gate: Security.</li>
-<li><strong>Agent TAP on</strong> (the dry run shows the TAP policy,
+Who: platform engineer with PMO. Gate: data owner.</p></li>
+<li><p><strong>Contact inventory</strong> for PEST in the app (Security,
+ID team, role assignment team, PMO, Operators, escalation managers).
+Who: PMO.</p></li>
+<li><p><strong>Test mode with mail:</strong>
+<code>environment test --redirect &lt;UAT mailbox&gt;</code>, plus
+<code>DIRECT_MAIL_SENDER=GraphMail</code> and
+<code>REQUIRE_ENCRYPTED_SIGNIN_MAIL=true</code>. Who: platform engineer.
+Gate: mail approval.</p></li>
+<li><p><strong>Provisioning on</strong> with
+<code>--from-sheet PEST</code> on the real scopes (dry run, then
+<code>--approved-by</code>). Who: Subscription Owner and Privileged Role
+Admin. Gate: Security.</p></li>
+<li><p><strong>Agent TAP on</strong> (the dry run shows the TAP policy,
 then <code>--approved-by</code>). A new permission can take <strong>up
 to 24 h</strong> to reach the worker (F61). Who: Privileged Role Admin.
-Gate: Security.</li>
-<li><strong>Checks:</strong> <code>verify_features.sh</code>, every line
-PASS except 15 (go-live). Who: platform engineer.</li>
-<li><strong>UAT end-to-end:</strong>
+Gate: Security.</p></li>
+<li><p><strong>Checks:</strong> <code>verify_features.sh</code> from the
+in-VNet agent, every line PASS except 15 (go-live). Who: platform
+engineer.</p></li>
+<li><p><strong>UAT end-to-end</strong> (testers on the corporate network
+or VPN):</p>
 <ul>
 <li>request → AI review → Owner → Security;</li>
-<li>the agent creates the user, group and membership and mails the
-TAP;</li>
+<li>the agent creates the user, group and membership;</li>
+<li>the sign-in mail arrives <strong>encrypted</strong>: inside the
+tenant in Outlook, outside through the protected-message link;</li>
 <li>the agent assigns the roles → <strong>Completed</strong>;</li>
 <li>the completion mail goes to the requester, not the Owner;</li>
 <li>a red or Prod row is returned. Who: UAT testers. Gate: test
 sign-off.</li>
 </ul></li>
-<li><strong>pest-prod:</strong> repeat steps 6–14, then
-<code>environment prod</code> (no redirect). Line 15 must be PASS. Send
-the go-live mail (template in <code>docs/GO_LIVE.md</code>). Who: DevOps
-and admins. Gate: go / no-go.</li>
-<li><strong>Hypercare:</strong>
+<li><p><strong>pest-prod:</strong></p>
 <ul>
-<li>run <code>workflow_diag.sh</code> daily;</li>
-<li>cost check after 48 h;</li>
-<li>watch "mail waiting" issues and High "mail reached nobody" issues.
-Rollback: <code>provisioning off</code> or <code>tap off</code> (always
-allowed), <code>environment test --redirect …</code>, or stop the
-worker. Who: platform engineer.</li>
+<li>repeat steps 9–18 for prod;</li>
+<li>then <code>environment prod</code> (no redirect, encrypted sign-in
+mail required);</li>
+<li>line 15 must be PASS;</li>
+<li>send the go-live mail (template in <code>docs/GO_LIVE.md</code>,
+with the private URL and "corporate network or VPN only"). Who: DevOps
+and admins. Gate: go / no-go.</li>
 </ul></li>
-<li><strong>Vestacy:</strong> repeat steps 5–17 in the Vestacy tenant
+<li><p><strong>Hypercare:</strong></p>
+<ul>
+<li>run <code>workflow_diag.sh</code> daily from the in-VNet agent;</li>
+<li>cost check after 48 h;</li>
+<li>watch "mail waiting" issues, High "mail reached nobody" issues, and
+failures to send encrypted mail;</li>
+<li>watch WAF, firewall and DNS logs. Rollback:</li>
+<li><code>provisioning off</code> or <code>tap off</code> (always
+allowed);</li>
+<li><code>environment test --redirect …</code>;</li>
+<li>stop the worker. Who: platform engineer.</li>
+</ul></li>
+<li><p><strong>Vestacy:</strong> repeat steps 5–21 in the Vestacy tenant
 (169 rows). Who: the same roles in the Vestacy tenant. Gate: the same
-gates.</li>
+gates.</p></li>
 </ol>
 <h2 id="7-rules-that-do-not-change">7. Rules that do not change</h2>
 <ul>
@@ -452,6 +611,8 @@ hand tasks back to the agent; it re-checks.</li>
 <li>Never paste or log a TAP, password, connection string or personal
 user id.</li>
 <li>Real workbook data never goes into git.</li>
+<li>No public endpoint in the actual tenant. Every admin action runs
+from inside the VNet.</li>
 </ul>
 <hr />
 <h1 id="prompts-for-enterprise-claude-code">Prompts for enterprise
@@ -470,8 +631,8 @@ model your org allows (Opus class);</li>
 model (Sonnet class).</li>
 </ul></li>
 <li><strong>Effort:</strong> <code>high</code> by default. Use
-<code>xhigh</code> or max only for prompt A, tasks A2–A3 (sign-in and
-identity).</li>
+<code>xhigh</code> or max only for prompt A, tasks A2–A3 and A10–A12
+(sign-in, identity, private network).</li>
 <li><strong>Mode:</strong> start prompt A in plan mode (Shift+Tab),
 approve the plan, then let it run.</li>
 <li><strong>Context:</strong>
@@ -514,7 +675,7 @@ Constraints:
 Target: one stack per tenant (PEST, Vestacy) and per environment (test, prod), each in its own tenant&#39;s
 subscription. The worker&#39;s AGENT_TENANT_ID = that tenant. No cross-tenant provisioning.
 
-Tasks (close gaps G1-G9 in docs/ENTERPRISE_HANDOFF.md):
+Tasks (close gaps G1-G11 in docs/ENTERPRISE_HANDOFF.md):
 A1 Parameterise tenant/env/RG/name prefix in infra/ and in all tools/*.sh (no hardcoded
    rg-pmo-review-pilot). One params file per tenant+env under infra/params/ (placeholders only).
    Rename deploy_free.sh -&gt; deploy.sh (keep the same subcommands and approval gates).
@@ -569,7 +730,7 @@ Stop at each approval gate until I say &quot;approved by &lt;name&gt; &lt;date&g
 At the end, write the DEPLOYMENT_LOG.md rows (no TAP, password or user ids) and commit.</code></pre>
 <h2 id="prompt-c--uat-end-to-end-check">Prompt C — UAT end-to-end
 check</h2>
-<pre><code>Read docs/ENTERPRISE_HANDOFF.md step 15 and workflows/09-onboarding-flow-v2.md. I paste
+<pre><code>Read docs/ENTERPRISE_HANDOFF.md step 19 and workflows/09-onboarding-flow-v2.md. I paste
 verify_features.sh and workflow_diag.sh output for &lt;TENANT&gt;-&lt;ENV&gt;. For each WAIT or FAIL, give the
 cause, the next step and who owns it. When all rows PASS and a request shows Completed, write the UAT
 sign-off summary (facts only, with evidence).</code></pre>
