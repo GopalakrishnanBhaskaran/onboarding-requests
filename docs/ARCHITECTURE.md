@@ -2,6 +2,7 @@
 
 Updated 23 Oct 2026 for code at `fd5491c`.
 Scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md` (F-numbers below).
+Sections 2–11 describe the **pilot as deployed**. Section 12 describes the **target in the actual tenant**: App Service, private endpoint only, encrypted sign-in mail. That target is a design, not built yet (details: `docs/SECURE_HOSTING_AND_MAIL.md`).
 
 The AI agent reviews, validates, summarises, routes, tracks, verifies and reports. It **never approves**.
 People decide: the named Owner, then Security.
@@ -34,7 +35,7 @@ After both approvals, the agent (deterministic code, not the AI model) can creat
   - mail goes out within the sender's limit, most urgent first.
 
 
-## 2. Components
+## 2. Components (pilot)
 
 ```mermaid
 flowchart LR
@@ -329,4 +330,102 @@ Identity comes only from `x-ms-client-principal`. A project the caller has no ro
 - **Contact inventory on the project document:** no new container; versioned; separate from approval rights.
 - **The mail queue honours the sender's limit:** nothing is lost when the Azure-managed domain sends only 10 an hour (F70).
 - **No sign-in wait at completion:** access is verified directly, and the sign-in log check (Entra P1/P2) is no longer needed.
+- **Private endpoint only in the actual tenant (section 12):** internal users only, so there is no public address. Entra sign-in, Conditional Access and private DNS replace a public edge.
 - **`az deployment sub what-if` before every resource change:** the resource group is created by the deployment, so it passes the approval gate too.
+
+
+## 12. Target architecture in the actual tenant (private endpoint only, design)
+
+Status: a design agreed on 23 Oct 2026; not built or deployed. Build tasks A10–A12 are in `docs/ENTERPRISE_CLAUDE_PROMPTS.md`; settings and *(verify)* items are in `docs/SECURE_HOSTING_AND_MAIL.md`.
+There is one stack per tenant (PEST, Vestacy). Each stack lives in a subscription of its own tenant.
+
+```mermaid
+flowchart LR
+  subgraph CORP["Corporate network / VPN"]
+    U["Users: requester, Owner, Security, teams, PMO<br/>Conditional Access: MFA + compliant device"]
+    DNS["On-prem DNS<br/>forwards privatelink zones"]
+    AG["Self-hosted build agent / jump box<br/>deploys + admin tools"]
+  end
+  subgraph HUB["Hub VNet"]
+    RES["Azure DNS Private Resolver"]
+    FW["Firewall: outbound allow-list"]
+  end
+  subgraph SPOKE["Spoke VNet (per tenant)"]
+    PEAPP["PE: App Service + deployment site"]
+    PEDB["PE: Cosmos"]
+    PEKV["PE: Key Vault"]
+    PEST["PE: worker storage"]
+    APP["App Service (Linux, .NET 10)<br/>website + API, Entra sign-in<br/>HTTPS only · TLS 1.2+ · public off"]
+    WRK["Worker (Flex Consumption)<br/>VNet integration · inbound off"]
+  end
+  COSMOS[("Cosmos DB<br/>keys off · public off")]
+  KV["Key Vault"]
+  ST["Worker storage"]
+  MS["Microsoft cloud: Entra sign-in · Graph · Azure RBAC<br/>ACS Email · Exchange Online (Purview encryption)"]
+
+  U --> DNS --> RES
+  U -- "HTTPS (private IP)" --> PEAPP --> APP
+  AG --> PEAPP
+  APP --> PEDB --> COSMOS
+  APP --> PEKV --> KV
+  WRK --> PEDB
+  WRK --> PEST --> ST
+  WRK --> FW --> MS
+  APP --> FW
+```
+
+### Pilot → target, component by component
+
+- **Website and API**
+  - Pilot: Static Web Apps Free with managed Functions (.NET 9).
+  - Target: **one App Service app** (Linux, .NET 10). A new host, `src/webhost`, serves the website and reuses `ApiHost`.
+- **Sign-in**
+  - Pilot: the pre-configured provider, where any Microsoft account can sign in.
+  - Target: App Service sign-in with Entra, **single tenant**, "assignment required", and Conditional Access (MFA, compliant device).
+  - `ClientPrincipalParser` reads App Service's `X-MS-CLIENT-PRINCIPAL` (`oid`, `preferred_username`) and rejects any `tid` other than the tenant's.
+- **Access**
+  - Pilot: a public `*.azurestaticapps.net` URL.
+  - Target: a **private endpoint only**, with public network access off on the app and its deployment site.
+  - Name resolution: `privatelink.azurewebsites.net`, through the Private Resolver and the on-premises forwarders.
+  - Optional: Application Gateway WAF v2 with a private front end, if Security asks for a WAF.
+- **TLS**
+  - Target: HTTPS only, minimum TLS 1.2.
+  - The default `*.azurewebsites.net` name keeps its Microsoft certificate. A custom domain uses the org's certificate from Key Vault.
+- **Database**
+  - Pilot: Cosmos free tier with a connection string in the app settings.
+  - Target: Cosmos with **keys off** and **public access off**, reached through a private endpoint. The app and the worker use their managed identities (Cosmos DB Built-in Data Contributor).
+- **Secrets**
+  - Pilot: none stored, except the Cosmos connection string.
+  - Target: **Key Vault** (private endpoint) for the sign-in app secret and any certificate, read with the managed identity.
+- **Worker**
+  - Pilot: Flex Consumption with public inbound.
+  - Target: Flex Consumption with **VNet integration** and **inbound off**. Its storage is reached through private endpoints (blob, queue, table).
+  - Outbound goes through the firewall allow-list: Entra, Graph, `management.azure.com`, Azure Communication Services, monitoring.
+- **Normal mail**
+  - Unchanged: Azure Communication Services Email, with a custom verified domain to lift the 10-an-hour limit (F70).
+- **Password and TAP mail**
+  - Pilot: Azure Communication Services, protected in transit only.
+  - Target:
+    - **Graph `sendMail` from one shared mailbox** with the header `x-pmo-sensitivity: signin`;
+    - an Exchange mail flow rule applies **Purview Message Encryption**;
+    - `Mail.Send` is limited to that mailbox by Exchange RBAC for Applications;
+    - `REQUIRE_ENCRYPTED_SIGNIN_MAIL` refuses any other path in prod;
+    - optional: the password is not mailed (`AGENT_SEND_PASSWORD=false`).
+- **Logs**
+  - Pilot: the console.
+  - Target: Application Insights and Log Analytics (through an Azure Monitor Private Link Scope if the org requires it), plus diagnostic settings.
+- **Deploy and admin tools**
+  - Pilot: Cloud Shell, with the Cosmos key.
+  - Target: a **self-hosted Azure DevOps agent** (or a jump box through Bastion) **inside the VNet**.
+  - The tools sign in to Cosmos with Entra, not a key.
+  - The pipeline uses workload identity federation and approval checks.
+
+### Trust boundaries in the target
+1. **Users → app:** only from the corporate network (private IP). Entra single-tenant sign-in and Conditional Access come first, then `userAccess` (deny by default).
+2. **App → Cosmos and Key Vault:** managed identity over private endpoints. No key or connection string exists anywhere.
+3. **Worker → Microsoft cloud:** managed identity, outbound only through the allow-list. The Graph and RBAC rights are the same as the pilot, each switch approval-gated, plus `Mail.Send` limited to the shared mailbox.
+4. **Operators → data:** only from the in-VNet agent or jump box, with their own Entra identity and a Cosmos data role. Every action is logged.
+
+### What stays the same
+- The workflow, the approval rules, the agent's gated writes, tenant separation, the AI review (rule-based; Azure OpenAI still off) and the data model.
+- Joiners never use the app. They use `aka.ms/mysecurityinfo` and `myapps.microsoft.com` (public Microsoft services).
