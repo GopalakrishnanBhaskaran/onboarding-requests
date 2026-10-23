@@ -1,0 +1,31 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "ALLOW_PAID_SERVICES": "true",
+    "COSMOS_ENDPOINT": "https://<cosmos-account>.documents.azure.com:443/",
+    "COSMOS_DATABASE": "pmoreview",
+    "WORKFLOW_SCHEDULE": "0 */5 * * * *",
+    "REVIEW_MODEL_PROVIDER": "RuleOnly",
+    "ROLE_READER": "None",
+    "NOTIFY_SENDER": "Outbox",
+    "NOTIFY_FROM": "",
+    "ACS_ENDPOINT": "",
+    "APP_ENVIRONMENT": "dev",
+    "NOTIFY_REDIRECT_TO": "",
+    "AGENT_TENANT_ID": "<tenant id of the worker identity>",
+    "ADO_ORG_URL": "",
+    "ADO_PROJECT": "",
+    "TAP_MAX_LIFETIME_MINUTES": "60",
+    "OWNER_SLA_HOURS": "24",
+    "SECURITY_SLA_HOURS": "24",
+    "ID_TEAM_SLA_HOURS": "24",
+    "ROLE_TEAM_SLA_HOURS": "24",
+    "VERIFY_SLA_HOURS": "2",
+    "MAIL_MAX_PER_MINUTE": "5",
+    "MAIL_MAX_PER_HOUR": "10",
+    "DAILY_SUMMARY_HOUR_UTC": "6",
+    "APP_URL": "https://<your-app>.azurestaticapps.net"
+  }
+}

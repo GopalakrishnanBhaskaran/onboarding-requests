@@ -1,0 +1,21 @@
+bin/
+obj/
+node_modules/
+dist/
+.vs/
+*.user
+local.settings.json
+.env
+.env.*
+!.env.example
+TestResults/
+tests/acceptance/out/
+__pycache__/
+.local/
+src/web/test-results/
+src/web/playwright-report/
+*.tsbuildinfo
+
+# Real workbooks (Vestacy / PEST group classification, response documents) never go into git: import with tools/import_workbook.py
+*.xlsx
+*.xlsm

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- DEV ONLY. Stand-in for Azure Functions Core Tools when it cannot be installed.
+       Serves the same ApiHost on 127.0.0.1:7071 for `swa start`. Never deployed. -->
+  <PropertyGroup>
+    <RootNamespace>PmoReview.LocalApi</RootNamespace>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/adapters/PmoReview.Adapters/PmoReview.Adapters.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../sample_data/sample-data.json" Link="sample-data.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

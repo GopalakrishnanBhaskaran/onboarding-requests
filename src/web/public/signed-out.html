@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Signed out</title>
+    <style>
+      :root { color-scheme: light dark; --bg: #f5f5f5; --card: #ffffff; --text: #242424; --muted: #616161; --link: #0f6cbd; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #1f1f1f; --card: #292929; --text: #ffffff; --muted: #adadad; --link: #479ef5; } }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text);
+             font: 15px/1.5 "Segoe UI", system-ui, sans-serif; padding: 16px; box-sizing: border-box; }
+      main { background: var(--card); border-radius: 8px; padding: 24px; max-width: 460px; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 8px 0; color: var(--muted); }
+      ul { padding-left: 20px; }
+      a { color: var(--link); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>You are signed out of the onboarding app</h1>
+      <p>This page is public so the sign-out sticks: the app does not sign you back in on its own.</p>
+      <ul>
+        <li><a href="/login">Sign in again</a></li>
+        <li>
+          To use another account, first
+          <a href="https://login.microsoftonline.com/common/oauth2/v2.0/logout" rel="noopener noreferrer">sign out of Microsoft too</a>,
+          then come back and choose <a href="/login">Sign in again</a>.
+        </li>
+      </ul>
+      <p>On a shared computer, close the browser window when you are done.</p>
+    </main>
+  </body>
+</html>

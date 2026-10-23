@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PmoReview.Tests</RootNamespace>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <!-- Tests run to completion; cancellation-token plumbing in test code adds noise only. -->
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/core/PmoReview.Core/PmoReview.Core.csproj" />
+    <ProjectReference Include="../../src/adapters/PmoReview.Adapters/PmoReview.Adapters.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Acceptance suite lives in tests/acceptance (run via tools/run_acceptance.sh). -->
+    <Compile Include="../acceptance/**/*.cs" LinkBase="Acceptance" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../tools/sample_data/sample-data.json" Link="sample-data.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../fixtures/*.json" LinkBase="fixtures" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

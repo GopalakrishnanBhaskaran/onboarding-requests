@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Architecture</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <style>
+  :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--code:#f3f5f7;--accent:#0b5cad}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}}
+  :root[data-theme="dark"]{--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}
+  html,body{background:var(--bg);color:var(--fg)}
+  body{font:16px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;max-width:860px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:1.6em;margin:.2em 0 .4em}h2{font-size:1.25em;margin-top:2em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  a{color:var(--accent)}code{background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.9em;overflow-wrap:anywhere}
+  pre{background:var(--code);padding:12px;border-radius:8px;overflow-x:auto;white-space:pre}pre code{padding:0;overflow-wrap:normal}
+  li{margin:.25em 0}hr{border:0;border-top:2px solid var(--line);margin:3em 0}
+  header#title-block-header{display:none}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+  <script>document.addEventListener('DOMContentLoaded',function(){try{var d=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;mermaid.initialize({startOnLoad:false,theme:d?'dark':'default',securityLevel:'strict'});mermaid.run({querySelector:'pre.mermaid'});}catch(e){}});</script>
+  <style>pre.mermaid{background:transparent;text-align:center;white-space:pre}</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Architecture</h1>
+</header>
+<h1
+id="architecture--pmo-onboarding-flow-v2-with-the-2122-oct-changes-go-live-release">Architecture
+— PMO onboarding flow (v2 with the 21–22 Oct changes, go-live
+release)</h1>
+<p>Updated 23 Oct 2026 for code at <code>fd5491c</code>. Scope:
+<code>SCOPE.md</code>. Platform facts:
+<code>docs/VERIFIED_FACTS.md</code> (F-numbers below). Sections 2–11
+describe the <strong>pilot as deployed</strong>. Section 12 describes
+the <strong>target in the actual tenant</strong>: App Service, private
+endpoint only, encrypted sign-in mail. That target is a design, not
+built yet (details: <code>docs/SECURE_HOSTING_AND_MAIL.md</code>).</p>
+<p>The AI agent reviews, validates, summarises, routes, tracks, verifies
+and reports. It <strong>never approves</strong>. People decide: the
+named Owner, then Security. After both approvals, the agent
+(deterministic code, not the AI model) can create the account and group
+and assign allow-listed roles, if that is switched on. Otherwise the ID
+team and the role assignment team do it and record what they did.</p>
+<h2 id="1-what-changed-by-date">1. What changed, by date</h2>
+<ul>
+<li><strong>17 Oct (v2):</strong> the flow is AI review → Owner →
+Security → ID team → role team → AI verification.</li>
+<li><strong>17 Oct (v2.1, approval-gated):</strong> the agent creates
+the user, the group and the membership, and assigns allow-listed Azure
+roles. A refused write is retried for 24 h while a new permission
+reaches the worker.</li>
+<li><strong>21 Oct:</strong>
+<ul>
+<li>tenant separation (one project = one Entra tenant);</li>
+<li>environments (Dev / Test / PreProd / Prod);</li>
+<li>workbook import;</li>
+<li>several roles per group;</li>
+<li>mail through Azure Communication Services;</li>
+<li>an approval page.</li>
+</ul></li>
+<li><strong>22 Oct:</strong>
+<ul>
+<li>the agent TAP: one one-time pass, mailed once with the initial
+password and the MFA steps;</li>
+<li>a dropdown-only request form;</li>
+<li>the real PEST and Vestacy data, with the SAMPLE data removed;</li>
+<li>people registered by sign-in name;</li>
+<li>the role allow-list built from the mapping sheet;</li>
+<li>privileged rows handled by the agent (approval-gated);</li>
+<li>a team can hand a task back to the agent.</li>
+</ul></li>
+<li><strong>22 Oct (go-live release):</strong>
+<ul>
+<li>the completion mail goes to the requester, not the Owner;</li>
+<li>verification no longer waits for the joiner's sign-in;</li>
+<li>a Contact inventory page;</li>
+<li>mail goes out within the sender's limit, most urgent first.</li>
+</ul></li>
+</ul>
+<h2 id="2-components-pilot">2. Components (pilot)</h2>
+<pre class="mermaid">flowchart LR
+  subgraph Browser
+    UI[&quot;Website (React + Vite + Fluent UI v9)&lt;br/&gt;request form · status · approvals · team tasks&lt;br/&gt;mapping sheet · contact inventory · issues and reports&quot;]
+  end
+  subgraph SWA[&quot;Azure Static Web Apps (Free)&quot;]
+    AUTH[&quot;Built-in sign-in (Entra)&quot;]
+    API[&quot;API: managed Functions (.NET 9 isolated, HTTP)&lt;br/&gt;ApiHost → Endpoints → services&lt;br/&gt;agent step runs inline after each action&quot;]
+  end
+  subgraph W[&quot;AI agent worker (Flex Consumption, managed identity)&quot;]
+    T[&quot;Timer every 5 min&lt;br/&gt;WorkflowAgent for open requests&lt;br/&gt;mail queue · SLA · daily summary&quot;]
+  end
+  COSMOS[(&quot;Cosmos DB for NoSQL (free tier)&lt;br/&gt;projects (+ contacts) · requests · reviewRuns · userAccess&lt;br/&gt;mappingSheet · responseDocument · notifications · issues&quot;)]
+  GRAPH[&quot;Microsoft Graph&lt;br/&gt;read: users · groups · checkMemberGroups · auth methods · manager&lt;br/&gt;write (gated): create user · create group · add member · create TAP&quot;]
+  ARM[&quot;Azure RBAC&lt;br/&gt;role assignment PUT (gated, constrained)&quot;]
+  ACS[&quot;Azure Communication Services Email&quot;]
+  ADO[&quot;Azure DevOps work item (off)&quot;]
+  AOAI[&quot;Azure OpenAI (coded, off)&quot;]
+
+  UI --&gt; AUTH --&gt; API --&gt; COSMOS
+  T --&gt; COSMOS
+  T --&gt; GRAPH
+  T --&gt; ARM
+  T --&gt; ACS
+  T -.-&gt; ADO
+  T -.-&gt; AOAI
+  API -.-&gt; AOAI
+  classDef off stroke-dasharray: 5 5,opacity:0.7
+  class ADO,AOAI off</pre>
+<h3 id="component-catalogue">Component catalogue</h3>
+<p><strong>Website (SPA)</strong></p>
+<ul>
+<li>Code: <code>src/web</code> (React, Vite, TypeScript, Fluent UI
+v9).</li>
+<li>Pages:
+<ul>
+<li>request form: tenant, environment, resource and access level come
+from the mapping sheet only; the Enterprise ID is a mail address; a
+justification template;</li>
+<li>request list and status;</li>
+<li>Owner and Security approval panel;</li>
+<li>ID team and role team tasks, with pick-up, report and
+hand-back;</li>
+<li>mapping sheet (PMO edits rows);</li>
+<li>response document;</li>
+<li>contact inventory;</li>
+<li>issues and reports.</li>
+</ul></li>
+<li>The header shows the environment (PROD, or a yellow test bar).</li>
+</ul>
+<p><strong>Sign-in</strong></p>
+<ul>
+<li>Static Web Apps built-in, using the pre-configured Entra
+provider.</li>
+<li>Any Microsoft account can sign in (F10). It sees nothing unless
+<code>userAccess</code> gives it a role (deny by default).</li>
+<li><code>/logout</code> goes to a public
+<code>signed-out.html</code>.</li>
+</ul>
+<p><strong>API</strong></p>
+<ul>
+<li>Code: <code>src/api</code> runs on Static Web Apps managed Functions
+(.NET 9 isolated, HTTP only). The logic is in <code>src/core</code>:
+<code>ApiHost</code>, <code>Endpoints</code>,
+<code>RequestService</code>, <code>WorkflowService</code>,
+<code>MappingSheetService</code>,
+<code>ContactInventoryService</code>.</li>
+<li>No managed identity (F2) and a 45-second limit (F3). It reaches
+Cosmos with a connection string held in the Static Web Apps app
+settings.</li>
+<li>It runs the agent step inline after each action, so people see the
+next stage at once.</li>
+</ul>
+<p><strong>AI agent worker</strong></p>
+<ul>
+<li>Code: <code>src/worker</code>, a timer every 5 minutes on Flex
+Consumption, with a system-assigned managed identity.</li>
+<li>It runs <code>WorkflowAgent.AdvanceAsync</code> for every open
+request:
+<ul>
+<li>Entra checks;</li>
+<li>provisioning and role assignment;</li>
+<li>verification;</li>
+<li>SLA reminders and escalation;</li>
+<li>the mail queue and the daily summary.</li>
+</ul></li>
+</ul>
+<p><strong>Workflow core</strong></p>
+<ul>
+<li>Code: <code>src/core/Workflow</code>.</li>
+<li><code>WorkflowState</code> holds the stages, kept in the request
+document.</li>
+<li><code>WorkflowAgent</code> computes one step at a time. Provisioning
+is in <code>WorkflowAgent.Provisioning.cs</code>.</li>
+<li><code>Verifier</code> checks the ID team and role team reports and
+does the final check.</li>
+<li><code>Notifier</code> handles the outbox and issues.
+<code>Reports</code> builds the daily and developer reports.</li>
+</ul>
+<p><strong>Review</strong></p>
+<ul>
+<li>Code: <code>src/core/Review</code>.</li>
+<li><code>ReviewEngine</code> and <code>ReviewChecks</code> are the
+deterministic checklist against the mapping sheet and the response
+document.</li>
+<li><code>InjectionDetector</code> turns request text that claims
+"already approved", or carries instructions, into findings.</li>
+<li><code>ResultAssembler</code> and <code>ResultSchema</code> validate
+the result against <code>schema/review-result.v2.json</code>.</li>
+</ul>
+<p><strong>Data</strong></p>
+<ul>
+<li>Cosmos DB for NoSQL, free tier, shared 1,000 RU/s, database
+<code>pmoreview</code>.</li>
+<li>Containers: <code>projects</code> (with the Contact inventory,
+versioned), <code>requests</code>, <code>reviewRuns</code>,
+<code>userAccess</code>, <code>mappingSheet</code>,
+<code>responseDocument</code>, <code>notifications</code>,
+<code>issues</code>.</li>
+<li>Code: <code>CosmosDocumentStore</code>, with ETag concurrency on
+every update.</li>
+</ul>
+<p><strong>Directory (Entra)</strong></p>
+<ul>
+<li><code>GraphDirectoryReader</code> does the reads.</li>
+<li><code>GraphDirectoryWriter</code> makes the only Graph writes: POST
+user, POST group, POST member, POST TAP.</li>
+</ul>
+<p><strong>Azure roles</strong></p>
+<ul>
+<li><code>ArmRoleAssignmentWriter</code> makes one PUT per role
+assignment.</li>
+<li><code>ArmRoleAssignmentReader</code> (optional, off) reads existing
+assignments.</li>
+</ul>
+<p><strong>Mail</strong></p>
+<ul>
+<li><code>AcsEmailSender</code>: Azure Communication Services Email,
+managed identity, Azure-managed domain, one mail per 50 recipients.</li>
+<li><code>GraphMailSender</code>: optional, off.</li>
+<li><code>NotificationDispatcher</code>: the queue within
+<code>MAIL_MAX_PER_MINUTE</code> / <code>MAIL_MAX_PER_HOUR</code> (5 /
+10, F70).</li>
+<li><code>IDirectMail</code>: sends the agent TAP mail.</li>
+</ul>
+<p><strong>Reviewer models</strong></p>
+<ul>
+<li><code>RuleOnlyReviewModel</code> is active: deterministic, no AI
+model.</li>
+<li><code>AzureOpenAIReviewModel</code> and
+<code>AzureOpenAIAssistant</code> are coded and off (section 3).</li>
+</ul>
+<p><strong>Audit</strong></p>
+<ul>
+<li>The trail is kept in the request, and the issues list.</li>
+<li><code>AzureDevOpsWorkItemTracker</code> (optional, off).</li>
+</ul>
+<p><strong>Infrastructure</strong></p>
+<ul>
+<li><code>infra/main.bicep</code> with modules <code>pilot</code>,
+<code>worker</code> and <code>email</code>.</li>
+<li>An Azure Policy limits the allowed resource types.</li>
+<li>A Cost Management budget.</li>
+</ul>
+<p><strong>Tools</strong></p>
+<ul>
+<li><code>tools/deploy_free.sh</code>: whatif / apply / app / worker /
+grant-graph / provisioning / tap / privileged / environment /
+email.</li>
+<li><code>import_workbook.py</code>, <code>register_user.py</code>,
+<code>sheet_roles.py</code>.</li>
+<li><code>verify_features.sh</code>, <code>workflow_diag.sh</code>,
+<code>cost_check.sh</code>, <code>run_acceptance.sh</code>,
+<code>mac_setup.sh</code>.</li>
+</ul>
+<h2 id="3-use-of-llms">3. Use of LLMs</h2>
+<h3 id="when-requests-run-no-llm-is-active-today">When requests run: no
+LLM is active today</h3>
+<p>The "AI agent" is deterministic C# (<code>WorkflowAgent</code>). The
+name describes its job (review, route, verify, report), not a language
+model. The active reviewer is <code>RuleOnlyReviewModel</code>, a fixed
+checklist. No request text goes to any model.</p>
+<h3
+id="coded-and-switched-off-azure-openai-each-needs-approval-docspromotionmd">Coded
+and switched off: Azure OpenAI (each needs approval,
+docs/PROMOTION.md)</h3>
+<p><strong>AI review opinion</strong>
+(<code>AzureOpenAIReviewModel</code>, stage 2)</p>
+<ul>
+<li>It adds concerns to the checklist result.</li>
+<li>The checklist still decides PASS / FAIL. The model can add a failed
+AI check, which returns the request. It can never remove a failed check,
+approve, create or assign.</li>
+<li>Settings: temperature 0, structured output with a strict JSON schema
+(<code>onboarding_review</code>), prompt version
+<code>aoai-review-v2</code>. Each run records the provider, the
+deployment and the prompt version.</li>
+<li>Limits (<code>ReviewLimits</code>):
+<ul>
+<li>30-second time budget;</li>
+<li>24,000 input characters;</li>
+<li>1,500 output tokens;</li>
+<li>at most 3 retries on HTTP 429, honouring
+<code>retry-after-ms</code>.</li>
+</ul></li>
+</ul>
+<p><strong>AI analysis in reports</strong>
+(<code>AzureOpenAIAssistant</code>, worker only,
+<code>AI_REPORTS=true</code>)</p>
+<ul>
+<li>Its one call is <code>AnalyseAsync(purpose, facts)</code>.</li>
+<li>It adds a written analysis to the daily summary and to the developer
+report.</li>
+<li>It never changes a request.</li>
+</ul>
+<p><strong>Connection</strong> (<code>AzureOpenAIChat</code>)</p>
+<ul>
+<li>Managed identity with the role Cognitive Services OpenAI User. No
+keys.</li>
+<li>Default endpoint: the GA <code>v1</code> endpoint
+(<code>/openai/v1/chat/completions</code>) with audience
+<code>https://ai.azure.com/.default</code> (F53).</li>
+</ul>
+<p><strong>Switch</strong></p>
+<ul>
+<li>Set <code>REVIEW_MODEL_PROVIDER=AzureOpenAI</code> and
+<code>ALLOW_PAID_SERVICES=true</code> (startup refuses a paid provider
+without it).</li>
+<li>The review runs in the API, and the API has no managed identity. So
+the review needs the API moved to its own Function App first (PROMOTION
+swap 2).</li>
+</ul>
+<p><strong>Guardrails around any model</strong></p>
+<ul>
+<li><code>SecretMasker</code> masks secrets and TAPs
+(<code>******</code>) before a prompt.</li>
+<li>Request text is untrusted (<code>InjectionDetector</code>).</li>
+<li>The host validates the model output against the schema and
+recomputes the outcome.</li>
+<li>The model never decides and never writes.</li>
+<li>A data owner must sign off before request text is sent to the
+model.</li>
+</ul>
+<h3 id="during-development-claude-code-anthropic">During development:
+Claude Code (Anthropic)</h3>
+<ul>
+<li>The code, tests and docs were written and tested with Claude Code in
+cloud sessions.</li>
+<li>Claude Code is not part of the running system. The app makes no
+Anthropic or Claude call.</li>
+<li>Rules for those sessions:
+<ul>
+<li>never paste a TAP, password, connection string or personal user
+id;</li>
+<li>real workbooks stay out of git;</li>
+<li>Azure changes are run by people, after approval.</li>
+</ul></li>
+<li>Prompts for the enterprise build:
+<code>docs/ENTERPRISE_CLAUDE_PROMPTS.md</code>.</li>
+</ul>
+<h2 id="4-request-lifecycle">4. Request lifecycle</h2>
+<pre class="mermaid">stateDiagram-v2
+  [*] --&gt; Submitted: requester submits (dropdowns, Enterprise ID = mail)
+  Submitted --&gt; AiReview: agent starts the review (key = request id + step)
+  AiReview --&gt; AwaitingOwner: PASS (all checks, Entra cross-check done)
+  AiReview --&gt; Returned: FAIL (red row, Prod without a group, mismatch...)
+  Returned --&gt; Submitted: requester corrects and resubmits
+  AiReview --&gt; FailedNeedsDev: review failed 3 times
+  AwaitingOwner --&gt; AwaitingSecurity: named Owner approves
+  AwaitingOwner --&gt; Rejected: Owner rejects (remarks)
+  AwaitingSecurity --&gt; WithIdTeam: Security approves (not the Owner approver)
+  AwaitingSecurity --&gt; Rejected: Security rejects (remarks)
+  WithIdTeam --&gt; WithRoleTeam: agent created user, group and membership, or the ID team report is verified
+  WithIdTeam --&gt; WithIdTeam: mismatch → task returned with the exact difference
+  WithRoleTeam --&gt; Verifying: agent assigned the roles, or the role team report is verified
+  WithRoleTeam --&gt; WithRoleTeam: mismatch → task returned
+  Verifying --&gt; Completed: account, membership and exact roles verified (no sign-in wait)
+  Verifying --&gt; WithIdTeam: access not in place
+  AwaitingOwner --&gt; AiReview: mapping sheet changed (also from later stages)
+  FailedNeedsDev --&gt; Submitted: Operator resumes after the fix</pre>
+<ul>
+<li>After a mapping change, the review runs again. If the reviewed group
+and role are unchanged, the request resumes its stage. Otherwise the
+approvals are superseded and it goes back to Awaiting Owner.</li>
+<li><strong>Hand-back:</strong> a team that was given a task (agent off,
+row not allowed) can hand it back. The agent re-checks and takes it once
+the row is allowed.</li>
+</ul>
+<h2
+id="5-agent-provisioning-path-after-both-approvals-each-switch-approval-gated">5.
+Agent provisioning path (after both approvals, each switch
+approval-gated)</h2>
+<ol type="1">
+<li><strong>Re-check:</strong> both current approvals, the tenant
+(<code>AGENT_TENANT_ID</code>), the domain
+(<code>--domain-suffix</code>), and the row. A row is refused if it is a
+guest, ambiguous, missing a group, or privileged without
+<code>AGENT_PRIVILEGED</code>.</li>
+<li><strong>Group:</strong> created when the mapping sheet says "to be
+created".</li>
+<li><strong>User:</strong> created with an initial password that must be
+changed at first sign-in.</li>
+<li><strong>Membership:</strong> the user is added to the group.</li>
+<li><strong>Agent TAP</strong> (if <code>AGENT_TAP</code>): one one-time
+pass (<code>AGENT_TAP_LIFETIME_MINUTES</code>, within the tenant's
+policy). It is mailed once with the password and the MFA steps to the
+Enterprise ID mail. Only a masked copy is stored. The account is created
+only when this mail can go out in the same run.</li>
+<li><strong>Roles:</strong> the row's roles are assigned to the group,
+all or nothing, only roles in <code>ROLE_ASSIGN_ALLOWED_ROLES</code> and
+within <code>ROLE_ASSIGN_SCOPES</code>. Never Owner, Contributor, User
+Access Administrator, RBAC Administrator, Reservations Administrator or
+Key Vault Data Access Administrator
+(<code>BuiltInRoles.NeverByAgent</code>). These are refused in code and
+again in the RBAC condition.</li>
+<li><strong>Failure:</strong> any failure goes to the team, with the
+reason and an issue. A refused write is retried for 24 h while a new
+permission reaches the worker (F61).</li>
+</ol>
+<h2 id="6-notifications">6. Notifications</h2>
+<ul>
+<li><strong>Who gets what:</strong>
+<ul>
+<li>the Owner is mailed only to decide, and Security for its stage;</li>
+<li>the requester gets the one completion mail, together with Security,
+PMO, the ID team and the role team;</li>
+<li>the joiner gets <em>access ready</em> at the Enterprise ID
+mail;</li>
+<li>the requester and Security get the provisioning summaries.</li>
+</ul></li>
+<li><strong>Team addresses:</strong> from the Contact inventory. The
+lists are semicolon-separated, versioned, and saved by PMO and
+Operators; every change is mailed to Security and PMO. The addresses
+route mail only; approval rights stay in <code>userAccess</code>.</li>
+<li><strong>Limits:</strong>
+<ul>
+<li>approvals and team tasks go first;</li>
+<li>a throttled mail (429) waits without using an attempt;</li>
+<li>a backlog raises an issue;</li>
+<li>each mail has at most 50 recipients, and bad addresses are
+skipped;</li>
+<li>guest sign-in names are mailed at the real mailbox;</li>
+<li>an approval or task that reaches nobody raises a High issue.</li>
+</ul></li>
+<li><strong>Test environments:</strong> <code>NOTIFY_REDIRECT_TO</code>
+sends every mail to one test mailbox, naming the intended recipients. It
+is refused in prod.</li>
+</ul>
+<h2 id="7-tenants-and-environments">7. Tenants and environments</h2>
+<ul>
+<li>One project = one Entra tenant (PEST, Vestacy). Requests, rows,
+contacts, roles and mail never cross projects.</li>
+<li>The agent reads and writes Entra and Azure only for projects in its
+own tenant (<code>AGENT_TENANT_ID</code> = the worker's tenant). For
+another tenant the checks say "not checked by the agent", and the teams
+do the work there.</li>
+<li>Each project lists its environments. The request picks one, and the
+mapping row must match it. Prod without a group is returned.</li>
+<li><code>APP_ENVIRONMENT</code> = pilot | dev | test | prod.</li>
+</ul>
+<h2 id="8-stage--code">8. Stage → code</h2>
+<ul>
+<li><strong>Intake:</strong> <code>Services/RequestService</code>.
+Dropdown values must come from the mapping sheet. The Enterprise ID must
+be a mail address. The justification template must have no unfilled
+<code>[ … ]</code>.</li>
+<li><strong>AI review:</strong>
+<ul>
+<li>code: <code>Review/ReviewEngine</code>, <code>ReviewChecks</code>,
+<code>Processing/RunService</code>, <code>ReviewProcessor</code>;</li>
+<li>reads both sources fresh;</li>
+<li>validates the result against the schema;</li>
+<li>stores a fingerprint of the sheet.</li>
+</ul></li>
+<li><strong>Approvals:</strong>
+<code>WorkflowService.RespondAsync</code>. Only the named Owner (matched
+by sign-in name), then Security (not the Owner approver). Anyone else is
+ignored, logged as an <em>Unauthorized approval</em> issue, and Security
+is alerted.</li>
+<li><strong>ID team:</strong>
+<ul>
+<li>the agent's path: <code>WorkflowAgent.Provisioning</code>;</li>
+<li>the team's path: <code>ReportIdTeamAsync</code> with
+<code>Verifier.IdTeamAsync</code>;</li>
+<li>a report body that carries a pass is rejected;</li>
+<li>hand-back: <code>HandBackAsync</code>.</li>
+</ul></li>
+<li><strong>Role team:</strong>
+<ul>
+<li>the agent's path: <code>ArmRoleAssignmentWriter</code>;</li>
+<li>the team's path: <code>ReportRoleTeamAsync</code> with
+<code>Verifier.RoleTeamAsync</code>;</li>
+<li>the exact roles are checked against the response document.</li>
+</ul></li>
+<li><strong>Final:</strong> <code>WorkflowAgent.FinalAsync</code> and
+<code>Verifier.FinalAsync</code> check the account, the membership and
+the exact roles once, then the request completes, the completion mail
+goes out and the trail is written.</li>
+<li><strong>SLA:</strong> <code>ApprovalSlaAsync</code> /
+<code>TaskSlaAsync</code> send a reminder at the SLA and escalate to the
+manager at twice the SLA. Managers come from the Contact inventory or
+Graph.</li>
+<li><strong>Issues and reports:</strong> <code>Notifier</code>
+(<code>IssueLog</code>) and <code>Reports</code> (daily summary,
+developer report).</li>
+</ul>
+<h2 id="9-api-all-under-api-signed-in">9. API (all under
+<code>/api</code>, signed in)</h2>
+<p>Identity comes only from <code>x-ms-client-principal</code>. A
+project the caller has no role in returns 404; a missing permission
+returns 403. Updates need <code>If-Match</code>.</p>
+<ul>
+<li><code>GET me</code>, <code>GET queue</code>: any signed-in
+user.</li>
+<li><code>GET/POST projects/{p}/requests</code>,
+<code>GET/PUT …/requests/{id}</code>, <code>GET …/{id}/trail</code>:
+members; the Requester submits and resubmits.</li>
+<li><code>POST …/{id}/approvals</code>: the named Owner, then
+Security.</li>
+<li><code>POST …/{id}/tasks/{id-team|role-team}/pickup</code>,
+<code>…/handback</code>, <code>…/report</code>: IdTeam / RoleTeam.</li>
+<li><code>POST …/{id}/advance</code>, <code>POST …/{id}/resume</code>:
+Operator.</li>
+<li><code>GET/POST projects/{p}/mapping-sheet</code>,
+<code>PUT …/{rowId}</code>, <code>POST …/{rowId}/group</code>: members;
+PMO edits; IdTeam records a created group.</li>
+<li><code>GET/PUT projects/{p}/contacts</code>: every role reads; PMO
+and Operators save.</li>
+<li><code>GET projects/{p}/response-document</code>: members.</li>
+<li><code>GET projects/{p}/issues</code>,
+<code>GET …/reports/daily/{date}</code>,
+<code>GET …/reports/developer</code>: Security, PMO, Operator.</li>
+<li><code>GET …/requests/{id}/runs</code>,
+<code>GET projects/{p}/runs/{runId}</code>,
+<code>POST …/runs/{runId}/retry</code>,
+<code>POST …/operator/recover</code>: members / Operator.</li>
+</ul>
+<h2 id="10-trust-boundaries-and-permissions">10. Trust boundaries and
+permissions</h2>
+<ol type="1">
+<li><strong>Browser → Static Web Apps:</strong> signed in by Static Web
+Apps; every field in a request body is untrusted. People are found in
+<code>userAccess</code> by user id or by sign-in name.</li>
+<li><strong>API → Cosmos:</strong> connection string in the Static Web
+Apps app settings (managed Functions have no managed identity). The API
+never holds a writer for Entra or Azure.</li>
+<li><strong>Worker → Cosmos / Graph / Azure / mail:</strong> managed
+identity.
+<ul>
+<li>Cosmos: data roles only on the containers it uses.</li>
+<li>Graph read: <code>User.Read.All</code>,
+<code>GroupMember.Read.All</code>,
+<code>UserAuthenticationMethod.Read.All</code>.
+<code>AuditLog.Read.All</code> is still granted but no longer used.</li>
+<li>Graph create (gated): <code>User.Create</code>,
+<code>Group.Create</code>, <code>GroupMember.ReadWrite.All</code>.</li>
+<li>TAP (gated): <code>UserAuthMethod-TAP.ReadWrite.All</code>.</li>
+<li>Azure: Role Based Access Control Administrator on one scope, limited
+by a condition to the allow-listed roles and to user and group
+principals.</li>
+<li>Mail: a role on the Communication Services resource.</li>
+</ul></li>
+<li><strong>Untrusted content:</strong> request text, team notes and any
+model output. It is masked (<code>SecretMasker</code>) before logs, ADO,
+mail and prompts. The host validates every result.</li>
+</ol>
+<h2 id="11-design-decisions">11. Design decisions</h2>
+<ul>
+<li><strong>Workflow state in the request document
+(<code>flow</code>):</strong> one document and one ETag, so a stage
+change and its audit entry commit together.</li>
+<li><strong>The agent runs inline in the API and on the worker
+timer:</strong> people see the next stage at once, and Entra work
+finishes within about 5 minutes.</li>
+<li><strong>Agent writes are deterministic, gated and
+re-checked:</strong> the AI model never decides or writes. Every write
+needs both current approvals and its switch on.</li>
+<li><strong>One stack per tenant:</strong> a managed identity has rights
+only in its own tenant, so cross-tenant writes are not built.</li>
+<li><strong>Contact inventory on the project document:</strong> no new
+container; versioned; separate from approval rights.</li>
+<li><strong>The mail queue honours the sender's limit:</strong> nothing
+is lost when the Azure-managed domain sends only 10 an hour (F70).</li>
+<li><strong>No sign-in wait at completion:</strong> access is verified
+directly, and the sign-in log check (Entra P1/P2) is no longer
+needed.</li>
+<li><strong>Private endpoint only in the actual tenant (section
+12):</strong> internal users only, so there is no public address. Entra
+sign-in, Conditional Access and private DNS replace a public edge.</li>
+<li><strong><code>az deployment sub what-if</code> before every resource
+change:</strong> the resource group is created by the deployment, so it
+passes the approval gate too.</li>
+</ul>
+<h2
+id="12-target-architecture-in-the-actual-tenant-private-endpoint-only-design">12.
+Target architecture in the actual tenant (private endpoint only,
+design)</h2>
+<p>Status: a design agreed on 23 Oct 2026; not built or deployed. Build
+tasks A10–A12 are in <code>docs/ENTERPRISE_CLAUDE_PROMPTS.md</code>;
+settings and <em>(verify)</em> items are in
+<code>docs/SECURE_HOSTING_AND_MAIL.md</code>. There is one stack per
+tenant (PEST, Vestacy). Each stack lives in a subscription of its own
+tenant.</p>
+<pre class="mermaid">flowchart LR
+  subgraph CORP[&quot;Corporate network / VPN&quot;]
+    U[&quot;Users: requester, Owner, Security, teams, PMO&lt;br/&gt;Conditional Access: MFA + compliant device&quot;]
+    DNS[&quot;On-prem DNS&lt;br/&gt;forwards privatelink zones&quot;]
+    AG[&quot;Self-hosted build agent / jump box&lt;br/&gt;deploys + admin tools&quot;]
+  end
+  subgraph HUB[&quot;Hub VNet&quot;]
+    RES[&quot;Azure DNS Private Resolver&quot;]
+    FW[&quot;Firewall: outbound allow-list&quot;]
+  end
+  subgraph SPOKE[&quot;Spoke VNet (per tenant)&quot;]
+    PEAPP[&quot;PE: App Service + deployment site&quot;]
+    PEDB[&quot;PE: Cosmos&quot;]
+    PEKV[&quot;PE: Key Vault&quot;]
+    PEST[&quot;PE: worker storage&quot;]
+    APP[&quot;App Service (Linux, .NET 10)&lt;br/&gt;website + API, Entra sign-in&lt;br/&gt;HTTPS only · TLS 1.2+ · public off&quot;]
+    WRK[&quot;Worker (Flex Consumption)&lt;br/&gt;VNet integration · inbound off&quot;]
+  end
+  COSMOS[(&quot;Cosmos DB&lt;br/&gt;keys off · public off&quot;)]
+  KV[&quot;Key Vault&quot;]
+  ST[&quot;Worker storage&quot;]
+  MS[&quot;Microsoft cloud: Entra sign-in · Graph · Azure RBAC&lt;br/&gt;ACS Email · Exchange Online (Purview encryption)&quot;]
+
+  U --&gt; DNS --&gt; RES
+  U -- &quot;HTTPS (private IP)&quot; --&gt; PEAPP --&gt; APP
+  AG --&gt; PEAPP
+  APP --&gt; PEDB --&gt; COSMOS
+  APP --&gt; PEKV --&gt; KV
+  WRK --&gt; PEDB
+  WRK --&gt; PEST --&gt; ST
+  WRK --&gt; FW --&gt; MS
+  APP --&gt; FW</pre>
+<h3 id="pilot--target-component-by-component">Pilot → target, component
+by component</h3>
+<ul>
+<li><strong>Website and API</strong>
+<ul>
+<li>Pilot: Static Web Apps Free with managed Functions (.NET 9).</li>
+<li>Target: <strong>one App Service app</strong> (Linux, .NET 10). A new
+host, <code>src/webhost</code>, serves the website and reuses
+<code>ApiHost</code>.</li>
+</ul></li>
+<li><strong>Sign-in</strong>
+<ul>
+<li>Pilot: the pre-configured provider, where any Microsoft account can
+sign in.</li>
+<li>Target: App Service sign-in with Entra, <strong>single
+tenant</strong>, "assignment required", and Conditional Access (MFA,
+compliant device).</li>
+<li><code>ClientPrincipalParser</code> reads App Service's
+<code>X-MS-CLIENT-PRINCIPAL</code> (<code>oid</code>,
+<code>preferred_username</code>) and rejects any <code>tid</code> other
+than the tenant's.</li>
+</ul></li>
+<li><strong>Access</strong>
+<ul>
+<li>Pilot: a public <code>*.azurestaticapps.net</code> URL.</li>
+<li>Target: a <strong>private endpoint only</strong>, with public
+network access off on the app and its deployment site.</li>
+<li>Name resolution: <code>privatelink.azurewebsites.net</code>, through
+the Private Resolver and the on-premises forwarders.</li>
+<li>Optional: Application Gateway WAF v2 with a private front end, if
+Security asks for a WAF.</li>
+</ul></li>
+<li><strong>TLS</strong>
+<ul>
+<li>Target: HTTPS only, minimum TLS 1.2.</li>
+<li>The default <code>*.azurewebsites.net</code> name keeps its
+Microsoft certificate. A custom domain uses the org's certificate from
+Key Vault.</li>
+</ul></li>
+<li><strong>Database</strong>
+<ul>
+<li>Pilot: Cosmos free tier with a connection string in the app
+settings.</li>
+<li>Target: Cosmos with <strong>keys off</strong> and <strong>public
+access off</strong>, reached through a private endpoint. The app and the
+worker use their managed identities (Cosmos DB Built-in Data
+Contributor).</li>
+</ul></li>
+<li><strong>Secrets</strong>
+<ul>
+<li>Pilot: none stored, except the Cosmos connection string.</li>
+<li>Target: <strong>Key Vault</strong> (private endpoint) for the
+sign-in app secret and any certificate, read with the managed
+identity.</li>
+</ul></li>
+<li><strong>Worker</strong>
+<ul>
+<li>Pilot: Flex Consumption with public inbound.</li>
+<li>Target: Flex Consumption with <strong>VNet integration</strong> and
+<strong>inbound off</strong>. Its storage is reached through private
+endpoints (blob, queue, table).</li>
+<li>Outbound goes through the firewall allow-list: Entra, Graph,
+<code>management.azure.com</code>, Azure Communication Services,
+monitoring.</li>
+</ul></li>
+<li><strong>Normal mail</strong>
+<ul>
+<li>Unchanged: Azure Communication Services Email, with a custom
+verified domain to lift the 10-an-hour limit (F70).</li>
+</ul></li>
+<li><strong>Password and TAP mail</strong>
+<ul>
+<li>Pilot: Azure Communication Services, protected in transit only.</li>
+<li>Target:
+<ul>
+<li><strong>Graph <code>sendMail</code> from one shared mailbox</strong>
+with the header <code>x-pmo-sensitivity: signin</code>;</li>
+<li>an Exchange mail flow rule applies <strong>Purview Message
+Encryption</strong>;</li>
+<li><code>Mail.Send</code> is limited to that mailbox by Exchange RBAC
+for Applications;</li>
+<li><code>REQUIRE_ENCRYPTED_SIGNIN_MAIL</code> refuses any other path in
+prod;</li>
+<li>optional: the password is not mailed
+(<code>AGENT_SEND_PASSWORD=false</code>).</li>
+</ul></li>
+</ul></li>
+<li><strong>Logs</strong>
+<ul>
+<li>Pilot: the console.</li>
+<li>Target: Application Insights and Log Analytics (through an Azure
+Monitor Private Link Scope if the org requires it), plus diagnostic
+settings.</li>
+</ul></li>
+<li><strong>Deploy and admin tools</strong>
+<ul>
+<li>Pilot: Cloud Shell, with the Cosmos key.</li>
+<li>Target: a <strong>self-hosted Azure DevOps agent</strong> (or a jump
+box through Bastion) <strong>inside the VNet</strong>.</li>
+<li>The tools sign in to Cosmos with Entra, not a key.</li>
+<li>The pipeline uses workload identity federation and approval
+checks.</li>
+</ul></li>
+</ul>
+<h3 id="trust-boundaries-in-the-target">Trust boundaries in the
+target</h3>
+<ol type="1">
+<li><strong>Users → app:</strong> only from the corporate network
+(private IP). Entra single-tenant sign-in and Conditional Access come
+first, then <code>userAccess</code> (deny by default).</li>
+<li><strong>App → Cosmos and Key Vault:</strong> managed identity over
+private endpoints. No key or connection string exists anywhere.</li>
+<li><strong>Worker → Microsoft cloud:</strong> managed identity,
+outbound only through the allow-list. The Graph and RBAC rights are the
+same as the pilot, each switch approval-gated, plus
+<code>Mail.Send</code> limited to the shared mailbox.</li>
+<li><strong>Operators → data:</strong> only from the in-VNet agent or
+jump box, with their own Entra identity and a Cosmos data role. Every
+action is logged.</li>
+</ol>
+<h3 id="what-stays-the-same">What stays the same</h3>
+<ul>
+<li>The workflow, the approval rules, the agent's gated writes, tenant
+separation, the AI review (rule-based; Azure OpenAI still off) and the
+data model.</li>
+<li>Joiners never use the app. They use
+<code>aka.ms/mysecurityinfo</code> and <code>myapps.microsoft.com</code>
+(public Microsoft services).</li>
+</ul>
+</body>
+</html>

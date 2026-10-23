@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pmo-review.sample.invalid/schema/review-result.v2.json",
+  "title": "Onboarding request AI review result v2 (Stage 2)",
+  "description": "AI review of an onboarding request against the mapping sheet and the response document. Never an approval: humanApprovalRequired is always true and the Owner and Security decide.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reviewRunId",
+    "requestRevision",
+    "outcome",
+    "summary",
+    "checks",
+    "riskFlags",
+    "mapping",
+    "findings",
+    "returnReasons",
+    "humanApprovalRequired",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "2.0"
+    },
+    "reviewRunId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.:\\-]{1,128}$"
+    },
+    "requestRevision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "outcome": {
+      "enum": [
+        "Pass",
+        "Fail",
+        "Pending"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2500
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "group",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z_]{2,39}$"
+          },
+          "group": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "status": {
+            "enum": [
+              "Pass",
+              "Fail",
+              "Pending",
+              "NotApplicable",
+              "Flagged"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      }
+    },
+    "riskFlags": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "rowId",
+        "rowVersion",
+        "entraGroup",
+        "role",
+        "roleScope",
+        "groupState",
+        "groupExistsInEntra",
+        "explanation"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "Matched",
+            "NotFound",
+            "Ambiguous",
+            "NotApplicable"
+          ]
+        },
+        "rowId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "rowVersion": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "entraGroup": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        },
+        "roleScope": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "groupState": {
+          "enum": [
+            "Exists",
+            "ToBeCreated",
+            null
+          ]
+        },
+        "groupExistsInEntra": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "field",
+          "severity",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z_]{2,39}$"
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64
+          },
+          "severity": {
+            "enum": [
+              "Info",
+              "Warning",
+              "Blocking"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "returnReasons": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1100
+      }
+    },
+    "humanApprovalRequired": {
+      "const": true
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "_comment": "Copy to local.settings.json (git-ignored). Never put a real connection string in this example.",
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "PILOT_LOCAL_DEV": "true",
+    "STORAGE_MODE": "InMemorySample",
+    "COSMOS_CONNECTION_STRING": "",
+    "COSMOS_DATABASE": "pmoreview",
+    "COSMOS_EMULATOR": "false",
+    "REVIEW_MODEL_PROVIDER": "RuleOnly",
+    "REVIEW_DISPATCHER": "Inline",
+    "ALLOW_PAID_SERVICES": "false",
+    "ALLOWED_IDENTITY_PROVIDERS": "aad"
+  }
+}

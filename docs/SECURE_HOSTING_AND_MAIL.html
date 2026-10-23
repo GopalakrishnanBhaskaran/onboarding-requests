@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Secure hosting and mail</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <style>
+  :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--code:#f3f5f7;--accent:#0b5cad}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}}
+  :root[data-theme="dark"]{--bg:#0f1419;--fg:#e6edf3;--muted:#9aa5b1;--line:#30363d;--code:#161b22;--accent:#6cb6ff}
+  html,body{background:var(--bg);color:var(--fg)}
+  body{font:16px/1.6 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;max-width:860px;margin:0 auto;padding:24px 16px 64px}
+  h1{font-size:1.6em;margin:.2em 0 .4em}h2{font-size:1.25em;margin-top:2em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  a{color:var(--accent)}code{background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.9em;overflow-wrap:anywhere}
+  pre{background:var(--code);padding:12px;border-radius:8px;overflow-x:auto;white-space:pre}pre code{padding:0;overflow-wrap:normal}
+  li{margin:.25em 0}hr{border:0;border-top:2px solid var(--line);margin:3em 0}
+  header#title-block-header{display:none}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+  <script>document.addEventListener('DOMContentLoaded',function(){try{var d=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches;mermaid.initialize({startOnLoad:false,theme:d?'dark':'default',securityLevel:'strict'});mermaid.run({querySelector:'pre.mermaid'});}catch(e){}});</script>
+  <style>pre.mermaid{background:transparent;text-align:center;white-space:pre}</style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Secure hosting and mail</h1>
+</header>
+<h1 id="secure-hosting-and-encrypted-sign-in-mail-actual-tenant">Secure
+hosting and encrypted sign-in mail (actual tenant)</h1>
+<p>Written 23 Oct 2026. Design only: nothing here is built or deployed
+yet. The code work is tasks A10–A11 in
+<code>docs/ENTERPRISE_CLAUDE_PROMPTS.md</code>. Items marked
+<em>(verify)</em> must be checked on Microsoft Learn before the build
+and recorded in <code>docs/VERIFIED_FACTS.md</code>.</p>
+<h2 id="1-short-answer">1. Short answer</h2>
+<ul>
+<li><strong>HTTPS:</strong> Static Web Apps is already HTTPS only. Its
+weak points are elsewhere:
+<ul>
+<li>the site is public;</li>
+<li>any Microsoft account can sign in (F10);</li>
+<li>the database key sits in the app settings.</li>
+</ul></li>
+<li><strong>Recommended:</strong> host the website and the API in
+<strong>one Azure App Service app</strong> in the actual tenant:
+<ul>
+<li>HTTPS only, minimum TLS 1.2;</li>
+<li>App Service sign-in (Entra, single tenant);</li>
+<li><strong>private endpoint only</strong> (confirmed 23 Oct 2026):
+reachable only from the corporate network. No Front Door, no public
+URL;</li>
+<li>managed identity to Cosmos, with Cosmos keys off.</li>
+</ul></li>
+<li><strong>Encrypted mail, only for the password and TAP mail:</strong>
+<ul>
+<li>send that one mail through <strong>Microsoft Graph from a shared
+mailbox</strong> in the actual tenant, with a marker header;</li>
+<li>an Exchange <strong>mail flow rule</strong> applies
+<strong>Microsoft Purview Message Encryption</strong> to it;</li>
+<li>every other mail stays on Azure Communication Services,
+unencrypted.</li>
+</ul></li>
+<li><strong>Better still:</strong> stop mailing the password. The
+one-time TAP is enough to sign in and set up Authenticator.</li>
+</ul>
+<h2 id="2-hosting-options">2. Hosting options</h2>
+<p><strong>A. Static Web Apps Standard (smallest change)</strong></p>
+<ul>
+<li>Adds custom Entra sign-in, a private endpoint and a custom
+domain.</li>
+<li>The managed API still has no managed identity, so it also needs its
+own Function App.</li>
+<li>That gives two hosts, two sign-in cookies and more moving
+parts.</li>
+</ul>
+<p><strong>B. App Service, one app for the website and the API
+(recommended)</strong></p>
+<ul>
+<li>One origin, one sign-in, one set of security settings.</li>
+<li>Full control of TLS, headers, the network and logs.</li>
+<li>The code already has a second host for the same API logic
+(<code>tools/local-api</code> serves the same <code>ApiHost</code>), so
+the change is small.</li>
+</ul>
+<p><strong>C. Container Apps</strong></p>
+<ul>
+<li>Also possible.</li>
+<li>More work: images, a registry, an environment. Not needed here.</li>
+</ul>
+<h2 id="3-recommended-design-option-b">3. Recommended design (option
+B)</h2>
+<pre class="mermaid">flowchart LR
+  U[&quot;Users on the corporate network / VPN&lt;br/&gt;Conditional Access: MFA, compliant device&quot;] -- &quot;DNS: private zone via the DNS Private Resolver&quot; --&gt; PE[&quot;Private endpoint&lt;br/&gt;(hub/spoke VNet)&quot;]
+  PE -.-&gt; AGW[&quot;Optional: Application Gateway WAF v2&lt;br/&gt;private front end only&quot;]
+  PE --&gt; APP[&quot;App Service (Linux, .NET 10)&lt;br/&gt;website + API in one app&lt;br/&gt;Entra sign-in · HTTPS only · public access off&quot;]
+  AGW -.-&gt; APP
+  APP -- &quot;private endpoint&quot; --&gt; COSMOS[(&quot;Cosmos DB&lt;br/&gt;keys off, public access off&quot;)]
+  APP -- &quot;private endpoint&quot; --&gt; KV[&quot;Key Vault&quot;]
+  WRK[&quot;Worker (Flex Consumption)&lt;br/&gt;VNet integration · inbound off&quot;] -- &quot;private endpoint&quot; --&gt; COSMOS
+  WRK -- &quot;private endpoint&quot; --&gt; ST[&quot;Worker storage&quot;]
+  WRK -- &quot;outbound allow-list&quot; --&gt; MS[&quot;Microsoft cloud services&lt;br/&gt;Graph · Azure RBAC · Entra · ACS Email&lt;br/&gt;Graph sendMail → Purview encryption&quot;]
+  AGENT[&quot;Self-hosted build agent or jump box in the VNet&lt;br/&gt;(deploys and admin tools)&quot;] --&gt; PE</pre>
+<h3 id="settings-checklist">Settings checklist</h3>
+<p><strong>App Service</strong></p>
+<ul>
+<li>HTTPS Only: on.</li>
+<li>Minimum TLS: 1.2 (1.3 if every client supports it).</li>
+<li>FTP and basic publishing credentials: off.</li>
+<li>Remote debugging: off.</li>
+<li>Public network access: <strong>off</strong>, with the private
+endpoint as the only way in. The deployment (SCM) site goes private with
+it.</li>
+</ul>
+<p><strong>Sign-in</strong></p>
+<ul>
+<li>App Service authentication with an Entra app registration (single
+tenant).</li>
+<li>"Assignment required" on the enterprise app, with only the user
+groups assigned.</li>
+<li>Unauthenticated requests are redirected to sign-in.</li>
+<li>A Conditional Access policy on the app: MFA, and a compliant or
+hybrid-joined device.</li>
+</ul>
+<p><strong>Certificates</strong></p>
+<ul>
+<li>The simplest choice: keep the default
+<code>&lt;app&gt;.azurewebsites.net</code> name. It already has a
+Microsoft certificate, and the private DNS zone resolves it to the
+private endpoint.</li>
+<li>For a custom domain, use a certificate from the org's certificate
+authority (or a public one) stored in Key Vault. App Service managed
+certificates need the app to be publicly reachable <em>(verify)</em>, so
+they don't fit a private-only app.</li>
+</ul>
+<p><strong>Security headers</strong> (added in the host)</p>
+<ul>
+<li><code>Strict-Transport-Security</code></li>
+<li><code>Content-Security-Policy</code>
+(<code>default-src 'self'</code>,
+<code>frame-ancestors 'none'</code>)</li>
+<li><code>X-Content-Type-Options: nosniff</code></li>
+<li><code>Referrer-Policy: no-referrer</code></li>
+</ul>
+<p><strong>Secrets and data</strong></p>
+<ul>
+<li>No secret in app settings: Key Vault references read with the
+managed identity.</li>
+<li>Cosmos: <code>disableLocalAuth: true</code>, a private endpoint, and
+the role Cosmos DB Built-in Data Contributor for the app and the
+worker.</li>
+</ul>
+<p><strong>Network</strong></p>
+<ul>
+<li>A spoke VNet peered to the org's hub, with subnets for the private
+endpoints and for the worker's VNet integration.</li>
+<li>Private DNS zones, linked to the hub:
+<ul>
+<li><code>privatelink.azurewebsites.net</code> (the app and its
+deployment site);</li>
+<li><code>privatelink.documents.azure.com</code>;</li>
+<li><code>privatelink.vaultcore.azure.net</code>;</li>
+<li><code>privatelink.blob/queue/table.core.windows.net</code> (the
+worker's storage).</li>
+</ul></li>
+<li>The on-premises DNS forwards those zones to the Azure DNS Private
+Resolver, so laptops on the corporate network or VPN find the private
+IP.</li>
+<li>The worker: inbound public access off (it is a timer, so nobody
+calls it).</li>
+<li>Outbound through the org's firewall needs an allow-list <em>(verify
+the full list)</em>:
+<ul>
+<li><code>login.microsoftonline.com</code> and
+<code>graph.microsoft.com</code>;</li>
+<li><code>management.azure.com</code>;</li>
+<li>the Azure Communication Services endpoint
+(<code>*.communication.azure.com</code>);</li>
+<li>Application Insights ingestion, or an Azure Monitor Private Link
+Scope if the org requires one.</li>
+</ul></li>
+</ul>
+<p><strong>Logs</strong></p>
+<ul>
+<li>Application Insights and Log Analytics.</li>
+<li>Diagnostic settings for App Service and the WAF.</li>
+</ul>
+<h3 id="code-changes-prompt-a-task-a10">Code changes (prompt A, task
+A10)</h3>
+<ol type="1">
+<li><strong>New host</strong> <code>src/webhost</code> (ASP.NET Core,
+.NET 10). It reuses <code>ApiHost</code> for <code>/api/*</code> and
+serves the built website from <code>wwwroot</code>.</li>
+<li><strong>Sign-in header:</strong>
+<ul>
+<li><code>ClientPrincipalParser</code> must also read App Service's
+<code>X-MS-CLIENT-PRINCIPAL</code>, which is a list of claims, unlike
+the Static Web Apps format.</li>
+<li>Map <code>oid</code> to the user id, and
+<code>preferred_username</code> (or <code>upn</code>) to the sign-in
+name.</li>
+<li>Reject a <code>tid</code> that is not the expected tenant.</li>
+<li>Accept the header only from App Service sign-in, never from the
+client.</li>
+</ul></li>
+<li><strong>Website:</strong> read <code>/.auth/me</code> in App
+Service's format.</li>
+<li><strong>Routes:</strong> move the
+<code>staticwebapp.config.json</code> rules (logout redirect, blocked
+providers, signed-out page) into the host.</li>
+<li><strong>Database:</strong> Cosmos with managed identity only
+(already coded: <code>COSMOS_ENDPOINT</code> without a connection
+string).</li>
+<li><strong>Tests:</strong>
+<ul>
+<li>an App Service principal with the wrong <code>tid</code> is
+denied;</li>
+<li>a request without the header is denied;</li>
+<li>the security headers are present;</li>
+<li>the existing access tests run on both principal formats.</li>
+</ul></li>
+</ol>
+<h3 id="what-private-endpoint-only-access-changes">What
+private-endpoint-only access changes</h3>
+<ol type="1">
+<li><strong>Deploys come from inside the network.</strong> Cloud Shell
+and Microsoft-hosted pipeline agents can't reach the private app or its
+deployment site. Use one of these:
+<ul>
+<li>a self-hosted Azure DevOps agent in the VNet (recommended);</li>
+<li>Cloud Shell deployed into the VNet;</li>
+<li>a jump box reached through Azure Bastion. This also applies to the
+commands in <code>docs/GO_LIVE_ACTUAL_TENANT.md</code>.</li>
+</ul></li>
+<li><strong>Admin tools stop using the Cosmos key.</strong>
+<ul>
+<li>With Cosmos keys and public access off,
+<code>import_workbook.py</code>, <code>register_user.py</code>,
+<code>verify_features.sh</code> and <code>workflow_diag.sh</code> must
+sign in with Entra: the operator's account, or the jump box's managed
+identity, with a Cosmos data role.</li>
+<li>They must run inside the VNet.</li>
+<li>This is a code change (task A12).</li>
+</ul></li>
+<li><strong>Approvers must be on the network.</strong> Owners, Security
+and the teams need the corporate network or VPN to open the app from a
+mail link.
+<ul>
+<li>Joiners don't need the app.</li>
+<li>They use <code>aka.ms/mysecurityinfo</code> and
+<code>myapps.microsoft.com</code>, which are public Microsoft
+services.</li>
+</ul></li>
+<li><strong>Sign-in still works.</strong> The browser goes to
+<code>login.microsoftonline.com</code> (public, as for Microsoft 365)
+and returns to the private address. The app itself needs outbound access
+to Entra to check the sign-in.</li>
+<li><strong>A WAF is optional.</strong> Entra sign-in, Conditional
+Access and private-only access already block anonymous traffic. Add
+Application Gateway WAF v2 with a private front end only if Security
+requires a WAF.</li>
+<li><strong>Mail is unchanged.</strong> The worker reaches Azure
+Communication Services and Graph over its outbound allow-list;
+encryption is still applied in Exchange Online.</li>
+</ol>
+<h2 id="4-encrypted-mail-only-the-password-and-tap-mail">4. Encrypted
+mail: only the password and TAP mail</h2>
+<p><strong>Today:</strong> one mail from Azure Communication Services to
+the Enterprise ID mail address.</p>
+<ul>
+<li>It is protected in transit (TLS), but it is not encrypted end to
+end.</li>
+<li>Anyone with access to that mailbox, or a forward rule, can read the
+TAP and the password.</li>
+<li>Azure Communication Services can't apply Microsoft Purview Message
+Encryption, because that runs in Exchange Online.</li>
+</ul>
+<h3 id="design">Design</h3>
+<ol type="1">
+<li><strong>Shared mailbox:</strong> create one in the actual tenant,
+for example <code>onboarding-signin@&lt;domain&gt;</code>.</li>
+<li><strong>Send through Graph:</strong> the worker sends
+<strong>only</strong> the sign-in mail through Graph
+<code>sendMail</code> from that mailbox, with the header
+<code>x-pmo-sensitivity: signin</code>. Graph allows custom
+<code>x-</code> headers on a message <em>(verify)</em>.</li>
+<li><strong>Mail flow rule</strong> in Exchange Online:
+<ul>
+<li>when the sender is <code>onboarding-signin@…</code> and the header
+<code>x-pmo-sensitivity</code> is <code>signin</code>;</li>
+<li>then apply Purview Message Encryption: template
+<strong>Encrypt-Only</strong>, or <strong>Do Not Forward</strong> to
+also block forwarding and copying.</li>
+</ul></li>
+<li><strong>Recipients:</strong>
+<ul>
+<li>Inside the tenant: they open it in Outlook as usual.</li>
+<li>Outside (the joiner's current company mail): they get a
+protected-message link and read it after a one-time passcode or a
+Microsoft sign-in.</li>
+</ul></li>
+<li><strong>Every other mail</strong> (approvals, tasks, <em>access
+ready</em>, completion) stays on Azure Communication Services,
+unchanged.</li>
+<li><strong>Prod guard:</strong> a new setting
+<code>REQUIRE_ENCRYPTED_SIGNIN_MAIL=true</code>. With it, the worker
+refuses to send the sign-in mail through Azure Communication Services.
+If the encrypted path fails, the TAP goes to the ID team, as today.</li>
+</ol>
+<p><strong>Permissions</strong> (the Mail.Send permission needs Security
+approval):</p>
+<ul>
+<li><code>Mail.Send</code> is granted <strong>only in Exchange
+Online</strong>, with <strong>Exchange RBAC for Applications</strong>:
+the role "Application Mail.Send", scoped to the one shared mailbox. An
+Exchange Administrator sets this up.</li>
+<li><strong>Do not</strong> also grant Graph <code>Mail.Send</code>
+through Entra admin consent. An Entra grant is tenant-wide and adds to
+the Exchange scope, so the worker could then send as any mailbox
+<em>(verify)</em>.</li>
+</ul>
+<p><strong>Licensing:</strong> Purview Message Encryption comes with
+Microsoft 365 E3/E5 or Office 365 E3/E5, or with an add-on <em>(verify
+the org's plan)</em>.</p>
+<h3 id="code-changes-prompt-a-task-a11">Code changes (prompt A, task
+A11)</h3>
+<ol type="1">
+<li>A new setting <code>DIRECT_MAIL_SENDER=GraphMail</code> and
+<code>DIRECT_MAIL_FROM=&lt;shared mailbox&gt;</code>.
+<code>DirectMail</code> uses its own <code>GraphMailSender</code>, while
+notifications keep <code>NOTIFY_SENDER=AcsEmail</code>.</li>
+<li><code>GraphMailSender</code> adds
+<code>internetMessageHeaders</code>
+(<code>x-pmo-sensitivity: signin</code>) for the sign-in mail only.</li>
+<li><code>REQUIRE_ENCRYPTED_SIGNIN_MAIL</code>: on by default in prod;
+refuses the Azure Communication Services path.</li>
+<li>Optional, recommended: <code>AGENT_SEND_PASSWORD=false</code>. The
+mail then carries only the TAP. The joiner signs in with the TAP, adds
+Authenticator, then sets a password (or goes passwordless).</li>
+<li>Tests:
+<ul>
+<li>the sign-in mail never goes through Azure Communication Services
+when the setting is on;</li>
+<li>the header is set only on the sign-in mail;</li>
+<li>the masked stored copy is unchanged.</li>
+</ul></li>
+</ol>
+<h3 id="extra-hardening-for-the-tap">Extra hardening for the TAP</h3>
+<ul>
+<li>A shorter TAP lifetime in prod, for example 60–120 minutes. It is
+one-time already. Allow for time zones and start dates.</li>
+<li>Send the TAP mail only on the joiner's start date (a small
+scheduling change).</li>
+<li>Optional split channel: the TAP to the joiner, and a notice without
+the TAP to the requester.</li>
+</ul>
+<h2 id="5-who-does-what">5. Who does what</h2>
+<ul>
+<li><strong>Network admin:</strong>
+<ul>
+<li>VNet peering;</li>
+<li>private endpoints and private DNS zones;</li>
+<li>the DNS Private Resolver and the on-premises forwarders;</li>
+<li>the firewall outbound allow-list;</li>
+<li>optional private Application Gateway WAF.</li>
+</ul></li>
+<li><strong>DevOps engineer:</strong> a self-hosted build agent (or jump
+box) in the VNet, used for every deploy and admin tool.</li>
+<li><strong>Subscription Owner:</strong> App Service plan and app, Key
+Vault, the Cosmos private endpoint, role assignments for the managed
+identities.</li>
+<li><strong>Application Administrator:</strong> the app registration for
+App Service sign-in, and "assignment required".</li>
+<li><strong>Conditional Access Administrator:</strong> the MFA and
+device policy for the app.</li>
+<li><strong>Exchange Administrator:</strong>
+<ul>
+<li>the shared mailbox;</li>
+<li>Exchange RBAC for Applications (the scoped <code>Mail.Send</code>,
+after Security approval);</li>
+<li>the mail flow rule for encryption.</li>
+</ul></li>
+<li><strong>Compliance Administrator:</strong> Purview Message
+Encryption templates and branding.</li>
+<li><strong>Privileged Role Administrator:</strong> nothing for mail.
+<code>Mail.Send</code> is not granted in Entra.</li>
+<li><strong>Security approver:</strong> signs off the design, the WAF
+rules, <code>Mail.Send</code>, and whether the password is mailed at
+all.</li>
+</ul>
+<h2 id="6-cost-inputs-no-prices-use-the-azure-pricing-calculator">6.
+Cost inputs (no prices; use the Azure Pricing Calculator)</h2>
+<ul>
+<li>An App Service plan on a tier that supports private endpoints
+<em>(verify the tier)</em>. One instance for test, two for prod
+availability.</li>
+<li>No Front Door: access is private only.</li>
+<li>Optional Application Gateway WAF v2 (private front end).</li>
+<li>An Azure DNS Private Resolver, if the hub doesn't have one
+already.</li>
+<li>A self-hosted build agent VM or a jump box, plus Bastion.</li>
+<li>Private endpoints (per endpoint and GB) and the private DNS
+zones.</li>
+<li>Key Vault operations.</li>
+<li>Application Insights and Log Analytics ingestion.</li>
+<li>Purview Message Encryption licensing (usually already part of
+E3/E5).</li>
+</ul>
+</body>
+</html>
