@@ -20,7 +20,7 @@ Runs on Static Web Apps Free + managed Functions, Cosmos DB free tier and one Fl
 | `SCOPE.md` | flow, who does what, TAP rules, included / excluded |
 | `docs/NEXT_SESSION.md` | current state and the approval-gated deploy steps |
 | `workflows/09-onboarding-flow-v2.md` | SOP: deploy, live end-to-end test, failure handling |
-| `docs/ARCHITECTURE.md` | components, lifecycle, stage → code, API |
+| `docs/ARCHITECTURE.md` | components, lifecycle, stage → code, API; diagrams (Excalidraw sources in `docs/diagrams/`) |
 | `docs/VERIFIED_FACTS.md` | platform facts with Microsoft Learn source and status |
 | `docs/PILOT_REPORT.md` | acceptance results (local, SAMPLE data) |
 | `docs/RUNBOOK.md` | run locally, operate |

@@ -1,6 +1,6 @@
 # Architecture — PMO onboarding flow (v2 with the 21–22 Oct changes, go-live release)
 
-Updated 23 Oct 2026 for code at `fd5491c`.
+Updated 23 Oct 2026 for code at `fd5491c`. Diagrams redrawn 24 Oct 2026 in Excalidraw; editable sources in `docs/diagrams/`.
 Scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md` (F-numbers below).
 Sections 2–11 describe the **pilot as deployed**. Section 12 describes the **target in the actual tenant**: App Service, private endpoint only, encrypted sign-in mail. That target is a design, not built yet (details: `docs/SECURE_HOSTING_AND_MAIL.md`).
 
@@ -37,36 +37,13 @@ After both approvals, the agent (deterministic code, not the AI model) can creat
 
 ## 2. Components (pilot)
 
-```mermaid
-flowchart LR
-  subgraph Browser
-    UI["Website (React + Vite + Fluent UI v9)<br/>request form · status · approvals · team tasks<br/>mapping sheet · contact inventory · issues and reports"]
-  end
-  subgraph SWA["Azure Static Web Apps (Free)"]
-    AUTH["Built-in sign-in (Entra)"]
-    API["API: managed Functions (.NET 9 isolated, HTTP)<br/>ApiHost → Endpoints → services<br/>agent step runs inline after each action"]
-  end
-  subgraph W["AI agent worker (Flex Consumption, managed identity)"]
-    T["Timer every 5 min<br/>WorkflowAgent for open requests<br/>mail queue · SLA · daily summary"]
-  end
-  COSMOS[("Cosmos DB for NoSQL (free tier)<br/>projects (+ contacts) · requests · reviewRuns · userAccess<br/>mappingSheet · responseDocument · notifications · issues")]
-  GRAPH["Microsoft Graph<br/>read: users · groups · checkMemberGroups · auth methods · manager<br/>write (gated): create user · create group · add member · create TAP"]
-  ARM["Azure RBAC<br/>role assignment PUT (gated, constrained)"]
-  ACS["Azure Communication Services Email"]
-  ADO["Azure DevOps work item (off)"]
-  AOAI["Azure OpenAI (coded, off)"]
+![Figure 1. Architecture of the pilot, as deployed](diagrams/pmo-architecture-v2.svg)
 
-  UI --> AUTH --> API --> COSMOS
-  T --> COSMOS
-  T --> GRAPH
-  T --> ARM
-  T --> ACS
-  T -.-> ADO
-  T -.-> AOAI
-  API -.-> AOAI
-  classDef off stroke-dasharray: 5 5,opacity:0.7
-  class ADO,AOAI off
-```
+**How to read it**
+- Top row: people use the website and API on Static Web Apps; all data lives in Cosmos DB.
+- Bottom row: the AI agent worker runs every 5 minutes. It reads and writes Cosmos, and calls Microsoft Graph, Azure RBAC and ACS Email in the project's own tenant. ACS sends the mail back to the people.
+- Colours: blue = people and Microsoft services; yellow = our compute (website, API, worker); purple = data; red = guardrails; grey dashed = coded but off.
+- Editable source: [`diagrams/pmo-architecture-v2.excalidraw`](diagrams/pmo-architecture-v2.excalidraw) (open it at excalidraw.com).
 
 ### Component catalogue
 
@@ -205,27 +182,13 @@ The active reviewer is `RuleOnlyReviewModel`, a fixed checklist. No request text
 
 ## 4. Request lifecycle
 
-```mermaid
-stateDiagram-v2
-  [*] --> Submitted: requester submits (dropdowns, Enterprise ID = mail)
-  Submitted --> AiReview: agent starts the review (key = request id + step)
-  AiReview --> AwaitingOwner: PASS (all checks, Entra cross-check done)
-  AiReview --> Returned: FAIL (red row, Prod without a group, mismatch...)
-  Returned --> Submitted: requester corrects and resubmits
-  AiReview --> FailedNeedsDev: review failed 3 times
-  AwaitingOwner --> AwaitingSecurity: named Owner approves
-  AwaitingOwner --> Rejected: Owner rejects (remarks)
-  AwaitingSecurity --> WithIdTeam: Security approves (not the Owner approver)
-  AwaitingSecurity --> Rejected: Security rejects (remarks)
-  WithIdTeam --> WithRoleTeam: agent created user, group and membership, or the ID team report is verified
-  WithIdTeam --> WithIdTeam: mismatch → task returned with the exact difference
-  WithRoleTeam --> Verifying: agent assigned the roles, or the role team report is verified
-  WithRoleTeam --> WithRoleTeam: mismatch → task returned
-  Verifying --> Completed: account, membership and exact roles verified (no sign-in wait)
-  Verifying --> WithIdTeam: access not in place
-  AwaitingOwner --> AiReview: mapping sheet changed (also from later stages)
-  FailedNeedsDev --> Submitted: Operator resumes after the fix
-```
+![Figure 2. Request workflow, step by step](diagrams/pmo-request-workflow-v2.svg)
+
+**How to read it**
+- Read from top to bottom. Each row shows who acts, the step, and the status the app shows (top right of each step).
+- The right-hand column shows what happens when a step is not OK: returned to the requester, rejected, or sent back to a team.
+- Colours: blue = requester; yellow = AI agent; green = approvers and the completed request; purple = ID team and role team (or the agent, when v2.1 is switched on); red = stops; grey = audit and notes.
+- Editable source: [`diagrams/pmo-request-workflow-v2.excalidraw`](diagrams/pmo-request-workflow-v2.excalidraw).
 
 - After a mapping change, the review runs again. If the reviewed group and role are unchanged, the request resumes its stage. Otherwise the approvals are superseded and it goes back to Awaiting Owner.
 - **Hand-back:** a team that was given a task (agent off, row not allowed) can hand it back. The agent re-checks and takes it once the row is allowed.
@@ -339,40 +302,14 @@ Identity comes only from `x-ms-client-principal`. A project the caller has no ro
 Status: a design agreed on 23 Oct 2026; not built or deployed. Build tasks A10–A12 are in `docs/ENTERPRISE_CLAUDE_PROMPTS.md`; settings and *(verify)* items are in `docs/SECURE_HOSTING_AND_MAIL.md`.
 There is one stack per tenant (PEST, Vestacy). Each stack lives in a subscription of its own tenant.
 
-```mermaid
-flowchart LR
-  subgraph CORP["Corporate network / VPN"]
-    U["Users: requester, Owner, Security, teams, PMO<br/>Conditional Access: MFA + compliant device"]
-    DNS["On-prem DNS<br/>forwards privatelink zones"]
-    AG["Self-hosted build agent / jump box<br/>deploys + admin tools"]
-  end
-  subgraph HUB["Hub VNet"]
-    RES["Azure DNS Private Resolver"]
-    FW["Firewall: outbound allow-list"]
-  end
-  subgraph SPOKE["Spoke VNet (per tenant)"]
-    PEAPP["PE: App Service + deployment site"]
-    PEDB["PE: Cosmos"]
-    PEKV["PE: Key Vault"]
-    PEST["PE: worker storage"]
-    APP["App Service (Linux, .NET 10)<br/>website + API, Entra sign-in<br/>HTTPS only · TLS 1.2+ · public off"]
-    WRK["Worker (Flex Consumption)<br/>VNet integration · inbound off"]
-  end
-  COSMOS[("Cosmos DB<br/>keys off · public off")]
-  KV["Key Vault"]
-  ST["Worker storage"]
-  MS["Microsoft cloud: Entra sign-in · Graph · Azure RBAC<br/>ACS Email · Exchange Online (Purview encryption)"]
+![Figure 3. Target in the actual tenant (design, not built)](diagrams/pmo-target-architecture.svg)
 
-  U --> DNS --> RES
-  U -- "HTTPS (private IP)" --> PEAPP --> APP
-  AG --> PEAPP
-  APP --> PEDB --> COSMOS
-  APP --> PEKV --> KV
-  WRK --> PEDB
-  WRK --> PEST --> ST
-  WRK --> FW --> MS
-  APP --> FW
-```
+**How to read it**
+- Users and the build agent reach the app only through a private endpoint (private IP) from the corporate network.
+- The app and the worker reach Key Vault, Cosmos DB and the worker storage only through private endpoints, with managed identities.
+- Outbound traffic to Microsoft (Entra, Graph, Azure, ACS, Exchange) goes only through the hub firewall's allow-list. Name lookups go through the hub's DNS Private Resolver.
+- Colours: blue = corporate network and Microsoft cloud; yellow = spoke VNet and our compute; purple = private endpoints and data; grey = hub VNet; green = what changes from the pilot.
+- Editable source: [`diagrams/pmo-target-architecture.excalidraw`](diagrams/pmo-target-architecture.excalidraw).
 
 ### Pilot → target, component by component
 
