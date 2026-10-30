@@ -77,6 +77,15 @@ param agentTapLifetimeMinutes int = 480
 @description('Agent privileged rows: also provision rows flagged privileged after both approvals (never privileged administrator roles). Approval-gated.')
 param agentPrivileged bool = false
 
+@description('v1.1 F5: the worker executes confirmed offboarding plans (revoke, remove, disable). Off until its permissions are approved.')
+param agentOffboarding bool = false
+
+@description('v1.1 F5: after disabling, soft-delete the account (restorable 30 days). Off by default; needs User.ReadWrite.All (not granted).')
+param offboardDeleteUser bool = false
+
+@description('v1.1 F5: comma-separated subscription ids whose Azure role assignments offboarding removes (empty = every subscription the worker can list).')
+param offboardSubscriptions string = ''
+
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
@@ -194,6 +203,9 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_TAP', value: agentTap ? 'true' : 'false' }
         { name: 'AGENT_TAP_LIFETIME_MINUTES', value: string(agentTapLifetimeMinutes) }
         { name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }
+        { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
+        { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
+        { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }

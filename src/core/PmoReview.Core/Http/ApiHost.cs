@@ -177,8 +177,10 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
             if (t.StartsWith('{') && t.EndsWith('}'))
             {
                 var value = Uri.UnescapeDataString(path[i]);
-                if (!SafeId().IsMatch(value)) return false;
-                values[t[1..^1]] = value;
+                // "{name:upn}" (F5): a UPN, which may hold '@' and a guest's '#'; every other value is a plain id.
+                var upn = t.EndsWith(":upn}", StringComparison.Ordinal);
+                if (!(upn ? Upn() : SafeId()).IsMatch(value)) return false;
+                values[upn ? t[1..^5] : t[1..^1]] = value;
             }
             else if (!string.Equals(t, path[i], StringComparison.Ordinal))
             {
@@ -190,4 +192,7 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
 
     [GeneratedRegex("^[A-Za-z0-9_.:\\-]{1,128}$")]
     private static partial Regex SafeId();
+
+    [GeneratedRegex("^[A-Za-z0-9._%+'#-]{1,113}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
+    private static partial Regex Upn();
 }

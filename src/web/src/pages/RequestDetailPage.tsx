@@ -12,6 +12,7 @@ import { FLOW_OVERVIEW } from '../lib/flow';
 import { ApprovalPanel } from '../components/ApprovalPanel';
 import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPanel';
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
+import { OffboardingPanel } from '../components/OffboardingPanel';
 
 const POLL_MS = 15000;
 const POLL_LIMIT_MS = 12 * 60000;
@@ -129,6 +130,9 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
 
       {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} onDone={done} onStale={() => void load()} />}
       {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} onDone={done} onStale={() => void load()} />}
+      {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && (
+        <OffboardingPanel project={project} enterpriseId={r.domainId} />
+      )}
       {view.approvalHint && (
         <MessageBar intent="info" layout="multiline">
           <MessageBarBody><MessageBarTitle>Waiting for a decision</MessageBarTitle>{view.approvalHint}</MessageBarBody>

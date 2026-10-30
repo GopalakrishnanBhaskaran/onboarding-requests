@@ -4,7 +4,7 @@ export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam'
   | 'ProdApprover' | 'DataMaintainer';
 export type RequestStatus =
   | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'AwaitingProdApproval' | 'Rejected'
-  | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev';
+  | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev' | 'Closed';
 export type WaitingOn = 'None' | 'Agent' | 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'User' | 'Developer' | 'ProdApprover';
 export type ProcessingStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Superseded';
 export type ReviewOutcome = 'Pass' | 'Fail' | 'Pending';
@@ -231,7 +231,7 @@ export interface Timings {
 export type NotificationKind =
   | 'FlowOverview' | 'ReviewReturned' | 'ApprovalRequested' | 'Reminder' | 'Escalation' | 'Rejected' | 'TeamTask' | 'TaskReturned'
   | 'TapCleanupNeeded' | 'AccessReady' | 'CompletionSummary' | 'PmoInformed' | 'Closure' | 'SecurityAlert' | 'DailySummary' | 'DeveloperReport'
-  | 'ProvisioningSummary' | 'SignInDetails';
+  | 'ProvisioningSummary' | 'SignInDetails' | 'OffboardingCompleted';
 
 export interface Notification {
   id: string;
@@ -587,4 +587,30 @@ export interface UploadsOverview {
   inventory: UploadHistory;
   maxUploadBytes: number;
   externalApiEnabled: boolean;
+}
+
+// ---- v1.1 F5: offboarding ----------------------------------------------------------------------------------------------
+
+export type OffboardingStatus = 'Planning' | 'Planned' | 'Executing' | 'Completed' | 'PartiallyCompleted' | 'Failed' | 'Cancelled';
+
+export interface OffboardingStep {
+  name: string;
+  target: string;
+  action: string;
+  result: 'Planned' | 'Done' | 'Skipped' | 'Failed';
+  detail: string;
+}
+
+/** F5 output contract (POST /api/offboarding/{enterpriseId}?mode=plan|execute). */
+export interface OffboardingView {
+  offboardingId: string;
+  enterpriseId: string;
+  objectId: string;
+  mode: 'plan' | 'execute';
+  status: OffboardingStatus;
+  steps: OffboardingStep[];
+  leftovers: string[];
+  notCovered: string[];
+  pmoNotified: boolean;
+  correlationId: string;
 }

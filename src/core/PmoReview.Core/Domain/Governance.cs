@@ -247,6 +247,10 @@ public sealed record OffboardingRun : IDocument
     public string? ConfirmedByName { get; init; }
     public DateTimeOffset? ConfirmedAt { get; init; }
     public string? PlanHash { get; init; }
+    public DateTimeOffset? PlannedAt { get; init; }
+    public DateTimeOffset? FinishedAt { get; init; }
+    /// <summary>Transient failures per step (step index); a step is retried on the next worker run, at most 3 times.</summary>
+    public IReadOnlyDictionary<string, int> Attempts { get; init; } = new Dictionary<string, int>();
     public DateTimeOffset UpdatedAt { get; init; }
     public bool IsSample { get; init; }
     public int SchemaVersion { get; init; } = 1;

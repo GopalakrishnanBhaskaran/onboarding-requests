@@ -5,6 +5,7 @@ using PmoReview.Adapters.Uploads;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Http;
+using PmoReview.Core.Offboarding;
 using PmoReview.Core.Processing;
 using PmoReview.Core.Review;
 using PmoReview.Core.Security;
@@ -108,6 +109,7 @@ public sealed record PilotSettings
                 // v1.1 (30 Oct 2026): every switch off by default.
                 AgentOffboarding = On("AGENT_OFFBOARDING"),
                 OffboardDeleteUser = On("OFFBOARD_DELETE_USER"),
+                OffboardSubscriptions = List("OFFBOARD_SUBSCRIPTIONS").Where(x => Guid.TryParse(x, out _)).Select(x => Guid.Parse(x).ToString("D")).Distinct().ToList(),
                 TapMailSender = Mailbox(get("TAP_MAIL_SENDER"), "TAP_MAIL_SENDER"),
                 MaxUploadBytes = Math.Clamp(int.TryParse(get("MAX_UPLOAD_BYTES"), out var mub) ? mub : 5 * 1024 * 1024, 1024, 25 * 1024 * 1024),
                 ExternalUploadApiEnabled = On("EXTERNAL_UPLOAD_API_ENABLED"),
@@ -131,7 +133,8 @@ public sealed record WorkflowParts(
     ContactInventoryService Contacts,
     ResourceService Resources,
     RequestBundleService Bundles,
-    UploadService Uploads);
+    UploadService Uploads,
+    OffboardingService Offboarding);
 
 /// <summary>Composition root shared by the Functions hosts and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
@@ -155,6 +158,8 @@ public static class PilotApp
             ? new UploadTokenValidator(signingKeys ?? new OpenIdSigningKeys(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, clock), settings.Workflow.ExternalUploadAudience, clock)
             : null;
         host.MapUploads(parts.Uploads, stores, tokens, settings.Workflow);
+        host.MapOffboarding(parts.Offboarding); // F5: plans and confirmations only; the worker reads and writes Entra / Azure
+
         return host;
     }
 
@@ -182,6 +187,7 @@ public static class PilotApp
             loggers.CreateLogger<WorkflowService>());
         var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
-            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service), new UploadService(stores, clock, settings.Workflow));
+            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service), new UploadService(stores, clock, settings.Workflow),
+            new OffboardingService(stores, clock, settings.Workflow));
     }
 }

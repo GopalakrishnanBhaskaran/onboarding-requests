@@ -1,7 +1,7 @@
 import type {
   AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
   ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation,
-  UploadKind, UploadView, UploadsOverview, DataVersionView,
+  UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView,
 } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
@@ -153,6 +153,12 @@ export const api = {
     if (o.baseVersion !== undefined) q.set('baseVersion', String(o.baseVersion));
     return sendFile<UploadView>(`${p(projectId)}/uploads/${kind}?${q.toString()}`, file);
   },
+  offboarding: (projectId: string, enterpriseId: string) =>
+    call<OffboardingView>('GET', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}`),
+  planOffboarding: (projectId: string, enterpriseId: string) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan`),
+  confirmOffboarding: (projectId: string, enterpriseId: string, offboardingId: string) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=execute`, { offboardingId }),
   rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>
     call<DataVersionView>('POST', `${p(projectId)}/uploads/${kind}/rollback`, { version }),
   decideEscalation: (projectId: string, escalationId: string, decision: 'Approved' | 'Rejected', remarks: string, requestRevision: number) =>

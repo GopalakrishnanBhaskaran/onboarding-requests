@@ -26,10 +26,12 @@ public enum NotificationKind
     /// <summary>What the AI agent created after both approvals (requester, Security; the ID team when the pass was mailed).</summary>
     ProvisioningSummary,
     /// <summary>
-    /// Agent TAP: the joiner's sign-in name, initial password, one-time TAP and MFA set-up steps, sent once to the
-    /// Enterprise ID mail. The app keeps only a copy with both secrets masked.
+    /// Agent TAP: the joiner's sign-in name, initial password, one-time TAP and MFA set-up steps, sent once to the verified
+    /// enterprise mail. v1.1 F2: never stored (an audit event records it).
     /// </summary>
     SignInDetails,
+    /// <summary>v1.1 F5: offboarding verified complete — mailed to the project's PMO only.</summary>
+    OffboardingCompleted,
 }
 
 /// <summary>Pending → Sent (mail sender) or Recorded (pilot: kept in the app only) or Failed (after 3 attempts).</summary>

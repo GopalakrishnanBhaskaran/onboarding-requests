@@ -64,6 +64,8 @@ public sealed class TestApp
     /// <summary>Agent TAP: the sign-in details mail (sent directly, never stored).</summary>
     public FakeDirectMail Mail { get; }
     public FakeTracker Tracker { get; } = new();
+    /// <summary>F5: Graph and ARM for offboarding (reads always; writes only when AGENT_OFFBOARDING is on).</summary>
+    public FakeOffboarding Offboarding { get; }
     public PilotSettings Settings { get; }
 
     private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
@@ -80,6 +82,7 @@ public sealed class TestApp
         Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
         Mail = new FakeDirectMail();
+        Offboarding = new FakeOffboarding(Directory);
         Loggers = loggers;
         Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, loggers, model, directory: Directory, roles: Roles,
             writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
@@ -114,7 +117,10 @@ public sealed class TestApp
             new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, Loggers.CreateLogger<NotificationDispatcher>()),
             new AdoSync(Stores, Tracker, Worker.Issues, Clock, Loggers.CreateLogger<AdoSync>()),
             new DailySummaryJob(Stores, Worker.Notifier, Clock),
-            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null);
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null,
+            new PmoReview.Core.Offboarding.OffboardingJob(Stores, Directory, Offboarding, Offboarding,
+                Settings.Workflow.AgentOffboarding ? Offboarding : null, Settings.Workflow.AgentOffboarding ? Offboarding : null,
+                Worker.Notifier, Worker.Issues, Clock, Settings.Workflow, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()));
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 

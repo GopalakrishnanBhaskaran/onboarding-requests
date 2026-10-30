@@ -54,6 +54,8 @@ Who holds what: only the **AI agent worker's managed identity** (Flex Consumptio
 | 5 Verify | the read permissions above | — | re-read memberships, methods, RBAC, `accountEnabled` | held / as above | — |
 | 6 Notify PMO | ACS role (held) or `Application Mail.Send` (above) | — | one mail to the project's PMO list only | as above | No |
 
+Built (P5, 30 Oct 2026): reads in `GraphDirectoryReader` (getMemberGroups with `securityEnabledOnly: false`; an id that is not a group — e.g. a directory role — is a leftover, no extra permission, F102) and `ArmRoleAssignmentReader` (subscriptions F84, assignments F82); writes only in `GraphOffboardingWriter` and `ArmRoleAssignmentRemover`, created by the worker only with `AGENT_OFFBOARDING=true`. Dynamic and role-assignable groups are never attempted (F102). Without the RBAC grants a subscription is "could not be read" → leftover.
+
 ## 3. Summary of what Gokul approves at deploy time (each with its own dry run)
 
 | # | Change | Needed for | Scope | Risk and limit |

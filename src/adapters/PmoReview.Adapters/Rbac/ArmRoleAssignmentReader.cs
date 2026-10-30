@@ -8,13 +8,46 @@ using PmoReview.Core.Domain;
 namespace PmoReview.Adapters.Rbac;
 
 /// <summary>
-/// Azure RBAC role assignments, read only (Stage 5 and 6 verification). The worker identity needs Reader (or
-/// "Microsoft.Authorization/roleAssignments/read") on the scopes it verifies. Only Azure scopes are readable here;
-/// any other scope type (e.g. a Databricks workspace role) returns null and the agent verifies against the response
-/// document instead.
+/// Azure RBAC role assignments, read only (Stage 5 and 6 verification; v1.1 F5 offboarding plan and verify). The worker
+/// identity needs Reader (or "Microsoft.Authorization/roleAssignments/read") on the scopes it reads. Only Azure scopes are
+/// readable here; any other scope type (e.g. a Databricks workspace role) returns null and the agent verifies against the
+/// response document instead.
 /// </summary>
-public sealed class ArmRoleAssignmentReader(HttpClient http, TokenCredential credential) : IRoleAssignmentReader
+public sealed class ArmRoleAssignmentReader(HttpClient http, TokenCredential credential) : IRoleAssignmentReader, IRoleAssignmentLister
 {
+    private const string SubscriptionsApiVersion = "2022-12-01";
+
+    /// <summary>F84: the subscriptions the identity can see.</summary>
+    public async Task<IReadOnlyList<string>> SubscriptionsAsync(CancellationToken ct)
+    {
+        using var doc = await GetAsync($"{Arm}/subscriptions?api-version={SubscriptionsApiVersion}", ct);
+        return Values(doc).Select(s => Str(s, "subscriptionId")).Where(s => Guid.TryParse(s, out _)).Select(s => s!).ToList();
+    }
+
+    /// <summary>F5 (F82): the principal's assignments at, above or below the subscription; null when the identity may not read there.</summary>
+    public async Task<IReadOnlyList<RoleAssignmentRef>?> AssignmentsInSubscriptionAsync(string subscriptionId, string principalObjectId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(subscriptionId, out var sub) || !Guid.TryParse(principalObjectId, out var principal)) return null;
+        var filter = Uri.EscapeDataString($"principalId eq '{principal:D}'");
+        JsonDocument doc;
+        try
+        {
+            doc = await GetAsync($"{Arm}/subscriptions/{sub:D}/providers/Microsoft.Authorization/roleAssignments?api-version={ApiVersion}&$filter={filter}", ct);
+        }
+        catch (DirectoryReadException e) when (e.Category is "ArmForbidden" or "ArmScopeNotFound")
+        {
+            return null;
+        }
+        using (doc)
+        {
+            return Values(doc).Select(a => (Id: Str(a, "id"), P: a.TryGetProperty("properties", out var p) ? p : default))
+                .Where(a => a.Id is not null && a.P.ValueKind == JsonValueKind.Object)
+                .Select(a => new RoleAssignmentRef(a.Id!, Str(a.P, "scope") ?? "", (Str(a.P, "roleDefinitionId") ?? "").Split('/')[^1],
+                    Str(a.P, "principalId") ?? "", Str(a.P, "principalType") ?? ""))
+                .ToList();
+        }
+    }
+
     public const string Scope = "https://management.azure.com/.default";
     private const string Arm = "https://management.azure.com";
     private const string ApiVersion = "2022-04-01";

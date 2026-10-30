@@ -119,8 +119,10 @@ public partial class InfraConsistencyTests
         Assert.DoesNotContain("JoinerProvisioning", worker);
         var src = Directory.GetFiles(Path.Combine(Repo(), "src"), "*.cs", SearchOption.AllDirectories);
         Assert.DoesNotContain(src, f => Regex.IsMatch(File.ReadAllText(f), @"\b(assignmentRequests|assignLicense|accessPackages|resourceRoleScopes)\b"));
-        // Agent TAP (Gokul, 22 Oct 2026; off until approved): the one TAP create call lives in the Graph writer only.
-        Assert.Equal(["GraphDirectoryWriter.cs"], src.Where(f => Regex.IsMatch(File.ReadAllText(f), @"\btemporaryAccessPassMethods\b")).Select(Path.GetFileName));
+        // Agent TAP (Gokul, 22 Oct 2026; off until approved): the one TAP create call lives in the Graph writer; the v1.1 F5
+        // offboarding TAP delete (Gokul, 30 Oct 2026; off until approved) in the offboarding writer. Nowhere else.
+        Assert.Equal(["GraphDirectoryWriter.cs", "GraphOffboardingWriter.cs"],
+            src.Where(f => Regex.IsMatch(File.ReadAllText(f), @"\btemporaryAccessPassMethods\b")).Select(Path.GetFileName).Order());
     }
 
     [Fact]
@@ -150,8 +152,8 @@ public partial class InfraConsistencyTests
     public void Only_the_two_v2_1_writers_write_with_create_calls_and_only_the_worker_holds_them()
     {
         var adapters = Path.Combine(Repo(), "src", "adapters", "PmoReview.Adapters");
-        Assert.Equal(["GraphDirectoryReader.cs", "GraphDirectoryWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Entra"), "*.cs").Select(Path.GetFileName).Order());
-        Assert.Equal(["ArmRoleAssignmentReader.cs", "ArmRoleAssignmentWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Rbac"), "*.cs").Select(Path.GetFileName).Order());
+        Assert.Equal(["GraphDirectoryReader.cs", "GraphDirectoryWriter.cs", "GraphOffboardingWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Entra"), "*.cs").Select(Path.GetFileName).Order());
+        Assert.Equal(["ArmRoleAssignmentReader.cs", "ArmRoleAssignmentRemover.cs", "ArmRoleAssignmentWriter.cs"], Directory.GetFiles(Path.Combine(adapters, "Rbac"), "*.cs").Select(Path.GetFileName).Order());
         foreach (var reader in new[] { Path.Combine(adapters, "Entra", "GraphDirectoryReader.cs"), Path.Combine(adapters, "Rbac", "ArmRoleAssignmentReader.cs") })
             foreach (var m in new[] { "HttpMethod.Patch", "HttpMethod.Delete", "HttpMethod.Put" })
                 Assert.DoesNotContain(m, File.ReadAllText(reader));
@@ -177,11 +179,30 @@ public partial class InfraConsistencyTests
         Assert.DoesNotMatch(@"HttpMethod\.|PostAsync|PutAsync|DeleteAsync|SendAsync|TokenCredential|Authorization", keys);
         Assert.Contains("GetStringAsync", keys);
 
+        // v1.1 F5 offboarding (Gokul's written approval, 30 Oct 2026): exactly revoke sessions (POST), delete a TAP method,
+        // remove a membership (always /$ref, F73), disable (PATCH accountEnabled=false only), soft delete; any other URL refused.
+        var off = File.ReadAllText(Path.Combine(adapters, "Entra", "GraphOffboardingWriter.cs"));
+        Assert.Equal(["HttpMethod.Delete", "HttpMethod.Patch", "HttpMethod.Post"], Regex.Matches(off, @"HttpMethod\.\w+").Select(m => m.Value).Distinct().Order());
+        foreach (var expected in new[] { "revokeSignInSessions", "temporaryAccessPassMethods", "/$ref", "{\\\"accountEnabled\\\":false}", "WriteRefused" })
+            Assert.Contains(expected, off);
+        foreach (var banned in new[] { "assignLicense", "accessPackage", "resetPassword", "passwordProfile", "/methods/" })
+            Assert.DoesNotContain(banned, off, StringComparison.OrdinalIgnoreCase);
+        var remover = File.ReadAllText(Path.Combine(adapters, "Rbac", "ArmRoleAssignmentRemover.cs"));
+        Assert.Equal(["HttpMethod.Delete", "HttpMethod.Get"], Regex.Matches(remover, @"HttpMethod\.\w+").Select(m => m.Value).Distinct().Order());
+        Assert.Contains("\"User\"", remover); // users only: never a group or an application
+        Assert.Contains("WriteRefused", remover);
+
         // The website's API never gets a writer: only the worker composes them, and only when switched on.
         Assert.DoesNotContain("Writer", Read("src", "api", "PmoReview.Api", "Program.cs"));
         var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
         Assert.Contains("settings.Workflow.AgentProvisioning ? new GraphDirectoryWriter", worker);
         Assert.Contains("settings.Workflow.AgentRoleAssignment", worker);
+        Assert.Contains("settings.Workflow.AgentOffboarding ? new GraphOffboardingWriter", worker);
+        Assert.Contains("settings.Workflow.AgentOffboarding ? new ArmRoleAssignmentRemover", worker);
+        var bicep = MainBicep() + Worker();
+        Assert.Contains("param agentOffboarding bool = false", bicep);
+        Assert.Contains("{ name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }", bicep);
+        Assert.Contains("param offboardDeleteUser bool = false", bicep);
     }
 
     [Fact]

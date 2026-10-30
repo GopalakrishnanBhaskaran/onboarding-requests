@@ -359,3 +359,31 @@ test('Data uploads: the DataMaintainer checks a mapping file, sees the diff, app
   await expect(paul.page.getByRole('button', { name: 'Upload PMO mapping sheet' })).toHaveCount(0);
   await paul.ctx.close();
 });
+
+test('Offboard user: PMO asks for a plan on the request page; the requester does not see the button', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const tag = enterpriseId('off');
+  const requestId = await submit(alice.page, {
+    enterpriseId: tag,
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
+    accessLevel: 'User',
+    owner: 'sample-user-olivia@sample.invalid',
+    justification: 'SAMPLE: views dashboards.',
+  });
+  await expect(alice.page.getByRole('button', { name: 'Offboard user' })).toHaveCount(0);
+  await alice.ctx.close();
+
+  const upn = `${tag.split('@')[0]}@sample.invalid`; // the account in the tenant (domain-specific ID)
+  const paul = await as(browser, 'sample-user-paul');
+  await open(paul.page, requestId);
+  const panel = paul.page.getByRole('region', { name: 'Offboarding' });
+  await expect(panel.getByRole('heading', { name: `Offboarding — ${upn}` })).toBeVisible();
+  await panel.getByRole('button', { name: 'Offboard user' }).click();
+  // No worker runs locally: the plan stays with the AI agent, and nothing can be confirmed before it is ready.
+  await expect(panel.getByText('Planning (the AI agent reads Entra and Azure)')).toBeVisible();
+  await expect(panel.getByText(/works on it within about 5 minutes/)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Confirm offboarding' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Offboard user' })).toHaveCount(0); // a second click cannot start another run
+  await paul.ctx.close();
+});

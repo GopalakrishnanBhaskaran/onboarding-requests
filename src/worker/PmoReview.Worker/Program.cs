@@ -10,6 +10,7 @@ using PmoReview.Adapters.Review;
 using PmoReview.Adapters.Storage;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
+using PmoReview.Core.Offboarding;
 using PmoReview.Core.Storage;
 using PmoReview.Core.Workflow;
 
@@ -86,6 +87,12 @@ var host = new HostBuilder()
             var assistant = settings.AiReports && settings.ReviewModelProvider == AzureOpenAIReviewModel.ProviderName
                 ? new AzureOpenAIAssistant(ReviewModelFactory.Chat(settings, logger: loggers.CreateLogger("AzureOpenAI")))
                 : null;
+            // v1.1 F5: offboarding plans are read-only (Graph reader, ARM reader); the writes exist only with AGENT_OFFBOARDING.
+            var reader = sp.GetRequiredService<IDirectoryReader>();
+            var offboarding = new OffboardingJob(parts.Stores, reader, (IOffboardingReader)reader, new ArmRoleAssignmentReader(Http(), credential),
+                settings.Workflow.AgentOffboarding ? new GraphOffboardingWriter(Http(), credential, settings.Workflow.OffboardDeleteUser) : null,
+                settings.Workflow.AgentOffboarding ? new ArmRoleAssignmentRemover(Http(), credential) : null,
+                parts.Notifier, parts.Issues, clock, settings.Workflow, loggers.CreateLogger<OffboardingJob>());
             return new WorkflowWorker(parts.Agent,
                 new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>(),
                     redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment,
@@ -94,7 +101,8 @@ var host = new HostBuilder()
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
                 // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.
-                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId));
+                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId),
+                offboarding);
         });
     })
     .Build();

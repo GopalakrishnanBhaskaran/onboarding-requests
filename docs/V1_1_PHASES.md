@@ -99,3 +99,26 @@ Risks:
 5. The external API stays off: whether a bearer token reaches SWA managed Functions is not on Learn (open item); it needs option B or C to be reachable.
 6. `bicep build` still not run here (no Bicep change in P4).
 Next step: P5 F5 offboarding (plan → confirm → execute → verify → audit, mocked Graph/ARM).
+
+## Phase 5 result
+Status: Done
+Changed files:
+- `src/core/PmoReview.Core/Offboarding/OffboardingService.cs` — F5 API side: plan request (202 `Planning`), confirm (four eyes in a production tenant, `AGENT_OFFBOARDING`, 24 h plan age), idempotent run ids (double click), the exact output contract
+- `src/core/PmoReview.Core/Offboarding/OffboardingJob.cs` — worker: plan from reads, execute only the confirmed plan (`PlanHash`) in order, read before every write, progress saved per step, 3 retries for transient failures, verify, PMO-only mail after a clean verify, leftovers → PartiallyCompleted + escalation, audit events
+- `src/core/PmoReview.Core/Directory/OffboardingContracts.cs` — `IOffboardingReader`, `IOffboardingWriter`, `IRoleAssignmentLister`, `IRoleAssignmentRemover`
+- `src/adapters/.../Entra/GraphOffboardingWriter.cs`, `Rbac/ArmRoleAssignmentRemover.cs` (writes, worker only, switch on); `Entra/GraphDirectoryReader.cs`, `Rbac/ArmRoleAssignmentReader.cs` (reads)
+- `src/core/PmoReview.Core/Http/OffboardingEndpoints.cs`, `ApiHost.cs` (`{name:upn}` route segment), `Workflow/WorkflowState.cs` (status `Closed`), `Records.cs` (`OffboardingCompleted`), `Notifier.cs` (`OFFBOARD_SUBSCRIPTIONS`, plan validity), `Outbound.cs`, `Domain/Governance.cs`, `src/adapters/.../PilotApp.cs`, `src/worker/.../Program.cs`, `infra/main.bicep`, `infra/modules/worker.bicep` (switches default off)
+- `src/web/src/components/OffboardingPanel.tsx`, `lib/offboarding.ts`, `offboarding.test.ts`, `pages/RequestDetailPage.tsx`, `lib/api.ts`, `lib/types.ts`, `lib/format.ts`, `e2e/two-projects.spec.ts` — "Offboard user" on the request page
+- Tests: `F5OffboardingTests.cs` (13, every F5 edge case by name), `Contract/OffboardingAdapterTests.cs` (5, mocked HTTP), `InfraConsistencyTests`, `AdapterContractTests`, `AcceptanceTests` AC23 (guards updated to the approved F5 writers), `Support/Fakes.cs`, `Support/TestApp.cs`
+- `docs/VERIFIED_FACTS.md` (F102), `CLAUDE.md`, `SCOPE.md`, `docs/ARCHITECTURE.md`, `docs/PERMISSIONS.md`, `workflows/09-onboarding-flow-v2.md`
+Tests: .NET 476/477 (1 opt-in Cosmos emulator skip); SPA 23/23; Playwright 11/11 (local SWA emulator); Python tool tests pass. Mutation checks: a completion mail despite leftovers → 2 F5 tests fail; the four-eyes check removed → 1 fails; the read before a membership removal removed → 1 fails (test added after this check first survived).
+Verified facts added: 1 (F102, see VERIFIED_FACTS.md)
+Open questions: None
+Risks:
+1. Graph and ARM calls are mocked only (R9). Which subscriptions the worker can list (F84), the direct-member advanced query (F94) and the TAP delete with `UserAuthMethod-TAP.ReadWrite.All` must be proven with the first approved dry run.
+2. Any membership in a dynamic group makes the run PartiallyCompleted (members of rule-based groups cannot be removed, F102): correct, but expect escalations for tenant-wide dynamic groups.
+3. `revokeSignInSessions` takes minutes to apply (F71); verify cannot read sessions, so it trusts the 2xx.
+4. Plan and execute are asynchronous (decision 2): the API answers `Planning` / `Executing`; the page refreshes until the worker's next run (≤ 5 minutes).
+5. In a test environment the PMO completion mail is redirected like every other mail (`NOTIFY_REDIRECT_TO`); only the TAP mail is never redirected.
+6. `bicep build` not run here (Bicep parameters added; checked by `InfraConsistencyTests` only).
+Next step: P6 — edge-case suite complete, independent review agent → REVIEW.md (STOP).

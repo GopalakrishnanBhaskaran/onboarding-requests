@@ -79,6 +79,13 @@ public sealed record WorkflowSettings
     public bool AgentOffboarding { get; init; }
     /// <summary>F5 (<c>OFFBOARD_DELETE_USER</c>, default false): after disabling, soft-delete the account (restorable 30 days, F75).</summary>
     public bool OffboardDeleteUser { get; init; }
+    /// <summary>
+    /// F5 (<c>OFFBOARD_SUBSCRIPTIONS</c>, decision 18): subscription ids whose Azure role assignments offboarding removes. Empty =
+    /// every subscription the worker identity can list (F84). One it cannot read is reported as a leftover.
+    /// </summary>
+    public IReadOnlyList<string> OffboardSubscriptions { get; init; } = [];
+    /// <summary>F5: a plan older than this must be made again before it is confirmed.</summary>
+    public TimeSpan OffboardPlanValidFor { get; init; } = TimeSpan.FromHours(24);
     /// <summary>F2 (<c>TAP_MAIL_SENDER</c>): the one shared mailbox the TAP mail is sent from (Graph sendMail, F81). Null = not configured.</summary>
     public string? TapMailSender { get; init; }
     /// <summary>F4 (<c>MAX_UPLOAD_BYTES</c>): largest accepted upload file. Default 5 MB, never above 25 MB (SWA request limit 30 MB, F88).</summary>

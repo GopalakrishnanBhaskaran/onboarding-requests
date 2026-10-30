@@ -98,6 +98,15 @@ param agentTapLifetimeMinutes int = 480
 @description('Agent privileged rows: the agent also provisions rows flagged privileged (never privileged administrator roles). Approval-gated: deploy_free.sh privileged.')
 param agentPrivileged bool = false
 
+@description('v1.1 F5: the worker executes confirmed offboarding plans. Off until its permissions are approved.')
+param agentOffboarding bool = false
+
+@description('v1.1 F5: soft-delete offboarded accounts after disabling them. Off by default.')
+param offboardDeleteUser bool = false
+
+@description('v1.1 F5: comma-separated subscription ids in scope for offboarding (empty = every subscription the worker can list).')
+param offboardSubscriptions string = ''
+
 @description('First day of the current month, yyyy-MM-01. Budgets must start on the first of a month.')
 param budgetStartDate string
 
@@ -153,6 +162,9 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     agentTap: agentTap
     agentTapLifetimeMinutes: agentTapLifetimeMinutes
     agentPrivileged: agentPrivileged
+    agentOffboarding: agentOffboarding
+    offboardDeleteUser: offboardDeleteUser
+    offboardSubscriptions: offboardSubscriptions
   }
 }
 

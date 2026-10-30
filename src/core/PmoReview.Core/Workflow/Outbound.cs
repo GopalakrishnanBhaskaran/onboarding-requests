@@ -254,7 +254,7 @@ public sealed class AdoSync(DataStores stores, IWorkItemTracker tracker, IssueLo
                 var flow = r.Flow;
                 if (flow is null) continue;
                 var ado = flow.Ado ?? new AdoLink();
-                var close = flow.Status is RequestStatus.Completed or RequestStatus.Rejected;
+                var close = flow.IsFinal;
                 if (ado.SyncedEvents >= flow.Events.Count && (!close || ado.Closed)) continue;
                 var key = Ids.Key(r.Id, "ado");
                 if (flow.AttemptsFor(key) >= maxAttempts) continue;
@@ -336,12 +336,15 @@ public sealed class DailySummaryJob(DataStores stores, Notifier notifier, IClock
 public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary);
 
 /// <summary>One worker cycle: agent steps for open requests, notifications, Azure DevOps, daily summary.</summary>
-public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null)
+public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null,
+    Offboarding.OffboardingJob? offboarding = null)
 {
     public async Task<WorkerSummary> RunOnceAsync(string correlationId, CancellationToken ct)
     {
         // v1.1 (F1): group names resolved in Entra first, so the selector and the escalations are fresh.
         if (groups is not null) await groups.RunOnceAsync(ct);
+        // v1.1 (F5): offboarding plans and confirmed runs, before the requests (it closes the person's open ones).
+        if (offboarding is not null) await offboarding.RunOnceAsync(ct);
         var advanced = await agent.RunOnceAsync(correlationId, ct);
         var sent = await notifications.RunOnceAsync(ct);
         var items = await ado.RunOnceAsync(ct);

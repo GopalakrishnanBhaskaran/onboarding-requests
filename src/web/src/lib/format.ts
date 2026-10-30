@@ -13,6 +13,7 @@ export const statusLabel: Record<RequestStatus, string> = {
   Verifying: 'Verifying',
   Completed: 'Completed',
   FailedNeedsDev: 'Failed-Needs-Dev',
+  Closed: 'Closed – offboarded',
 };
 
 export const statusColor: Record<RequestStatus, 'informative' | 'warning' | 'success' | 'danger' | 'subtle' | 'brand'> = {
@@ -28,6 +29,7 @@ export const statusColor: Record<RequestStatus, 'informative' | 'warning' | 'suc
   Verifying: 'informative',
   Completed: 'success',
   FailedNeedsDev: 'danger',
+  Closed: 'subtle',
 };
 
 export const checkColor: Record<CheckStatus, 'success' | 'danger' | 'informative' | 'subtle' | 'warning'> = {

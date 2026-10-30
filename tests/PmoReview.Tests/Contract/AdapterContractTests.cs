@@ -138,7 +138,10 @@ public class GraphDirectoryReaderTests
         Assert.DoesNotContain("HttpMethod.Delete", source);
         Assert.DoesNotContain("HttpMethod.Put", source);
         Assert.Contains("WriteRefused", source);
-        Assert.Single(System.Text.RegularExpressions.Regex.Matches(source, "HttpMethod\\.Post,"));
+        // The two documented read actions only (checkMemberGroups; getMemberGroups for the F5 plan, F77).
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(source, "HttpMethod\\.Post,").Count);
+        Assert.Contains("/checkMemberGroups\", body, ct)", source);
+        Assert.Contains("/getMemberGroups\", \"{", source);
     }
 
     internal static string Repo()

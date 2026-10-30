@@ -116,6 +116,12 @@ After the 21 Oct live test (the completion mail went to the Owner, and the reque
 - **Bad addresses.** An entry that is not a mail address is left out of that one mail (shown as *not mailed* on the request) and the rest are still mailed. An approval request or team task that reaches nobody raises a High issue (*fill the Contact inventory*).
 - **No sign-in step.** Final verification checks the account, the membership and the exact roles once and completes. A request that was waiting for the joiner's sign-in completes on the next worker run. The worker no longer reads the sign-in logs (so the P2 trial end, F48, no longer blocks completion). If the check stays pending past `VERIFY_SLA_HOURS` (default 2: the worker is not running) the Operators get one reminder.
 
+## Offboarding (v1.1 F5, 30 Oct 2026; changes off until approved)
+1. PMO or an Operator opens any request of the person → **Offboard user** (or `POST /api/offboarding/{enterpriseId}?projectId=…&mode=plan`). The AI agent reads Entra and Azure within ~5 minutes and shows the **plan**: sessions, TAP, each group membership, each Azure role assignment, disable (delete only with `OFFBOARD_DELETE_USER`), people inventory Leaver, open requests to close; plus what is not covered (Databricks users, mailbox/OneDrive, licences, app role assignments) and what is left to people (dynamic or role-assignable groups, directory roles, subscriptions it may not read).
+2. Check the plan, tick it, **Confirm offboarding**. In a production tenant a second person confirms (not the one who asked for the plan). The plan must be less than 24 h old; a new plan otherwise.
+3. The agent executes in that order, reading before every change (a repeat changes nothing twice), then **verifies**. Clean → *Completed* and one mail to the project's PMO: "Offboarding completed for <name> (<Enterprise ID>) at <time>. Reference <id>." Nobody else is mailed. Anything left → *Partially completed*, an *Offboarding left something* escalation, no completion mail: do the listed leftovers by hand, then plan again (the new plan lists only what is left).
+4. With `AGENT_OFFBOARDING=false` (default) the plan is still made and shown; confirming is refused and the teams use it as their checklist.
+
 ## Validation
 - Status table shows Request ID, requester, stage, waiting on, done, next, time in stage, ADO link.
 - Daily summary (Issues and reports) shows wait time per team; issues list shows any SLA breach, mismatch or unauthorized approval.

@@ -18,6 +18,8 @@ public enum RequestStatus
     Verifying,
     Completed,
     FailedNeedsDev,
+    /// <summary>v1.1 (F5): the person was offboarded; the request was closed without granting anything further.</summary>
+    Closed,
 }
 
 /// <summary>Who the request is waiting on right now.</summary>
@@ -228,7 +230,10 @@ public sealed record WorkflowState
     public IReadOnlyList<WorkflowEvent> Events { get; init; } = [];
     public DateTimeOffset? CompletedAt { get; init; }
 
-    public bool IsOpen => Status is not (RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.FailedNeedsDev or RequestStatus.Returned);
+    public bool IsOpen => Status is not (RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.FailedNeedsDev or RequestStatus.Returned or RequestStatus.Closed);
+
+    /// <summary>Nothing more will happen to it (F5 closes every request that is not).</summary>
+    public bool IsFinal => Status is RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.Closed;
 
     public DateTimeOffset StageSince => Stages.Count > 0 ? Stages[^1].EnteredAt : DateTimeOffset.MinValue;
 
@@ -299,6 +304,7 @@ public static class StatusText
         RequestStatus.Verifying => "Verifying",
         RequestStatus.Completed => "Completed",
         RequestStatus.FailedNeedsDev => "Failed-Needs-Dev",
+        RequestStatus.Closed => "Closed – offboarded",
         _ => s.ToString(),
     };
 
