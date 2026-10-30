@@ -9,14 +9,14 @@ Identity comes only from the validated access token (R7); the body never names a
 
 | Check | Rule (F91, F99) |
 |---|---|
-| Token | `Authorization: Bearer <access token>`, Entra **v2.0** token (the API's app registration sets `requestedAccessTokenVersion: 2`) |
-| Signature | RS256, key named by `kid` from the tenant's v2.0 OpenID metadata (`https://login.microsoftonline.com/{tid}/v2.0/.well-known/openid-configuration` → `jwks_uri`) |
-| Issuer | exactly `https://login.microsoftonline.com/{tid}/v2.0` |
-| Audience | the API's application (client) id = setting `EXTERNAL_UPLOAD_AUDIENCE` |
+| Token | `Authorization: Bearer <access token>`, Entra **v2.0** token (the API's app registration sets `requestedAccessTokenVersion: 2`; F99, F101) |
+| Signature | RS256, key named by `kid` from the tenant's v2.0 OpenID metadata (`https://login.microsoftonline.com/{tid}/v2.0/.well-known/openid-configuration` → `jwks_uri`; F99) |
+| Issuer | exactly `https://login.microsoftonline.com/{tid}/v2.0` (F99) |
+| Audience | the API's application (client) id = setting `EXTERNAL_UPLOAD_AUDIENCE` (F99) |
 | Tenant | `tid` is a GUID; it must be the `TenantId` of exactly one project (one project = one tenant) |
-| Caller | an application (no `scp` claim; `idtyp` = `app` when present) |
-| Permission | app role **`Uploads.Write`** in `roles` (granted per client app by admin consent) |
-| Lifetime | `exp` / `nbf` with 5 minutes clock skew |
+| Caller | an application (no `scp` claim; `idtyp` = `app` when present; F91, F99) |
+| Permission | app role **`Uploads.Write`** in `roles` (granted per client app by admin consent; F91) |
+| Lifetime | `exp` / `nbf` with 5 minutes clock skew (F99) |
 
 Failures: `401 invalid_token` (any token problem, without detail — also a token whose tenant no project names: that is checked before any signing key is fetched, P6 review finding 13), `403 missing_app_role`, `403 tenant_not_registered` (more than one project names the token's tenant: PMO fixes the project list).
 
@@ -24,9 +24,9 @@ Failures: `401 invalid_token` (any token problem, without detail — also a toke
 - Query: `mode=validate` (check and diff only, nothing is written) or `mode=apply`; optional `retireMissing=true` (rows missing from the upload are retired; default `false`: they stay); optional `sheet=<name>` for a workbook.
 - Header **`Idempotency-Key`** (required; 1–128 characters `A–Z a–z 0–9 - _ . :`). The same key with the same body returns the first answer again and never applies twice; the same key with another body → `409 idempotency_key_reused`. Use a new key per new content. Keys are per calling application (`azp`): two client apps of one tenant never share or block each other's keys (P6 review finding 16).
 - Body, either:
-  - `multipart/form-data` with the file in the field `file` (`.xlsx` or `.csv`; macro-enabled `.xlsm` / `.xlsb` / `.xltm` / `.xlam` and `.xls` are refused), or
+  - `multipart/form-data` with the file in the field `file` (`.xlsx` or `.csv`; macro-enabled `.xlsm` / `.xlsb` / `.xltm` / `.xlam` and `.xls` are refused, F98), or
   - `application/json`: `{ "rows": [ { "<Column>": "<value>", … } ], "retireMissing": false }` — one object per row, values as text (numbers and true/false are taken as written).
-- Size: at most `MAX_UPLOAD_BYTES` (default 5 MB, never above 25 MB), 20,000 rows, 64 columns.
+- Size: at most `MAX_UPLOAD_BYTES` (default 5 MB, never above 25 MB, under the SWA 30 MB request limit, F88), 20,000 rows, 64 columns.
 
 Columns (case-insensitive, trimmed; a missing or renamed required column stops the file):
 - **mapping:** `TenantId`, `Domain`, `ResourceGroupType` (Domain|PH|ACQ), `Environment` (Dev|Test|UAT|PreProd|Prod, and one the project has), `AccessLevel` (Read|Write|Contributor|Owner|Admin), `EntraGroupName`, `EntraGroupObjectId` (optional), `Owner` (mail), `EffectiveFrom` (yyyy-mm-dd or an Excel date cell), `EffectiveTo` (optional). Key: TenantId + Domain + ResourceGroupType + Environment + EntraGroupName + AccessLevel.
@@ -92,8 +92,8 @@ Invoke-RestMethod -Method Post -Uri "https://<api-host>/api/v1/uploads/inventory
 ```
 
 ## Switching it on (each step needs Gokul's approval; nothing here is done yet)
-1. Entra app registration "PMO uploads API": Application ID URI `api://<api-application-id>`, manifest `requestedAccessTokenVersion: 2`, app role `Uploads.Write` (allowed member type: Applications).
-2. For each client application: API permission `Uploads.Write` (application), admin consent.
+1. Entra app registration "PMO uploads API": Application ID URI `api://<api-application-id>`, manifest `requestedAccessTokenVersion: 2`, app role `Uploads.Write` (allowed member type: Applications; F91, F99).
+2. For each client application: API permission `Uploads.Write` (application), admin consent (F91, F101).
 3. Settings: `EXTERNAL_UPLOAD_AUDIENCE=<api-application-id>`, `EXTERNAL_UPLOAD_API_ENABLED=true`; the project's `TenantId` set.
 4. A host that callers can reach with a bearer token (`docs/HOSTING.md` option B or C); prove it with a validate call first.
 5. Rollback: `EXTERNAL_UPLOAD_API_ENABLED=false` (the route is 404 again); remove the client apps' role assignments.

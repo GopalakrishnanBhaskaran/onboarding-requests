@@ -299,4 +299,23 @@ public partial class InfraConsistencyTests
 
     [GeneratedRegex(@"^resource \w+ '([^@']+)@", RegexOptions.Multiline)]
     private static partial Regex ResourceType();
+
+    /// <summary>
+    /// v1.1 done-criterion 7: every verified fact cites a learn.microsoft.com page, and every fact id that PERMISSIONS.md,
+    /// HOSTING.md and EXTERNAL_UPLOAD_API.md cite exists (so each fact there traces to a Learn page).
+    /// </summary>
+    [Fact]
+    public void Every_verified_fact_cites_learn_and_the_v11_documents_cite_only_existing_facts()
+    {
+        var facts = Regex.Matches(Read("docs", "VERIFIED_FACTS.md"), @"^\| ?(F\d+) \|.*$", RegexOptions.Multiline)
+            .ToDictionary(m => m.Groups[1].Value, m => m.Value);
+        Assert.True(facts.Count >= 103, $"{facts.Count} facts");
+        Assert.All(facts, f => Assert.True(f.Value.Contains("https://learn.microsoft.com/", StringComparison.Ordinal), $"{f.Key} cites no learn.microsoft.com page"));
+        foreach (var doc in new[] { "PERMISSIONS.md", "HOSTING.md", "EXTERNAL_UPLOAD_API.md" })
+        {
+            var cited = Regex.Matches(Read("docs", doc), @"\bF(\d{1,3})\b").Select(m => $"F{m.Groups[1].Value}").Distinct().ToList();
+            Assert.NotEmpty(cited);
+            Assert.All(cited, id => Assert.True(facts.ContainsKey(id), $"{doc} cites {id}, which VERIFIED_FACTS.md does not have"));
+        }
+    }
 }
