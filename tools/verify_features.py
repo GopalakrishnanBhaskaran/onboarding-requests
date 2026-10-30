@@ -28,6 +28,7 @@ TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
 # v1.1 F5 option 3: what the offboarding writes and reads need (F71, F74; the rest is reused).
 OFFBOARD_ROLES = {"User.RevokeSessions.All", "User.EnableDisableAccount.All", "GroupMember.ReadWrite.All", TAP_ROLE,
                   "User.Read.All", "GroupMember.Read.All", "UserAuthenticationMethod.Read.All"}
+OFFBOARD_DELETE_ROLE = "User.ReadWrite.All"  # only with OFFBOARD_DELETE_USER (F75: no narrower application permission)
 # Built-in role ids by lower-case name (BuiltInRoles.Ids) and the ones the agent never assigns (BuiltInRoles.NeverByAgent).
 from sheet_roles import CATALOGUE as ROLE_IDS, NEVER  # noqa: E402  (tools/ is the script's folder)
 NEVER_BY_AGENT = set(NEVER)
@@ -258,8 +259,8 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     # Entra tenant id and whether it is production (not set counts as production: a second person confirms offboarding).
     have = set(ctx.get("containers") or [])
     missing_c = [c for c in V11_CONTAINERS if c not in have]
-    switched_on = [k for k in ("OFFBOARD_DELETE_USER",) if on(k)] \
-        + (["EXTERNAL_UPLOAD_API_ENABLED"] if str(swa.get("EXTERNAL_UPLOAD_API_ENABLED", "")).lower() == "true" else [])
+    # OFFBOARD_DELETE_USER is line 17 (offboarding … on --delete-user, approval-gated).
+    switched_on = ["EXTERNAL_UPLOAD_API_ENABLED"] if str(swa.get("EXTERNAL_UPLOAD_API_ENABLED", "")).lower() == "true" else []
     unflagged = sorted(k for k, v in real.items() if not v.get("tenantId") or v.get("isProductionTenant") is None)
     out.append(Result("16. v1.1 data in place, unapproved switches off, tenants flagged (P7 option 1)",
                       FAIL if switched_on else WAIT if missing_c or unflagged or not real else PASS,
@@ -272,14 +273,17 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     # 17. v1.1 option 3, Entra steps (Gokul, 30 Oct 2026): the agent offboards a confirmed leaver in Entra. Worker and
     # website switched on together, the Graph permissions held, the subscriptions named (none named = the agent may see no
     # subscription). No Azure right: the Azure role assignments stay with the role assignment team (a leftover each run).
+    # Deleting (--delete-user, Gokul 30 Oct 2026) also needs User.ReadWrite.All (F75) and offboarding itself on.
     worker_on, swa_on = on("AGENT_OFFBOARDING"), str(swa.get("AGENT_OFFBOARDING", "")).lower() == "true"
-    lacking = sorted(OFFBOARD_ROLES - roles)
+    delete_on = on("OFFBOARD_DELETE_USER")
+    lacking = sorted((OFFBOARD_ROLES | ({OFFBOARD_DELETE_ROLE} if delete_on else set())) - roles)
     subs = [x for x in (s.get("OFFBOARD_SUBSCRIPTIONS") or "").split(",") if x.strip()]
-    broken = (worker_on or swa_on) and (worker_on != swa_on or lacking or not subs)
+    broken = (worker_on or swa_on or delete_on) and (worker_on != swa_on or lacking or not subs or not worker_on)
     out.append(Result("17. Agent offboards a confirmed leaver in Entra (sessions, TAP, groups, disable; Azure roles left to the role team)",
                       FAIL if broken else PASS if worker_on else WAIT,
                       f"worker AGENT_OFFBOARDING={'true' if worker_on else 'false'}, website {'true' if swa_on else 'false'}; "
-                      f"Graph permissions missing {lacking or 'none'}; OFFBOARD_SUBSCRIPTIONS {len(subs)} named; no Azure right (by design)",
+                      f"Graph permissions missing {lacking or 'none'}; OFFBOARD_SUBSCRIPTIONS {len(subs)} named; "
+                      f"delete accounts {'on (soft delete, 30 days)' if delete_on else 'off'}; no Azure right (by design)",
                       "tools/deploy_free.sh offboarding <sub> on … --approved-by, or offboarding <sub> off" if broken
                       else "" if worker_on else "tools/deploy_free.sh offboarding <sub> on (dry run → approval)"))
     return out
@@ -371,8 +375,15 @@ def self_test() -> None:
                    {"worker_settings": {**off_on["worker_settings"], "AGENT_OFFBOARDING": "false"}}):
         got17 = l17({**off_on, **broken})
         assert got17.status == FAIL and "offboarding <sub>" in got17.next, (broken, got17)
+    # --delete-user: line 16 no longer counts it as unapproved; line 17 needs User.ReadWrite.All and offboarding on.
     delete_on = json.loads(json.dumps(off_on)); delete_on["worker_settings"]["OFFBOARD_DELETE_USER"] = "true"
-    assert next(r for r in evaluate(delete_on, projects, rows, requests, notes, []) if r.feature.startswith("16.")).status == FAIL
+    assert next(r for r in evaluate(delete_on, projects, rows, requests, notes, []) if r.feature.startswith("16.")).status == PASS
+    assert l17(delete_on).status == FAIL and OFFBOARD_DELETE_ROLE in l17(delete_on).detail, l17(delete_on)
+    delete_on["graph_roles"] = sorted(set(delete_on["graph_roles"]) | {OFFBOARD_DELETE_ROLE})
+    assert l17(delete_on).status == PASS and "delete accounts on" in l17(delete_on).detail, l17(delete_on)
+    delete_alone = json.loads(json.dumps(delete_on))
+    delete_alone["worker_settings"]["AGENT_OFFBOARDING"] = "false"; delete_alone["swa_settings"]["AGENT_OFFBOARDING"] = "false"
+    assert l17(delete_alone).status == FAIL, l17(delete_alone)
     # v1.1 F2: AGENT_TAP on but no TAP sender mailbox (or Graph Mail.Send in Entra) = no pass mailed: WAIT, naming option 2.
     for change in ({"TAP_MAIL_SENDER": ""}, {"TAP_MAIL_SENDER": "not-a-mailbox"}):
         nosender = json.loads(json.dumps(ctx)); nosender["worker_settings"].update(change)
@@ -427,8 +438,8 @@ def self_test() -> None:
     before = {**ctx, "containers": ["projects", "requests"]}
     assert line16(before).status == WAIT and "whatif" in line16(before).next and "offboardingRuns" in line16(before).detail
     on16 = json.loads(json.dumps(ctx))
-    on16["worker_settings"]["OFFBOARD_DELETE_USER"] = "true"
-    assert line16(on16).status == FAIL and "OFFBOARD_DELETE_USER" in line16(on16).detail
+    on16["swa_settings"]["EXTERNAL_UPLOAD_API_ENABLED"] = "true"
+    assert line16(on16).status == FAIL and "EXTERNAL_UPLOAD_API_ENABLED" in line16(on16).detail
     ext = json.loads(json.dumps(ctx))
     ext["swa_settings"]["EXTERNAL_UPLOAD_API_ENABLED"] = "true"
     assert line16(ext).status == FAIL

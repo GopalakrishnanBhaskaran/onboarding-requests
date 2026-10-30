@@ -256,10 +256,20 @@ public partial class InfraConsistencyTests
         Assert.Contains("Dry run: nothing changed.", fn);
         Assert.Contains("if [[ -z \"${APPROVED_BY:-}\" ]]", fn);
         Assert.Contains("subs=\"${subs:-$SUB}\"", fn); // never empty: an empty list may mean no subscription is seen
-        Assert.Contains("OFFBOARD_DELETE_USER=false", fn);
         foreach (var never in new[] { "Directory.Read.All", "User.ReadWrite.All", "az role assignment create", "RoleManagement" })
             Assert.DoesNotContain(never, fn);
-        Assert.Contains("agent_offboarding \"$MODE\" \"$OFF_SUBS\"", deploy);
+        // Deleting (Gokul, 30 Oct 2026) only with --delete-user: then and only then User.ReadWrite.All (F75) and the setting on;
+        // "off" and "delete-off" switch it off without approval.
+        var delete = Regex.Match(deploy, @"GRAPH_OFFBOARD_DELETE=\((?<r>[^)]*)\)").Groups["r"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["User.ReadWrite.All"], delete);
+        Assert.Contains("if [[ \"$delete\" == \"yes\" ]]; then del=true; perms+=(\"${GRAPH_OFFBOARD_DELETE[@]}\")", fn);
+        Assert.Contains("del=false;", fn);
+        Assert.Contains("\"OFFBOARD_DELETE_USER=$del\"", fn);
+        Assert.Contains("AGENT_OFFBOARDING=false OFFBOARD_DELETE_USER=false", fn);
+        Assert.Contains("--settings OFFBOARD_DELETE_USER=false", fn);
+        Assert.True(fn.IndexOf("if [[ -z \"${APPROVED_BY:-}\" ]]", StringComparison.Ordinal) < fn.IndexOf("appRoleAssignments", StringComparison.Ordinal));
+        Assert.Contains("--delete-user) OFF_DELETE=yes; shift ;;", deploy);
+        Assert.Contains("agent_offboarding \"$MODE\" \"$OFF_SUBS\" \"$OFF_DELETE\"", deploy);
         Assert.Contains("\"AGENT_OFFBOARDING=${offb:-false}\"", deploy);
     }
 

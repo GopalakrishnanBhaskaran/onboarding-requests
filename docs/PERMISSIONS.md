@@ -50,7 +50,7 @@ Who holds what: only the **AI agent worker's managed identity** (Flex Consumptio
 | 3 Remove memberships | `GroupMember.ReadWrite.All` (held, v2.1) | Graph application | `DELETE /groups/{g}/members/{u}/$ref` — always with `/$ref` (without it the member object itself is deleted, F73) | held; role-assignable, dynamic and on-premises-synced groups cannot be changed → leftovers | No |
 | 3 Remove Azure role assignments | `Microsoft.Authorization/roleAssignments/delete` | Azure RBAC | `DELETE {scope}/providers/Microsoft.Authorization/roleAssignments/{name}` (F83) | **Role Based Access Control Administrator with a delete condition**: `@Resource[Microsoft.Authorization/roleAssignments:PrincipalType] StringEqualsIgnoreCase 'User'` (users only, never groups or service principals; F60 pattern) at each subscription in scope. Code deletes only assignments whose principal is the user being offboarded; inherited assignments are removed at their own scope (F83) | **Yes** |
 | 3 Disable | **`User.EnableDisableAccount.All`** + `User.Read.All` | Graph application | `PATCH /users/{id}` `accountEnabled=false` (F74: least privileged combination) | the only narrow option (not `User.ReadWrite.All`) | **Yes** |
-| 3 Delete (off) | `User.ReadWrite.All` | Graph application | `DELETE /users/{id}`, restorable 30 days (F75) | **Not proposed** (`OFFBOARD_DELETE_USER=false`); grant only if you switch deletion on | Optional |
+| 3 Delete (optional) | `User.ReadWrite.All` | Graph application | `DELETE /users/{id}`, restorable 30 days (F75) | the only option (no narrower application permission). Coded behind `offboarding … on --delete-user` (Gokul asked on 30 Oct 2026, decision F5b); granted only after its dry run and "approved"; `delete-off` switches deletion off | Optional |
 | 5 Verify | the read permissions above | — | re-read memberships, methods, RBAC, `accountEnabled` (F77, F79, F82, F95) | held / as above | — |
 | 6 Notify PMO | ACS role (held) or `Application Mail.Send` (above) | — | one mail to the project's PMO list only (F63, F81) | as above | No |
 
@@ -66,7 +66,8 @@ Built (P5, 30 Oct 2026): reads in `GraphDirectoryReader` (getMemberGroups with `
 | D | Reader (or custom read) + constrained RBAC Administrator (delete, users only) per subscription | F5 | named subscriptions only | could remove any user's assignment there: code limits to the offboarded user; Azure condition limits to users |
 | E | Exchange `Application Mail.Send` scoped to the sender mailbox | F2 (if Graph mail) | one mailbox | needs an Exchange admin; never also in Entra |
 | F | Entra app registration + `Uploads.Write` app role | F4 external API | per client app | only when the external API is switched on |
-| — | `Directory.Read.All` (F78), `User.ReadWrite.All` (F75) | optional F5 extras | tenant-wide | **not proposed** |
+| G | `User.ReadWrite.All` (F75), only with `--delete-user` | F5 account deletion (decision F5b) | tenant-wide: read and write every user's profile | code calls only `DELETE /users/{id}` of a confirmed leaver after disabling; restorable 30 days; Entra refuses it for a privileged administrator role holder; a refused delete is a leftover (no completion mail) |
+| — | `Directory.Read.All` (F78) | optional F5 extra | tenant-wide | **not proposed** |
 
 Option 3 as chosen (decision F5a, 30 Oct 2026): **B and C only** (`deploy_free.sh offboarding <sub> on`, dry run → `--approved-by`). **D is deferred:** Learn documents conditions that limit which roles and principal types RBAC Administrator may assign or remove, but no documented way to remove its create right, so the agent gets no Azure right for now and Azure role assignments stay with the role assignment team (a leftover in every run).
 

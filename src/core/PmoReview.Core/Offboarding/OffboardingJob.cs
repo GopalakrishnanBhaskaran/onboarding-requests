@@ -33,6 +33,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     /// </summary>
     private const string VerifyLag = "verify-lag";
     private const string ByPeople = "left to people: the account holds an Entra directory role, so the AI agent changes nothing in Entra or Azure for it";
+    private const string DeleteOff = "off (OFFBOARD_DELETE_USER=false): the account stays, disabled";
 
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
@@ -135,7 +136,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             : Step(Disable, id, "PATCH /users/{id} accountEnabled=false", OffboardingStepResult.Skipped, "already disabled"));
         steps.Add(settings.OffboardDeleteUser
             ? Write(Delete, id, "DELETE /users/{id}", "soft delete: restorable for 30 days (F75)")
-            : Step(Delete, id, "DELETE /users/{id}", OffboardingStepResult.Skipped, "off (OFFBOARD_DELETE_USER=false): the account stays, disabled"));
+            : Step(Delete, id, "DELETE /users/{id}", OffboardingStepResult.Skipped, DeleteOff));
         var person = await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(run.EnterpriseId), ct);
         steps.Add(person is null
             ? Step(Leaver, run.EnterpriseId, "people inventory Status=Leaver", OffboardingStepResult.Skipped, "not in the people inventory")
@@ -379,10 +380,11 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             leftovers.Add(planned.Contains(r.Id)
                 ? $"request {r.Id} is still open ({StatusText.Label(r.Flow!.Status)})"
                 : $"request {r.Id} was opened after the plan ({StatusText.Label(r.Flow!.Status)}): reject it, or offboard again");
-        // Steps that failed and nothing above shows (sessions, inventory, requests) are leftovers too, and so are sessions
-        // of a directory-role holder (left to people).
-        foreach (var s in run.Steps.Where(s => (s.Result == OffboardingStepResult.Failed && s.Name is Revoke or Leaver)
-                                               || (s.Result == OffboardingStepResult.Skipped && s.Name == Revoke && s.Detail.EndsWith(ByPeople, StringComparison.Ordinal))))
+        // Steps that failed and nothing above shows (sessions, inventory, requests, the delete) are leftovers too, and so are
+        // sessions of a directory-role holder (left to people) and a planned delete that was left to people.
+        foreach (var s in run.Steps.Where(s => (s.Result == OffboardingStepResult.Failed && s.Name is Revoke or Leaver or Delete)
+                                               || (s.Result == OffboardingStepResult.Skipped && s.Name == Revoke && s.Detail.EndsWith(ByPeople, StringComparison.Ordinal))
+                                               || (s.Result == OffboardingStepResult.Skipped && s.Name == Delete && s.Detail != DeleteOff)))
             leftovers.Add($"{s.Name} {s.Target}: {s.Detail}");
 
         var now = clock.UtcNow;

@@ -662,6 +662,32 @@ public class F5OffboardingTests
         Assert.Equal([$"disable {guest}", $"delete-user {guest}"], app.Offboarding.Calls);
         Assert.Null(app.Directory.User(guest));
     }
+
+    /// <summary>
+    /// A planned delete that did not happen (refused: User.ReadWrite.All not in the worker's token yet, F61) is a leftover: no
+    /// read in verify shows it, so without this the run would be Completed and the PMO told so while the account still exists.
+    /// </summary>
+    [Fact]
+    public async Task F5_A_refused_delete_is_a_leftover_so_no_completion_mail()
+    {
+        var app = TestApp.With(settings: Settings(delete: true));
+        await OwnTenant(app);
+        const string upn = "sample.deleted@sample.invalid";
+        app.Directory.AddUser(upn);
+        app.Offboarding.Assignments[SubA] = [];
+        await AddPerson(app, upn);
+        app.Offboarding.ForbidAll = "delete-user";
+        var planned = await Planned(app, upn);
+        await Execute(app, IdOf(planned), upn);
+        await app.RunWorker();
+
+        var done = await Get(app, upn);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(Steps(done), s => s.Name == OffboardingJob.Delete && s.Result == "Failed" && s.Detail.Contains("F61"));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.StartsWith(OffboardingJob.Delete, StringComparison.Ordinal));
+        Assert.Empty(await OffboardingMails(app));
+        Assert.False(app.Directory.User(upn)!.AccountEnabled); // disabled; only the delete is left
+    }
 }
 
 internal static class PipeExtensions

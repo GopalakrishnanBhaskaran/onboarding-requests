@@ -56,8 +56,8 @@
 #       or Key Vault Data Access Administrator. Settings only (AGENT_PRIVILEGED); the roles still need the allow-list
 #       (provisioning ... on <scope> <roleIds>). "on" is a security change: dry run without --approved-by. "off" any time.
 #
-#   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--approved-by "<name> <date>"]
-#   tools/deploy_free.sh offboarding <subscriptionId> off
+#   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--delete-user] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh offboarding <subscriptionId> off|delete-off     (always allowed)
 #       v1.1 F5, option 3 "Entra only" (Gokul, 30 Oct 2026): for a plan a PMO or Operator confirmed, the agent revokes the
 #       sessions, removes the TAP and the group memberships, disables the account, verifies and mails the PMO. "on": Graph
 #       User.RevokeSessions.All + User.EnableDisableAccount.All (F71, F74; the rest is held) + worker AGENT_OFFBOARDING=true,
@@ -457,40 +457,62 @@ agent_privileged() {
 # F74) and the ones it reuses (reads; group membership removal from v2.1 provisioning; TAP removal from the agent TAP).
 GRAPH_OFFBOARD_NEW=(User.RevokeSessions.All User.EnableDisableAccount.All)
 GRAPH_OFFBOARD_REUSED=(User.Read.All GroupMember.Read.All UserAuthenticationMethod.Read.All GroupMember.ReadWrite.All UserAuthMethod-TAP.ReadWrite.All)
+# Only with --delete-user (Gokul, 30 Oct 2026): soft-delete the leaver after disabling (OFFBOARD_DELETE_USER, F75). Graph has
+# no narrower application permission for DELETE /users/{id}; it is tenant-wide read and write of every user's profile.
+GRAPH_OFFBOARD_DELETE=(User.ReadWrite.All)
 
 agent_offboarding() {
-  local mode="$1" subs="${2:-}" name mi swa graph perm role held s missing=()
+  local mode="$1" subs="${2:-}" delete="${3:-no}" name mi swa graph perm role held s del missing=() perms=()
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
   if [[ "$mode" == "off" ]]; then
-    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_OFFBOARDING=false -o none
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_OFFBOARDING=false OFFBOARD_DELETE_USER=false -o none
     az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=false -o none
     echo "Agent offboarding switched off on $name and $swa: plans still show what would change; the teams do it by hand."
     echo "Its Graph permissions stay; removing them is a permission change (approval)."
     return 0
   fi
-  [[ "$mode" == "on" ]] || { echo "offboarding on|off"; return 1; }
+  if [[ "$mode" == "delete-off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings OFFBOARD_DELETE_USER=false -o none
+    echo "Account deletion switched off on $name: offboarding disables the account and keeps it (new plans; a confirmed plan"
+    echo "with a delete step leaves it as a leftover). ${GRAPH_OFFBOARD_DELETE[*]} stays; removing it is a permission change (approval)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "offboarding on|off|delete-off"; return 1; }
   # Explicit subscriptions: with none listed the agent could see no subscription and report nothing left in Azure.
   subs="${subs:-$SUB}"
   for s in ${subs//,/ }; do
     [[ "$s" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || { echo "--subscriptions takes subscription ids, comma-separated."; return 1; }
   done
-  [[ "$(worker_setting "$name" OFFBOARD_DELETE_USER)" != "true" ]] || { echo "OFFBOARD_DELETE_USER=true on $name is not approved: set it to false first."; return 1; }
+  del=false; perms=("${GRAPH_OFFBOARD_NEW[@]}" "${GRAPH_OFFBOARD_REUSED[@]}")
+  if [[ "$delete" == "yes" ]]; then del=true; perms+=("${GRAPH_OFFBOARD_DELETE[@]}")
+  elif [[ "$(worker_setting "$name" OFFBOARD_DELETE_USER)" == "true" ]]; then
+    echo "OFFBOARD_DELETE_USER is true on $name now: this run sets it to false (add --delete-user to keep deleting)."
+  fi
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   held=$(list_graph_roles "$mi")
   echo "Plan for $name (managed identity $mi), expected cost 0:"
-  for perm in "${GRAPH_OFFBOARD_NEW[@]}" "${GRAPH_OFFBOARD_REUSED[@]}"; do
+  for perm in "${perms[@]}"; do
     if grep -qx "$perm" <<<"$held"; then echo "  Graph application permission: $perm (already held)"
     else echo "  Graph application permission: $perm (NEW, tenant-wide; the code uses it only for a confirmed leaver)"; missing+=("$perm"); fi
   done
-  echo "  Worker settings: AGENT_OFFBOARDING=true OFFBOARD_SUBSCRIPTIONS=$subs OFFBOARD_DELETE_USER=false; SWA: AGENT_OFFBOARDING=true"
+  echo "  Worker settings: AGENT_OFFBOARDING=true OFFBOARD_SUBSCRIPTIONS=$subs OFFBOARD_DELETE_USER=$del; SWA: AGENT_OFFBOARDING=true"
   echo "  Azure: no new right (Entra only). The agent removes the leaver's own role assignments in $subs only where a right it"
   echo "  already holds allows it (provisioning: allow-listed roles on its resource group); any other is a leftover for the"
   echo "  role assignment team (Partially completed + escalation, no PMO completion mail)."
   echo "  What the agent does, only for a plan a PMO or Operator confirmed (a second person in a production tenant), only for"
   echo "  the project's own people in a project that names this tenant: revoke sessions, remove the TAP, remove group"
   echo "  memberships (never dynamic, role-assignable or synced groups), disable the account, mark the people inventory Leaver,"
-  echo "  close open requests, verify, audit, mail the PMO. Never deletes the account. A directory-role holder is left to people."
+  echo "  close open requests, verify, audit, mail the PMO. A directory-role holder is left to people."
+  if [[ "$del" == "true" ]]; then
+    echo "  Delete (--delete-user): after disabling, DELETE /users/{id} soft-deletes the account. It stays restorable for 30 days"
+    echo "  (Entra admin center > Deleted users; its groups come back, the ones the agent removed do not), then Entra deletes it"
+    echo "  for good (F75). ${GRAPH_OFFBOARD_DELETE[*]} is tenant-wide: it lets the worker read and change every user's"
+    echo "  profile; the code calls only DELETE /users/{id} of a confirmed leaver. Entra refuses it for a privileged"
+    echo "  administrator role holder. A refused delete is a leftover (Partially completed, no PMO completion mail)."
+  else
+    echo "  Never deletes the account (OFFBOARD_DELETE_USER=false; --delete-user to delete it after disabling)."
+  fi
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
@@ -503,7 +525,7 @@ agent_offboarding() {
       --headers "Content-Type=application/json" --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
     echo "Granted $perm (approved by $APPROVED_BY)"
   done
-  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_OFFBOARDING=true "OFFBOARD_SUBSCRIPTIONS=$subs" OFFBOARD_DELETE_USER=false
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_OFFBOARDING=true "OFFBOARD_SUBSCRIPTIONS=$subs" "OFFBOARD_DELETE_USER=$del"
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=true -o none
   echo "Agent offboarding on (approved by $APPROVED_BY). A new Graph permission can take up to ~24 h to reach the worker's"
   echo "token (F61): a step refused before then fails, and the run ends Partially completed naming it. Graph permissions now held:"
@@ -837,15 +859,16 @@ PY
     agent_privileged "$MODE"
     ;;
   offboarding)
-    MODE="${3:?on|off}"; shift 3; OFF_SUBS=""
+    MODE="${3:?on|off|delete-off}"; shift 3; OFF_SUBS=""; OFF_DELETE=no
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --subscriptions) OFF_SUBS="${2:?subscription ids}"; shift 2 ;;
+        --delete-user) OFF_DELETE=yes; shift ;;
         --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (offboarding $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
         *) echo "unknown argument $1"; exit 1 ;;
       esac
     done
-    agent_offboarding "$MODE" "$OFF_SUBS"
+    agent_offboarding "$MODE" "$OFF_SUBS" "$OFF_DELETE"
     ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
