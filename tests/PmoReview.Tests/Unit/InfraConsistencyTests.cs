@@ -205,6 +205,26 @@ public partial class InfraConsistencyTests
         Assert.Contains("param offboardDeleteUser bool = false", bicep);
     }
 
+    /// <summary>
+    /// The worker's app settings in the template replace all of them on every apply: each setting the worker reads and
+    /// another command sets live (tap … --sender, the mail limits, the offboarding switches) is in the template and is
+    /// carried from the live worker by `deploy_free.sh params`, so an apply never drops it silently.
+    /// </summary>
+    [Fact]
+    public void An_apply_keeps_the_worker_settings_set_by_other_commands()
+    {
+        var worker = Worker();
+        var deploy = Read("tools", "deploy_free.sh");
+        foreach (var (setting, param) in new[] { ("TAP_MAIL_SENDER", "tapMailSender"), ("MAIL_MAX_PER_MINUTE", "mailMaxPerMinute"),
+                     ("MAIL_MAX_PER_HOUR", "mailMaxPerHour"), ("AGENT_OFFBOARDING", "agentOffboarding"), ("OFFBOARD_DELETE_USER", "offboardDeleteUser"),
+                     ("OFFBOARD_SUBSCRIPTIONS", "offboardSubscriptions"), ("AGENT_TAP", "agentTap"), ("AGENT_PROVISIONING", "agentProvisioning") })
+        {
+            Assert.Contains($"{{ name: '{setting}', value: {param}", worker);
+            Assert.Contains($"\"{param}\": v(live.get(\"{setting}\"", deploy);
+        }
+        Assert.Contains("removed by the apply:", deploy); // whatif names any live setting the template would drop
+    }
+
     [Fact]
     public void Provisioning_is_off_by_default_and_switched_on_only_with_approval()
     {

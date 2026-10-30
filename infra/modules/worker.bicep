@@ -86,6 +86,13 @@ param offboardDeleteUser bool = false
 @description('v1.1 F5: comma-separated subscription ids whose Azure role assignments offboarding removes (empty = every subscription the worker can list).')
 param offboardSubscriptions string = ''
 
+@description('v1.1 F2: the agent TAP mail sender mailbox (TAP_MAIL_SENDER). Kept here so a redeploy never drops it: the settings below replace all of the worker\'s app settings.')
+param tapMailSender string = ''
+
+@description('MAIL_MAX_PER_MINUTE / MAIL_MAX_PER_HOUR (empty = defaults, F70).')
+param mailMaxPerMinute string = ''
+param mailMaxPerHour string = ''
+
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
@@ -206,6 +213,9 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
         { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
         { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }
+        { name: 'TAP_MAIL_SENDER', value: tapMailSender }
+        { name: 'MAIL_MAX_PER_MINUTE', value: mailMaxPerMinute }
+        { name: 'MAIL_MAX_PER_HOUR', value: mailMaxPerHour }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }

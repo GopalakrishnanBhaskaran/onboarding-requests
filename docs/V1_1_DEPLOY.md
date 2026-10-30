@@ -16,9 +16,17 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
    - **Create:** worker Cosmos data role assignments on `peopleInventory`, `escalations`, `mappingQualityIssues`, `groupResolutions`, `offboardingRuns`, `auditEvents`. The worker never gets `userAccess` or the upload versions.
    - **Modify:** worker app settings gain `AGENT_OFFBOARDING=false`, `OFFBOARD_DELETE_USER=false` and `OFFBOARD_SUBSCRIPTIONS` (empty).
    - **No delete, and no new resource type** (no Function App, storage account, Key Vault, App Service, VNet). If anything else appears, stop and report it.
+   - **Expected noise (not a change):** about 29 "Modify" lines. They cover:
+     - properties Azure fills in itself (Cosmos indexing and conflict defaults, read-only account properties, storage retention defaults, SWA provider and IP, the budget end date);
+     - the worker identity shown as a `reference(...)` that resolves to the same principal at deploy time;
+     - the template's own `ftpsState` and `minTlsVersion`.
+   - **Worker app settings** are not part of the what-if, and the apply replaces all of them. The last section of `whatif.txt`, "Worker app settings", must say `removed by the apply: none` and `reset by the apply: none`. If it names anything, stop.
+   - Two read-only checks before approving:
+     - `az functionapp identity show -g rg-pmo-review-pilot -n <worker> --query principalId -o tsv` prints the principal id the what-if shows on the existing role assignments.
+     - `az cosmosdb sql database throughput show -g rg-pmo-review-pilot -a <cosmos account> -n pmoreview --query resource.throughput` prints `1000`, so the database's `throughput: 1000` line changes nothing.
    - **Expected cost:** about ₹0 extra. The database stays on the free tier with 21 of the 25 containers allowed under shared throughput (F90), and there is no new compute. The ₹2,000/month budget and its alerts are unchanged.
 3. **Approval.** Gokul replies "approved". Then run `tools/deploy_free.sh apply <subscriptionId> .local/params.json --approved-by "Gokul <date>"`.
-4. **Code** (no approval needed): run `tools/deploy_free.sh app <subscriptionId>`, then `tools/deploy_free.sh worker <subscriptionId>`. No SAMPLE seed: leave `SEED_SAMPLE` unset.
+4. **Code** (no approval needed): the apply already deploys the app and the worker, and grants the worker's Graph read roles. Run `tools/deploy_free.sh app <subscriptionId>` and `tools/deploy_free.sh worker <subscriptionId>` only if one of those steps failed. No SAMPLE seed: leave `SEED_SAMPLE` unset.
 5. **Tenant id and production flag per tenant.** Re-run the import with the same workbook files. Without `--update`, existing rows are kept.
    `COSMOS_CONNECTION_STRING=… python3 tools/import_workbook.py --tenant PEST --project PEST --classification <xlsx> --response <xlsx> --tenant-id <PEST tenant guid> --production-tenant yes --apply`
    Do the same for Vestacy. A tenant left without the flag counts as production, so a second person confirms offboarding there (12a). Offboarding works only for a project that names the agent's own tenant (13a).

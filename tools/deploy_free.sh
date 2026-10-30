@@ -597,6 +597,27 @@ case "$CMD" in
         || echo "WARNING: $WLOC is not listed for Flex Consumption. Pick another region for the worker before approving."
       az functionapp list-flexconsumption-runtimes -l "$WLOC" --runtime dotnet-isolated -o table || true
     fi
+    # The worker's app settings are not in the what-if (Azure does not return them), and the template replaces all of
+    # them: name every live setting the apply would remove or reset, so nothing set by another command is lost silently.
+    W=$(worker_name 2>/dev/null || true)
+    if [[ -n "$W" ]]; then
+      LIVE=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$W" -o json 2>/dev/null || echo "[]")
+      python3 - "$LIVE" "$ROOT/infra/modules/worker.bicep" "$PARAMS" <<'PY' | tee -a "$ROOT/.local/whatif.txt"
+import json, re, sys
+live = {s["name"]: s.get("value") or "" for s in json.loads(sys.argv[1] or "[]")}
+block = open(sys.argv[2]).read().split("appSettings: [", 1)[1].split("]", 1)[0]
+template = set(re.findall(r"\{ name: '([^']+)'", block))
+params = {k: v.get("value") for k, v in json.load(open(sys.argv[3]))["parameters"].items()}
+removed = sorted(n for n in live if n not in template and not n.startswith(("WEBSITE_", "FUNCTIONS_", "SCM_", "APPLICATIONINSIGHTS_")))
+reset = [f"{n} ({live[n]!r} -> {params.get(p, '')!r})" for n, p in (("ROLE_READER", "roleReader"), ("ADO_ORG_URL", "adoOrgUrl"), ("ADO_PROJECT", "adoProject"))
+         if live.get(n, "") not in ("", "None") and live.get(n, "") != (params.get(p) or "")]
+print("== Worker app settings (not shown above; the apply replaces all of them) ==")
+print("  removed by the apply:", ", ".join(removed) or "none")
+print("  reset by the apply:  ", ", ".join(reset) or "none")
+if removed or reset:
+    print("  STOP: add them to .local/params.json (or the template) before approving, or accept the change in writing.")
+PY
+    fi
     echo "Send .local/whatif.txt to Gokul and wait for 'approved'."
     ;;
   apply)
@@ -690,7 +711,12 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      # Mail and environment as they are live (deploy_free.sh email / environment).
      "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
      "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
-     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", ""))}
+     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", "")),
+     # v1.1 as it is live: offboarding switches (approved separately), the TAP mail sender, the mail limits.
+     "agentOffboarding": v(live.get("AGENT_OFFBOARDING", "").lower() == "true"),
+     "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
+     "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
+     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", ""))}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
