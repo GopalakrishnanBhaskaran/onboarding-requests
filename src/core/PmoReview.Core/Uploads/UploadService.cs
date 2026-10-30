@@ -104,7 +104,7 @@ public sealed class UploadService(DataStores stores, IClock clock, WorkflowSetti
     {
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 128 || idempotencyKey.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or ':')))
             throw AppException.Invalid("Header Idempotency-Key is required (1–128 characters: letters, digits, - _ . :).");
-        var id = $"idem-{Ids.Hash($"{project.ProjectId}|{input.Kind}|{input.Mode}|{idempotencyKey}")}";
+        var id = $"idem-{Ids.Hash($"{project.ProjectId}|{appId.Trim().ToLowerInvariant()}|{input.Kind}|{input.Mode}|{idempotencyKey}")}"; // per calling app (finding 16)
         var bodyHash = Sha256(input.JsonRows is null ? input.Content : Encoding.UTF8.GetBytes(AppJson.Serialize(input.JsonRows)))
                        + $"|{input.RetireMissing}|{input.Sheet}|{input.FileName}";
         if (await stores.AuditEvents.GetAsync(project.ProjectId, id, ct) is { } seen)

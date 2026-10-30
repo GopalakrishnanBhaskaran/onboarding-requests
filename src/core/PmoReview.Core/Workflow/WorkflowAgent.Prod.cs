@@ -91,7 +91,7 @@ public sealed partial class WorkflowAgent
         var now = clock.UtcNow;
         if (e is null)
         {
-            var reason = ProdGuard.AboveReadInProd(r, scope, ProdGuard.Privileged(scope, row));
+            var reason = ProdGuard.AboveReadInProd(r, scope, row);
             if (reason is null)
             {
                 // Not above Read any more (e.g. the review now pins a read-only row): fulfil as any request would.
@@ -122,7 +122,7 @@ public sealed partial class WorkflowAgent
             return new Step(r with { Flow = rejected },
                 [c => notifier.EnqueueAsync(r.ProjectId, r.Id, "rejected:Prod", NotificationKind.Rejected, Recipients.Requester(r).Concat(Recipients.Pmo(project)), subject, body, c)]);
         }
-        if (!ProdGuard.MayFulfil(r, scope, ProdGuard.Privileged(scope, row), e, out _)) return null; // an Approved decision for another revision never counts
+        if (!ProdGuard.MayFulfil(r, scope, row, e, out _)) return null; // an Approved decision for another revision never counts
         var (next, effects) = ToIdTeam(r, withApproval, project, e.DecidedBy ?? Agent, "prod-approved",
             $"ProdApprover {e.DecidedByName} approved escalation {e.Id} (production above Read: {e.Reason}).");
         return new Step(r with { Flow = next }, effects);
@@ -137,10 +137,9 @@ public sealed partial class WorkflowAgent
         var flow = r.Flow!;
         if (flow.Scope is not { } scope) return null;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
-        var privileged = ProdGuard.Privileged(scope, row);
-        if (ProdGuard.AboveReadInProd(r, scope, privileged) is not { } reason) return null;
+        if (ProdGuard.AboveReadInProd(r, scope, row) is not { } reason) return null;
         var e = await ProdEscalationAsync(r, scope, ct);
-        if (ProdGuard.MayFulfil(r, scope, privileged, e, out _)) return null;
+        if (ProdGuard.MayFulfil(r, scope, row, e, out _)) return null;
         var project = await ProjectAsync(r, ct);
         var now = clock.UtcNow;
         var raised = e ?? NewProdEscalation(r, scope, reason, null);

@@ -26,7 +26,11 @@ public sealed record AppCaller(string TenantId, string AppId);
 /// = this API's client id, <c>tid</c> a GUID, inside its lifetime (5 minutes skew), app-only (no <c>scp</c>), and the app role
 /// <see cref="Role"/>. Identity comes only from here (R7); the body never names a tenant, project or user.
 /// </summary>
-public sealed class UploadTokenValidator(ISigningKeys keys, string? audience, IClock clock)
+/// <param name="tenantKnown">
+/// A tenant a project of this app names. Asked before any signing key is fetched, so an anonymous caller never makes the
+/// API read OpenID metadata for an arbitrary tenant (review finding 13); an unknown tenant is just an invalid token.
+/// </param>
+public sealed class UploadTokenValidator(ISigningKeys keys, string? audience, IClock clock, Func<string, CancellationToken, Task<bool>>? tenantKnown = null)
 {
     public const string Role = "Uploads.Write";
     private const int MaxTokenChars = 16 * 1024;
@@ -64,6 +68,7 @@ public sealed class UploadTokenValidator(ISigningKeys keys, string? audience, IC
         if (payload.TryGetProperty("scp", out _)) throw Invalid(); // a user's delegated token, not an application
         if (Str(payload, "idtyp") is { } idtyp && idtyp != "app") throw Invalid();
 
+        if (tenantKnown is not null && !await tenantKnown(tid, ct)) throw Invalid();
         var key = await keys.FindAsync(tid, kid, ct) ?? throw Invalid();
         using var rsa = RSA.Create();
         rsa.ImportParameters(new RSAParameters { Modulus = key.Modulus, Exponent = key.Exponent });

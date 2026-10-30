@@ -186,6 +186,35 @@ public class F3ProdGuardTests
     }
 
     [Fact]
+    public async Task F3_an_environment_less_writer_row_requested_for_dev_is_still_escalated()
+    {
+        // A row with no environment applies to every environment, Prod included: choosing Dev never avoids the ProdApprover.
+        var app = await App();
+        const string group = "sample-azr-pes-rg-data-prd-ph-weu-support-operator";
+        var g = app.Directory.AddGroup(group);
+        await app.Stores.MappingSheet.CreateAsync(new MappingRow
+        {
+            Id = "P-PH-SUPPORT-OPERATOR", ProjectId = TestApp.Pest, RowId = "P-PH-SUPPORT-OPERATOR", Resource = Platform, AccessLevel = "Support Operator",
+            EntraGroup = group, GroupObjectId = g.ObjectId, Role = "Support Operator", Environment = null, Domain = "Platform", ResourceGroupType = "PH",
+            AzureRoles = [Grant("Storage Blob Data Contributor", "ba92f5b4-2d11-453d-a403-e96b0029c9fe")],
+            SourceReference = "SAMPLE", Version = 1, UpdatedBy = "test", UpdatedAt = app.Clock.UtcNow, IsSample = true,
+        });
+        var id = await BothApproved(app, TestApp.Intake(enterpriseId: Joiner, resource: Platform, accessLevel: "Support Operator", environment: "Dev",
+            justification: Reason, first: "Jane", last: "Doe"));
+        var r = await app.Request(id, TestApp.Pest);
+        Assert.Equal(("Dev", RequestStatus.AwaitingProdApproval), (r.Environment, r.Flow!.Status));
+        Assert.Contains("Storage Blob Data Contributor", (await TheEscalation(app, id)).Reason);
+        for (var i = 0; i < 2; i++) await app.RunWorker();
+        Assert.Empty(app.Writer.Calls);
+        Assert.Empty(app.RoleWriter.Calls);
+        Assert.True(ProdGuard.AboveReadInProd(new MappingRow
+        {
+            Id = "x", ProjectId = "p", RowId = "x", Resource = "r", AccessLevel = "Support Operator", EntraGroup = "g", Role = "r",
+            AzureRoles = [Grant("Storage Blob Data Contributor", "ba92f5b4-2d11-453d-a403-e96b0029c9fe")], SourceReference = "SAMPLE", Version = 1, UpdatedBy = "t", UpdatedAt = app.Clock.UtcNow,
+        }, "Test") is not null);
+    }
+
+    [Fact]
     public async Task F3_prod_read_only_is_fulfilled_without_an_escalation()
     {
         var app = await App();
@@ -205,6 +234,41 @@ public class F3ProdGuardTests
         Assert.Equal(403, d.Status);
         Assert.Equal("requester_cannot_approve", d.ErrorCode);
         Assert.Equal(EscalationStatus.Open, (await TheEscalation(app, id)).Status);
+    }
+
+    [Fact]
+    public async Task F3_approver_who_resubmitted_the_request_is_refused()
+    {
+        var app = await App();
+        await Grant(app, Petra, AppRole.Requester);
+        // Alice submits with a justification too short for the level; the review returns it; Petra corrects and resubmits.
+        var id = await app.SubmitId(TestApp.Intake(enterpriseId: Joiner, resource: Platform, accessLevel: "Support Writer", environment: "Prod",
+            justification: "SAMPLE: support work.", first: "Jane", last: "Doe"), TestApp.Alice, TestApp.Pest);
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.Returned, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+        var view = await app.View(id, TestApp.Alice, TestApp.Pest);
+        var put = await app.Call(Petra, "PUT", $"projects/{TestApp.Pest}/requests/{id}", Prod(), view.Json.GetProperty("request").GetProperty("etag").GetString());
+        Assert.True(put.Status == 200, put.Body);
+        await app.RunWorker();
+        Assert.Equal(200, (await app.Approve(id, TestApp.Olivia, project: TestApp.Pest)).Status);
+        Assert.Equal(200, (await app.Approve(id, TestApp.Sam, project: TestApp.Pest)).Status);
+        var e = await TheEscalation(app, id);
+        var d = await Decide(app, Petra, e.Id, revision: 2);
+        Assert.Equal((403, "requester_cannot_approve"), (d.Status, d.ErrorCode));
+        Assert.Equal(EscalationStatus.Open, (await TheEscalation(app, id)).Status);
+    }
+
+    [Fact]
+    public async Task F3_approver_who_gets_the_access_is_refused()
+    {
+        var app = await App();
+        // The request gives Petra the access (the Domain ID is Petra's sign-in name).
+        var id = await BothApproved(app, TestApp.Intake(enterpriseId: "sample-user-petra@company.example", resource: Platform, accessLevel: "Support Writer",
+            environment: "Prod", justification: Reason, first: "Petra", last: "Sample"));
+        Assert.Equal(TestApp.SignIn(Petra), (await app.Request(id, TestApp.Pest)).DomainId);
+        var d = await Decide(app, Petra, (await TheEscalation(app, id)).Id);
+        Assert.Equal((403, "beneficiary_cannot_approve"), (d.Status, d.ErrorCode));
+        Assert.Empty(app.Writer.Calls);
     }
 
     [Fact]

@@ -133,4 +133,33 @@ public class OffboardingAdapterTests
         Assert.Null(await new ArmRoleAssignmentReader(new HttpClient(forbidden), new StaticCredential()).AssignmentsInSubscriptionAsync(Sub, User, CancellationToken.None));
         Assert.All(h.Calls.Concat(forbidden.Calls), c => Assert.Equal(HttpMethod.Get, c.Method));
     }
+
+    [Fact]
+    public async Task The_arm_reader_follows_next_links_and_reports_a_list_it_cannot_finish_as_unreadable()
+    {
+        const string Sub2 = "88888888-8888-4888-8888-888888888888";
+        var list = $"{Arm}/subscriptions/{Sub}/providers/Microsoft.Authorization/roleAssignments";
+        string Page(string id, string? next) =>
+            $"{{\"value\":[{{\"id\":\"{id}\",\"properties\":{{\"principalId\":\"{User}\",\"principalType\":\"User\",\"scope\":\"/subscriptions/{Sub}\",\"roleDefinitionId\":\"/x/acdd72a7-3385-48ef-bd42-f606fba81ae7\"}}}}]{(next is null ? "" : $",\"nextLink\":\"{next}\"")}}}";
+        var h = new RouteHandler()
+            .On(HttpMethod.Get, $"{Arm}/subscriptions?api-version=2022-12-01", $"{{\"value\":[{{\"subscriptionId\":\"{Sub}\"}}],\"nextLink\":\"{Arm}/subscriptions?api-version=2022-12-01&$skiptoken=2\"}}", times: 1)
+            .On(HttpMethod.Get, $"{Arm}/subscriptions?api-version=2022-12-01&$skiptoken=2", $"{{\"value\":[{{\"subscriptionId\":\"{Sub2}\"}}]}}")
+            .On(HttpMethod.Get, list, Page($"{AssignmentId}-1", $"{list}?api-version=2022-04-01&$skiptoken=2"), times: 1)
+            .On(HttpMethod.Get, list, Page($"{AssignmentId}-2", null));
+        var r = new ArmRoleAssignmentReader(new HttpClient(h), new StaticCredential());
+        Assert.Equal([Sub, Sub2], await r.SubscriptionsAsync(CancellationToken.None));
+        Assert.Equal([$"{AssignmentId}-1", $"{AssignmentId}-2"], (await r.AssignmentsInSubscriptionAsync(Sub, User, CancellationToken.None))!.Select(a => a.Id));
+
+        // A next link to another host is never followed: the subscription is unreadable (a leftover), not a short list.
+        var away = new RouteHandler().On(HttpMethod.Get, list, Page($"{AssignmentId}-1", "https://example.invalid/next"));
+        Assert.Null(await new ArmRoleAssignmentReader(new HttpClient(away), new StaticCredential()).AssignmentsInSubscriptionAsync(Sub, User, CancellationToken.None));
+        Assert.Single(away.Calls);
+        // Endless pages stop at the cap: unreadable, and a subscription list that never ends is an error.
+        var endless = new RouteHandler().On(HttpMethod.Get, list, Page($"{AssignmentId}-1", $"{list}?again"))
+            .On(HttpMethod.Get, $"{Arm}/subscriptions?", $"{{\"value\":[],\"nextLink\":\"{Arm}/subscriptions?again\"}}");
+        var capped = new ArmRoleAssignmentReader(new HttpClient(endless), new StaticCredential());
+        Assert.Null(await capped.AssignmentsInSubscriptionAsync(Sub, User, CancellationToken.None));
+        Assert.Equal("ArmError", (await Assert.ThrowsAsync<DirectoryReadException>(() => capped.SubscriptionsAsync(CancellationToken.None))).Category);
+        Assert.InRange(endless.Calls.Count, 2, 100);
+    }
 }

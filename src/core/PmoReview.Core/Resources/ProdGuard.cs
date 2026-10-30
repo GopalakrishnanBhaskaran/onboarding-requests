@@ -32,11 +32,22 @@ public static class ProdGuard
     }
 
     public static string? AboveReadInProd(MappingRow row, string? environment) =>
-        AboveReadInProd(environment ?? row.Environment, row.AccessLevel, row.Grants(), row.Privileged);
+        AboveReadInProd(Effective(row, environment ?? row.Environment), row.AccessLevel, row.Grants(), row.Privileged);
 
-    /// <summary>For a reviewed request: the scope the approvers saw and the request's access level.</summary>
-    public static string? AboveReadInProd(AccessRequest r, ReviewedScope scope, bool privileged) =>
-        AboveReadInProd(scope.Environment ?? r.Environment, r.AccessLevel, scope.Grants(), privileged);
+    /// <summary>
+    /// For a reviewed request: the scope the approvers saw, the request's access level and its mapping row (a row that is
+    /// gone counts as privileged).
+    /// </summary>
+    public static string? AboveReadInProd(AccessRequest r, ReviewedScope scope, MappingRow? row) =>
+        AboveReadInProd(Effective(row, scope.Environment ?? r.Environment), r.AccessLevel, scope.Grants(), Privileged(scope, row));
+
+    /// <summary>
+    /// The environment the guard judges. A row without an environment applies to every environment, Prod included: when an
+    /// environment is named at all, such a row is guarded as Prod — choosing Dev for the same group never avoids the
+    /// ProdApprover (review finding 4, 30 Oct 2026).
+    /// </summary>
+    public static string? Effective(MappingRow? row, string? environment) =>
+        row is not null && string.IsNullOrWhiteSpace(row.Environment) && !string.IsNullOrWhiteSpace(environment) ? "Prod" : environment;
 
     /// <summary>Privileged: the row says so, or the review flagged it (a row that is gone counts as privileged: the safe side).</summary>
     public static bool Privileged(ReviewedScope scope, MappingRow? row) =>
@@ -59,9 +70,9 @@ public static class ProdGuard
     /// The one check every grant point runs. True when the access may be fulfilled: not Prod-above-Read, or a ProdWrite
     /// escalation for this request, this revision and this exact scope is Approved.
     /// </summary>
-    public static bool MayFulfil(AccessRequest r, ReviewedScope scope, bool privileged, Escalation? escalation, out string? reason)
+    public static bool MayFulfil(AccessRequest r, ReviewedScope scope, MappingRow? row, Escalation? escalation, out string? reason)
     {
-        reason = AboveReadInProd(r, scope, privileged);
+        reason = AboveReadInProd(r, scope, row);
         if (reason is null) return true;
         return escalation is { Kind: EscalationKind.ProdWrite, Status: EscalationStatus.Approved } e
                && e.ProjectId == r.ProjectId && e.RequestId == r.Id && e.RequestRevision == r.Revision && e.ScopeFingerprint == Fingerprint(r, scope);

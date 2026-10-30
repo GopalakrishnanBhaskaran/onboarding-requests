@@ -4,7 +4,7 @@ import {
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
 import { ApiError, api } from '../lib/api';
-import { canConfirm, canPlan, changes, inProgress } from '../lib/offboarding';
+import { canConfirm, canPlan, changes, inProgress, planExpired } from '../lib/offboarding';
 import type { OffboardingView, ProjectSummary } from '../lib/types';
 import { ErrorBar, useStyles } from './common';
 
@@ -15,7 +15,6 @@ const STATUS: Record<OffboardingView['status'], string> = {
   Completed: 'Completed — verified, PMO informed',
   PartiallyCompleted: 'Partially completed — something is left',
   Failed: 'Failed',
-  Cancelled: 'Cancelled',
 };
 
 /**
@@ -64,8 +63,10 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
         account. You see the full plan first; nothing changes until it is confirmed.
       </Caption1>
       <ErrorBar error={error} />
-      {canPlan(run) && (
-        <div><Button appearance="primary" disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId))}>Offboard user</Button></div>
+      {canPlan(run, planExpired(error)) && (
+        <div><Button appearance="primary" disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId))}>
+          {planExpired(error) ? 'Make a new plan' : 'Offboard user'}
+        </Button></div>
       )}
       {inProgress(run) && <Body1 role="status">The AI agent works on it within about 5 minutes; this panel refreshes itself.</Body1>}
       {run && run.steps.length > 0 && (
@@ -97,7 +98,7 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
       {run && run.notCovered.length > 0 && (
         <Caption1>Not covered: {run.notCovered.join(' · ')}</Caption1>
       )}
-      {run?.status === 'Planned' && (
+      {run?.status === 'Planned' && !planExpired(error) && (
         <div className={s.row}>
           <Checkbox label={`I checked the plan: ${changes(run)} change(s) for ${run.enterpriseId}`} checked={checked} onChange={(_, d) => setChecked(!!d.checked)} />
           <Button appearance="primary" disabled={busy || !canConfirm(run, checked)}

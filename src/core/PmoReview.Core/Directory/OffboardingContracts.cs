@@ -4,8 +4,10 @@ namespace PmoReview.Core.Directory;
 /// One group the user is in (F5 plan). <see cref="Direct"/> = the user is a member of the group itself (removable);
 /// otherwise the membership comes through another group and goes with it. <see cref="NotChangeable"/> = why the worker
 /// must not try to remove it (dynamic membership, role-assignable group, not a group at all; F102) — a leftover for people.
+/// <see cref="DirectoryRole"/> = it gives the user an Entra directory role (a directory role id, or a role-assignable group):
+/// the AI agent then changes nothing for this account; people offboard it (PERMISSIONS.md row C).
 /// </summary>
-public sealed record GroupMembership(string GroupObjectId, string DisplayName, bool Direct, string? NotChangeable = null);
+public sealed record GroupMembership(string GroupObjectId, string DisplayName, bool Direct, string? NotChangeable = null, bool DirectoryRole = false);
 
 /// <summary>One Azure role assignment of the user (F82): its full id (<c>/…/providers/Microsoft.Authorization/roleAssignments/{name}</c>).</summary>
 public sealed record RoleAssignmentRef(string Id, string Scope, string RoleDefinitionId, string PrincipalId, string PrincipalType);

@@ -10,9 +10,17 @@ export function canConfirm(v: OffboardingView | null, checked: boolean): boolean
   return !!v && v.status === 'Planned' && checked;
 }
 
-/** A new plan can be asked for when there is none or the last one finished. */
-export function canPlan(v: OffboardingView | null): boolean {
-  return !v || !['Planning', 'Planned', 'Executing'].includes(v.status);
+/**
+ * A new plan can be asked for when there is none, the last one finished, or the shown plan expired unconfirmed (the
+ * confirm answered 409 plan_expired; the API then closes it and makes a new one).
+ */
+export function canPlan(v: OffboardingView | null, expired = false): boolean {
+  return !v || expired || !['Planning', 'Planned', 'Executing'].includes(v.status);
+}
+
+/** The confirm was refused because the plan is too old: offer a new plan. */
+export function planExpired(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'plan_expired';
 }
 
 /** What will change, in the plan's own words: the steps the run will do. */

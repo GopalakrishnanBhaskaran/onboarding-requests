@@ -44,11 +44,18 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
     {
         var project = await AuthoriseAsync(caller, projectId, ct);
         var upn = Upn(enterpriseId);
-        if (Tenants.NotConnected(project, settings.AgentTenantId) is { } why)
-            throw AppException.Conflict("tenant_not_connected", $"Offboarding is not available for {Tenants.Label(project)}: {why}.");
+        if (!Owned(project, settings.AgentTenantId))
+            throw AppException.Conflict("tenant_not_connected", $"Offboarding is not available for {Tenants.Label(project)}: " +
+                (Tenants.NotConnected(project, settings.AgentTenantId) ?? "the project names no Entra tenant, so the AI agent does not know the account is in its tenant") + ".");
+        // Only this project's own people: a PMO or Operator never offboards an account of another project (404, like any
+        // record outside the caller's projects).
+        if (await NotOffboardableAsync(stores, project, upn, settings, ct) is not null) throw AppException.NotFound("Person in this project");
         var runs = await RunsAsync(project.ProjectId, upn, ct);
-        if (runs.FirstOrDefault(r => r.Status is OffboardingStatus.Planning or OffboardingStatus.Planned or OffboardingStatus.Executing) is { } open)
+        if (runs.FirstOrDefault(r => r.Status is OffboardingStatus.Planning or OffboardingStatus.Executing
+                                     || (r.Status == OffboardingStatus.Planned && !Expired(r))) is { } open)
             return (200, OffboardingView.Of(open)); // a double click, or a run still in progress: the same run
+        foreach (var stale in runs.Where(r => r.Status == OffboardingStatus.Planned && Expired(r)))
+            await ExpireAsync(project, stale, caller, cid, ct);
 
         var person = (await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value;
         var now = clock.UtcNow;
@@ -85,10 +92,12 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
             throw AppException.Conflict("plan_not_ready", "The plan is not ready yet (the AI agent reads Entra and Azure within a few minutes). Refresh and confirm then.");
         if (!settings.AgentOffboarding)
             throw AppException.Conflict("offboarding_off", "Offboarding changes are switched off (AGENT_OFFBOARDING). The plan shows what would change; the teams do it by hand.");
-        if (clock.UtcNow - (run.PlannedAt ?? run.RequestedAt) > settings.OffboardPlanValidFor)
+        if (Expired(run))
             throw AppException.Conflict("plan_expired", $"The plan is older than {settings.OffboardPlanValidFor.TotalHours:0} hours. Make a new plan and confirm that one.");
-        // Four eyes in a production tenant: the person who asked for the plan does not confirm it.
-        if (project.IsProductionTenant && (caller.UserId == run.RequestedBy || (run.RequestedByName is { Length: > 0 } n && caller.Is(n))))
+        if (!Owned(project, settings.AgentTenantId) || await NotOffboardableAsync(stores, project, upn, settings, ct) is not null)
+            throw AppException.NotFound("Person in this project");
+        // Four eyes in a production tenant (and in any tenant not marked otherwise): the person who asked for the plan does not confirm it.
+        if (project.IsProductionTenant != false && (caller.UserId == run.RequestedBy || (run.RequestedByName is { Length: > 0 } n && caller.Is(n))))
             throw new AppException(ErrorKind.Forbidden, "requester_cannot_confirm", "In a production tenant a second person (PMO or Operator) confirms the offboarding, not the one who asked for the plan.");
 
         var now = clock.UtcNow;
@@ -116,6 +125,48 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         var runs = await RunsAsync(project.ProjectId, Upn(enterpriseId), ct);
         var run = offboardingId is null ? runs.FirstOrDefault() : runs.FirstOrDefault(r => r.Id == offboardingId);
         return OffboardingView.Of(run ?? throw AppException.NotFound("Offboarding"));
+    }
+
+    /// <summary>
+    /// Why this account is not one of the project's people (null = it is): the project names its own Entra tenant, the
+    /// account ends with the project's Domain ID suffix (when set), and it is a person of the project's people inventory
+    /// (not retired) or the Domain ID of one of the project's requests.
+    /// </summary>
+    public static async Task<string?> NotOffboardableAsync(DataStores stores, Project project, string upn, WorkflowSettings settings, CancellationToken ct)
+    {
+        if (!Owned(project, settings.AgentTenantId)) return $"{Tenants.Label(project)} is not the AI agent's tenant";
+        if (project.DomainIdSuffix is { Length: > 0 } suffix && !upn.EndsWith(suffix.Trim(), StringComparison.OrdinalIgnoreCase))
+            return $"{upn} does not end with the project's Domain ID suffix {suffix.Trim()}";
+        if ((await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false }) return null;
+        return (await stores.Requests.ListAsync(project.ProjectId, ct)).Any(r => r.Value.ProjectId == project.ProjectId && string.Equals(r.Value.DomainId, upn, StringComparison.OrdinalIgnoreCase))
+            ? null : $"{upn} is not in the project's people inventory and has no request in the project";
+    }
+
+    /// <summary>The project names an Entra tenant and it is the AI agent's own (stricter than <see cref="Tenants.Connected"/>, which lets a project with no tenant through).</summary>
+    public static bool Owned(Project project, string? agentTenantId) =>
+        !string.IsNullOrWhiteSpace(project.TenantId) && Tenants.Connected(project, agentTenantId);
+
+    private bool Expired(OffboardingRun run) => clock.UtcNow - (run.PlannedAt ?? run.RequestedAt) > settings.OffboardPlanValidFor;
+
+    /// <summary>A plan nobody confirmed in time is closed (Failed, audited), so a new one can be made.</summary>
+    private async Task ExpireAsync(Project project, OffboardingRun run, CallerContext caller, string cid, CancellationToken ct)
+    {
+        var v = await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct);
+        if (v is null || v.Value.Status != OffboardingStatus.Planned) return;
+        var now = clock.UtcNow;
+        try
+        {
+            await stores.OffboardingRuns.ReplaceAsync(v.Value with
+            {
+                Status = OffboardingStatus.Failed, FinishedAt = now, UpdatedAt = now,
+                Leftovers = [$"plan expired: not confirmed within {settings.OffboardPlanValidFor.TotalHours:0} hours; nothing was changed; replaced by a new plan"],
+            }, v.ETag, ct);
+        }
+        catch (ConcurrencyException)
+        {
+            return; // confirmed or replaced at the same moment
+        }
+        await AuditAsync(project, caller.UserId, "offboarding-plan-expired", run.EnterpriseId, $"run {run.Id} (plan {run.PlanHash}) expired unconfirmed; a new plan was asked for", cid, ct);
     }
 
     /// <summary>The steps' fingerprint: execute runs only the plan that was confirmed.</summary>

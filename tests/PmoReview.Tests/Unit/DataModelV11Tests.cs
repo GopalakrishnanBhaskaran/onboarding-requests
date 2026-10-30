@@ -166,7 +166,8 @@ public class DataModelV11Tests
         Assert.Contains(data.MappingSheet, r => r.ResourceGroupType == "ACQ");
         Assert.All(data.MappingSheet.Where(r => r.ProjectId == TestApp.Beta), r => Assert.Equal("Domain", r.ResourceGroupType));
         Assert.All(data.PeopleInventory, p => Assert.Equal(Person.MakeId(p.EnterpriseId), p.Id));
-        Assert.Contains(data.Projects, p => p.IsProductionTenant);
+        Assert.Contains(data.Projects, p => p.IsProductionTenant == true);
+        Assert.All(data.Projects, p => Assert.NotNull(p.IsProductionTenant)); // every SAMPLE tenant states it (unset counts as production)
     }
 
     [Fact]

@@ -23,28 +23,37 @@ public class F5OffboardingTests
     private const string GroupA = "SAMPLE-GRP-ALPHA-SALES-READ";
     private const string GroupB = "SAMPLE-GRP-ALPHA-DBW-ENG-USER";
 
-    private static PilotSettings Settings(bool on = true) => new() { Workflow = new WorkflowSettings { AgentOffboarding = on } };
+    private const string AgentTenant = "00000000-0000-4000-8000-0000000000a1"; // SAMPLE tenant id
+
+    private static PilotSettings Settings(bool on = true, bool delete = false) =>
+        new() { Workflow = new WorkflowSettings { AgentOffboarding = on, OffboardDeleteUser = delete, AgentTenantId = AgentTenant } };
+
+    /// <summary>The project names the agent's own tenant (offboarding is only for such a project) and its production flag.</summary>
+    private static async Task OwnTenant(TestApp app, string project = TestApp.Alpha, bool? production = false)
+    {
+        var p = (await app.Stores.Projects.GetAsync(project, project))!;
+        await app.Stores.Projects.ReplaceAsync(p.Value with { TenantId = AgentTenant, IsProductionTenant = production }, p.ETag);
+    }
+
+    private static Task AddPerson(TestApp app, string upn, string project = TestApp.Alpha, bool retired = false) =>
+        app.Stores.PeopleInventory.CreateAsync(new Person
+        {
+            Id = Person.MakeId(upn), ProjectId = project, EnterpriseId = upn, EnterpriseEmail = upn, DisplayName = "SAMPLE Leaver", Domain = "Sales",
+            Retired = retired, UpdatedBy = "test", UpdatedAt = app.Clock.UtcNow, IsSample = true,
+        });
 
     /// <summary>A leaver with two direct groups, one nested group, a TAP, one Azure role, an inventory entry and an open request.</summary>
-    private static async Task<(TestApp App, string RequestId)> Leaver(bool on = true, bool production = false)
+    private static async Task<(TestApp App, string RequestId)> Leaver(bool on = true, bool? production = false)
     {
         var app = TestApp.With(settings: Settings(on));
+        await OwnTenant(app, production: production);
         var user = app.Directory.AddUser(Upn);
         app.Directory.AddMember(GroupA, Upn);
         app.Directory.AddMember(GroupB, Upn);
         app.Offboarding.Nested[Upn] = ["SAMPLE-GRP-ALPHA-LEGACY-USER"]; // through another group: goes with it
         app.Offboarding.Taps[Upn] = [Guid.NewGuid().ToString("D")];
         app.Offboarding.Assign(SubA, user.ObjectId);
-        await app.Stores.PeopleInventory.CreateAsync(new Person
-        {
-            Id = Person.MakeId(Upn), ProjectId = TestApp.Alpha, EnterpriseId = Upn, EnterpriseEmail = Upn, DisplayName = "SAMPLE Leaver", Domain = "Sales",
-            UpdatedBy = "test", UpdatedAt = app.Clock.UtcNow, IsSample = true,
-        });
-        if (production)
-        {
-            var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
-            await app.Stores.Projects.ReplaceAsync(p.Value with { IsProductionTenant = true }, p.ETag);
-        }
+        await AddPerson(app, Upn);
         var id = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.leaver@company.example"));
         Assert.Equal(Upn, (await app.Request(id)).DomainId);
         return (app, id);
@@ -134,6 +143,7 @@ public class F5OffboardingTests
     public async Task F5_User_not_found_stops_with_nothing_changed()
     {
         var (app, _) = await Leaver();
+        await AddPerson(app, "sample.nobody@sample.invalid"); // in the people inventory, not in Entra
         var planned = await Planned(app, "sample.nobody@sample.invalid");
         Assert.Equal("Failed", Status(planned));
         var step = Assert.Single(Steps(planned));
@@ -153,11 +163,7 @@ public class F5OffboardingTests
         const string twin = "sample.leaver2@sample.invalid";
         app.Directory.AddUser(twin);
         app.Directory.AddMember(GroupA, twin);
-        await app.Stores.PeopleInventory.CreateAsync(new Person
-        {
-            Id = Person.MakeId(twin), ProjectId = TestApp.Alpha, EnterpriseId = twin, EnterpriseEmail = twin, DisplayName = "SAMPLE Leaver", Domain = "Sales",
-            UpdatedBy = "test", UpdatedAt = app.Clock.UtcNow, IsSample = true,
-        });
+        await AddPerson(app, twin);
         var planned = await Planned(app);
         Assert.Equal(app.Directory.User(Upn)!.ObjectId, planned.Json.GetProperty("objectId").GetString());
         await Execute(app, IdOf(planned));
@@ -258,8 +264,13 @@ public class F5OffboardingTests
         Assert.Empty(app.Offboarding.Calls);
         Assert.Equal(202, (await Execute(app, IdOf(planned), user: TestApp.Oscar)).Status); // a second person confirms
 
-        // Outside a production tenant the same person may confirm.
-        var (dev, _) = await Leaver();
+        // A tenant never marked counts as production (fails closed): a second person confirms there too.
+        var (unset, _) = await Leaver(production: null);
+        var u = await Planned(unset, user: TestApp.Paul);
+        Assert.Equal((403, "requester_cannot_confirm"), (await Execute(unset, IdOf(u), user: TestApp.Paul)).Pipe(x => (x.Status, x.ErrorCode)));
+
+        // Only in a tenant marked as not production may the same person confirm.
+        var (dev, _) = await Leaver(production: false);
         var p = await Planned(dev, user: TestApp.Paul);
         Assert.Equal(202, (await Execute(dev, IdOf(p), user: TestApp.Paul)).Status);
     }
@@ -285,11 +296,10 @@ public class F5OffboardingTests
         var (app, _) = await Leaver();
         app.Directory.AddMember("SAMPLE-GRP-ALPHA-DRIVE-EDIT", Upn);
         app.Offboarding.Dynamic.Add("SAMPLE-GRP-ALPHA-DRIVE-EDIT");                    // membership by rule: cannot be removed
-        app.Offboarding.Roles[Upn] = ["62e90394-69f5-4237-9190-012177145e10"];          // not a group (a directory role)
         var forbidden = app.Offboarding.Assign(SubB, app.Directory.User(Upn)!.ObjectId);
         app.Offboarding.DeleteForbidden.Add(forbidden.Id);                              // Azure refuses the delete
         var planned = await Planned(app);
-        Assert.Equal(2, Steps(planned).Count(s => s.Name == OffboardingJob.Membership && s.Result == "Skipped"));
+        Assert.Equal(1, Steps(planned).Count(s => s.Name == OffboardingJob.Membership && s.Result == "Skipped"));
         await Execute(app, IdOf(planned));
         await app.RunWorker();
 
@@ -297,13 +307,95 @@ public class F5OffboardingTests
         Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
         var leftovers = done.Json.GetProperty("leftovers").EnumerateArray().Select(l => l.GetString()!).ToList();
         Assert.Contains(leftovers, l => l.Contains("SAMPLE-GRP-ALPHA-DRIVE-EDIT") && l.Contains("dynamic"));
-        Assert.Contains(leftovers, l => l.Contains("directory role"));
         Assert.Contains(leftovers, l => l.Contains("Reader") && l.Contains("still assigned"));
         Assert.Contains(Steps(done), s => s.Name == OffboardingJob.Rbac && s.Result == "Failed" && s.Detail.Contains("ArmForbidden"));
         Assert.Empty(await OffboardingMails(app));
         var e = Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), x => x.Value.Kind == EscalationKind.OffboardingLeftover).Value;
         Assert.Contains("No completion mail was sent", e.Reason);
         Assert.False(app.Directory.User(Upn)!.AccountEnabled); // everything that could be done was done
+    }
+
+    [Fact]
+    public async Task F5_Only_the_projects_own_people_are_offboarded()
+    {
+        var (app, _) = await Leaver();
+        // A PMO of another project (Bella, SAMPLE-BETA) never reaches an ALPHA person: BETA names no tenant, then not their person.
+        var beta = await Plan(app, user: TestApp.Bella, project: TestApp.Beta);
+        Assert.Equal((409, "tenant_not_connected"), (beta.Status, beta.ErrorCode));
+        await OwnTenant(app, TestApp.Beta);
+        Assert.Equal(404, (await Plan(app, user: TestApp.Bella, project: TestApp.Beta)).Status);
+        // In ALPHA: not in the people inventory and no request → 404; a retired person → 404; another domain → 404.
+        const string outsider = "sample.admin@sample.invalid", retired = "sample.retired@sample.invalid";
+        app.Directory.AddUser(outsider);
+        app.Directory.AddUser(retired);
+        await AddPerson(app, retired, retired: true);
+        Assert.Equal(404, (await Plan(app, outsider)).Status);
+        Assert.Equal(404, (await Plan(app, retired)).Status);
+        Assert.Equal(404, (await Plan(app, "sample.leaver@other.invalid")).Status);
+        // A person known only from a request of the project (no inventory entry) is the project's person.
+        var id = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.joiner@company.example"));
+        app.Directory.AddUser((await app.Request(id)).DomainId!);
+        Assert.Equal(202, (await Plan(app, "sample.joiner@sample.invalid")).Status);
+        Assert.Empty(await app.Stores.OffboardingRuns.ListAsync(TestApp.Beta));
+
+        // A run that reaches the store some other way is refused by the worker too, and nothing is changed.
+        await app.Stores.OffboardingRuns.CreateAsync(new OffboardingRun
+        {
+            Id = "off-forged", ProjectId = TestApp.Alpha, EnterpriseId = outsider, Mode = "plan", Status = OffboardingStatus.Planning, CorrelationId = "c",
+            RequestedBy = TestApp.Paul, RequestedAt = app.Clock.UtcNow, UpdatedAt = app.Clock.UtcNow, IsSample = true,
+        });
+        await app.RunWorker();
+        var forged = (await app.Stores.OffboardingRuns.GetAsync(TestApp.Alpha, "off-forged"))!.Value;
+        Assert.Equal(OffboardingStatus.Failed, forged.Status);
+        Assert.Contains("people inventory", Assert.Single(forged.Leftovers));
+        Assert.Empty(app.Offboarding.Calls);
+        Assert.True(app.Directory.User(outsider)!.AccountEnabled);
+    }
+
+    [Fact]
+    public async Task F5_A_directory_role_holder_is_left_to_people_and_nothing_is_changed_in_Entra_or_Azure()
+    {
+        var (app, requestId) = await Leaver();
+        app.Offboarding.Roles[Upn] = ["62e90394-69f5-4237-9190-012177145e10"]; // not a group: an Entra directory role
+        var planned = await Planned(app);
+        Assert.All(Steps(planned).Where(s => s.Name is OffboardingJob.Revoke or OffboardingJob.Tap or OffboardingJob.Rbac or OffboardingJob.Disable
+                                             || (s.Name == OffboardingJob.Membership && s.Target != "62e90394-69f5-4237-9190-012177145e10")),
+            s => Assert.Equal(("Skipped", true), (s.Result, s.Detail.Contains("directory role", StringComparison.Ordinal))));
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+
+        var done = await Get(app);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        var leftovers = done.Json.GetProperty("leftovers").EnumerateArray().Select(l => l.GetString()!).ToList();
+        Assert.Contains(leftovers, l => l.Contains("still enabled"));
+        Assert.Contains(leftovers, l => l.Contains("directory role") && l.StartsWith("still in", StringComparison.Ordinal));
+        Assert.Contains(leftovers, l => l.StartsWith(OffboardingJob.Revoke, StringComparison.Ordinal));
+        Assert.Empty(app.Offboarding.Calls);                                    // no Entra or Azure write at all
+        Assert.True(app.Directory.User(Upn)!.AccountEnabled);
+        Assert.Contains(GroupA, app.Directory.GroupsOf(Upn));
+        Assert.Equal(RequestStatus.Closed, (await app.Request(requestId)).Flow!.Status); // the app stops granting anything more
+        Assert.Empty(await OffboardingMails(app));
+        Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), x => x.Value.Kind == EscalationKind.OffboardingLeftover);
+    }
+
+    [Fact]
+    public async Task F5_A_request_opened_after_the_plan_is_a_leftover_and_a_leaver_gets_no_new_request()
+    {
+        var (app, planRequest) = await Leaver();
+        var planned = await Planned(app);
+        Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Close && s.Target == planRequest);
+        var late = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.leaver@company.example", resource: "SAMPLE Sales Lakehouse", accessLevel: "Read"));
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+
+        var done = await Get(app);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains($"request {late} was opened after the plan"));
+        Assert.Equal(RequestStatus.Closed, (await app.Request(planRequest)).Flow!.Status);
+        Assert.Empty(await OffboardingMails(app));
+        // Now a leaver: no new request is taken for the person until the DataMaintainer marks them Active again.
+        var again = await app.Submit(TestApp.Intake(enterpriseId: "sample.leaver@company.example"));
+        Assert.Equal((409, "person_is_leaver"), (again.Status, again.ErrorCode));
     }
 
     [Fact]
@@ -345,6 +437,18 @@ public class F5OffboardingTests
         await app.RunWorker();
         app.Clock.Advance(TimeSpan.FromHours(25));
         Assert.Equal((409, "plan_expired"), (await Execute(app, IdOf(r))).Pipe(x => (x.Status, x.ErrorCode)));
+        // The expired plan is closed and a new one is made (it never blocks the person's offboarding).
+        var again = await Plan(app);
+        Assert.Equal(202, again.Status);
+        Assert.NotEqual(IdOf(r), IdOf(again));
+        var old = (await app.Stores.OffboardingRuns.GetAsync(TestApp.Alpha, IdOf(r)))!.Value;
+        Assert.Equal(OffboardingStatus.Failed, old.Status);
+        Assert.Contains("plan expired", Assert.Single(old.Leftovers));
+        Assert.Contains(await app.Stores.AuditEvents.ListAsync(TestApp.Alpha), a => a.Value.Action == "offboarding-plan-expired");
+        await app.RunWorker();
+        Assert.Equal(202, (await Execute(app, IdOf(again))).Status);
+        await app.RunWorker();
+        Assert.Equal("Completed", Status(await Get(app)));
 
         Assert.Equal(403, (await Plan(app, user: TestApp.Alice)).Status);     // a requester
         Assert.Equal(403, (await Plan(app, user: TestApp.Sam)).Status);       // Security
@@ -358,9 +462,11 @@ public class F5OffboardingTests
     [Fact]
     public async Task F5_Guest_and_soft_delete_when_switched_on()
     {
-        var app = TestApp.With(settings: new PilotSettings { Workflow = new WorkflowSettings { AgentOffboarding = true, OffboardDeleteUser = true } });
+        var app = TestApp.With(settings: Settings(delete: true));
+        await OwnTenant(app);
         const string guest = "sample.partner_corp.invalid#EXT#@sample.invalid";
         app.Directory.AddUser(guest, guest: true);
+        await AddPerson(app, guest);
         var planned = await Planned(app, guest);
         Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Revoke && s.Result == "Skipped" && s.Detail.Contains("home tenant"));
         Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Delete && s.Result == "Planned" && s.Detail.Contains("30 days"));

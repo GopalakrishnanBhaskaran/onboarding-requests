@@ -306,15 +306,17 @@ public class F4UploadTests
         Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, delegated: true))));                 // a user's token
         Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, ver: "1.0"))));                     // v2.0 only
         Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, issuer: "https://sts.windows.net/" + T + "/"))));
-        Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, tenant: "22222222-3333-4444-8555-666666666666")))); // no key of that tenant
+        Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, tenant: "22222222-3333-4444-8555-666666666666")))); // a tenant no project names
         using (var other = RSA.Create(2048))
             Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, signer: other))));               // forged signature
         Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now, kid: "unknown-kid"))));
 
-        // A valid token for a tenant no project names.
+        // A token of a tenant no project names is an invalid token, refused before any signing key is fetched for it.
         var p = (await app.Stores.Projects.GetAsync(TestApp.Pest, TestApp.Pest))!;
         await app.Stores.Projects.ReplaceAsync(p.Value with { TenantId = null }, p.ETag);
-        Assert.Equal((403, "tenant_not_registered"), Pair(await Call(tokens.Token(now))));
+        var lookups = tokens.Lookups;
+        Assert.Equal((401, "invalid_token"), Pair(await Call(tokens.Token(now))));
+        Assert.Equal(lookups, tokens.Lookups);
 
         // Switched off (the default): the route answers 404 even to a valid token.
         var (off, offTokens) = await App(external: false);
@@ -345,6 +347,13 @@ public class F4UploadTests
         var missing = await app.SendRaw("POST", "v1/uploads/mapping?mode=apply", Headers(token, null), changed);
         Assert.Equal((400, "invalid_input"), Pair(missing));
         Assert.DoesNotContain(await Uploaded(app), r => r.EntraGroup == "SAMPLE-FIN-ADMINS");
+
+        // Keys are per calling app: another app of the same tenant using the same key neither replays nor blocks the first one's.
+        var otherApp = tokens.Token(app.Clock.UtcNow, app: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff");
+        var other = await app.SendRaw("POST", "v1/uploads/mapping?mode=apply", Headers(otherApp, "SAMPLE-key-1"), changed);
+        Assert.True(other.Status == 200, other.Body);
+        Assert.Equal(("Applied", "v2"), (other.Json.GetProperty("status").GetString(), other.Json.GetProperty("version").GetString()));
+        Assert.NotEqual(first.Json.GetProperty("uploadId").GetString(), other.Json.GetProperty("uploadId").GetString());
     }
 
     // ---- the rest of F4 -----------------------------------------------------------------------------------------------

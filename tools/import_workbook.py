@@ -20,7 +20,8 @@ Inputs
                     for). Roles repeated by that are merged. Never for production.
 
 With --apply the project (one per tenant) is created or updated in Cosmos: tenant name, environments, group naming
-pattern, and optionally --domain-suffix, --tenant-id, --test-contact (every project contact = one tester mailbox) and
+pattern, and optionally --domain-suffix, --tenant-id, --production-tenant yes|no (v1.1 offboarding: a production tenant,
+or one never marked, needs a second person to confirm), --test-contact (every project contact = one tester mailbox) and
 --register-user USER=Role,Role (repeatable; USER = the person's sign-in name, or the userId from /.auth/me).
 
 Groups the response document names but the classification does not list are rows "to be created" (amber); in an
@@ -312,9 +313,11 @@ def users(pairs: list[str], project: str) -> list[dict]:
 
 
 def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix: str | None, tenant_id: str | None, test_contact: str | None,
-                replace_contacts: bool = False) -> dict:
+                replace_contacts: bool = False, production_tenant: bool | None = None) -> dict:
     """Pure: the project document after the import (keeps what was set live unless given again). Contacts saved on the
-    app's Contact inventory page (contactsVersion > 0) are never overwritten by --test-contact unless replace_contacts."""
+    app's Contact inventory page (contactsVersion > 0) are never overwritten by --test-contact unless replace_contacts.
+    production_tenant (v1.1 F5): True/False sets isProductionTenant; None keeps the live value (unset counts as production:
+    offboarding then needs a second person to confirm)."""
     p = data["project"]
     doc = dict(live) if live else {"id": p["projectId"], "projectId": p["projectId"], "contacts": {}, "schemaVersion": 2}
     doc.update({"name": project_name or doc.get("name") or f"{p['tenantName']} data platform", "tenantName": p["tenantName"],
@@ -324,6 +327,8 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
         doc["domainIdSuffix"] = domain_suffix.lower()
     if tenant_id:
         doc["tenantId"] = tenant_id.lower()
+    if production_tenant is not None:
+        doc["isProductionTenant"] = production_tenant
     if test_contact and int(doc.get("contactsVersion") or 0) > 0 and not replace_contacts:
         print(f"  contacts kept: saved on the Contact inventory page (version {doc['contactsVersion']}); --replace-contacts to overwrite them")
     elif test_contact:
@@ -337,7 +342,8 @@ def project_doc(data: dict, live: dict | None, project_name: str, domain_suffix:
 
 
 def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: str | None, update: bool, database: str,
-          test_contact: str | None = None, register: list[dict] | None = None, replace_contacts: bool = False) -> None:
+          test_contact: str | None = None, register: list[dict] | None = None, replace_contacts: bool = False,
+          production_tenant: bool | None = None) -> None:
     cs = os.environ.get("COSMOS_CONNECTION_STRING")
     if not cs:
         raise SystemExit("COSMOS_CONNECTION_STRING is not set")
@@ -350,7 +356,7 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
         live = projects.read_item(p["projectId"], partition_key=p["projectId"])
     except CosmosResourceNotFoundError:
         live = None
-    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact, replace_contacts)
+    doc = project_doc(data, live, project_name, domain_suffix, tenant_id, test_contact, replace_contacts, production_tenant)
     projects.upsert_item(doc)
     sheet = db.get_container_client("mappingSheet")
     created = updated = kept = 0
@@ -371,7 +377,8 @@ def apply(data: dict, project_name: str, domain_suffix: str | None, tenant_id: s
         print(f"  registered {u['userId']} on {u['projectId']}: {', '.join(u['roles'])}")
     contacts = ("test contact " + test_contact if test_contact and doc.get("contacts", {}).get("security") == [test_contact.lower()]
                 else "contacts kept" if (doc.get("contacts") or {}).get("security") else "NO contacts: fill the Contact inventory page (no team mail goes out)")
-    print(f"project {p['projectId']} ({p['tenantName']}, {doc.get('tenantId') or 'agent tenant'}, {doc.get('domainIdSuffix') or 'no domain'}, {contacts}): "
+    prod = {True: "production tenant", False: "not a production tenant"}.get(doc.get("isProductionTenant"), "production tenant (not set)")
+    print(f"project {p['projectId']} ({p['tenantName']}, {doc.get('tenantId') or 'agent tenant'}, {doc.get('domainIdSuffix') or 'no domain'}, {prod}, {contacts}): "
           f"{created} rows created, {updated} updated, {kept} kept (use --update to replace)")
 
 
@@ -390,6 +397,8 @@ def main() -> int:
     ap.add_argument("--update", action="store_true", help="with --apply: replace existing rows (bumps their version)")
     ap.add_argument("--domain-suffix")
     ap.add_argument("--tenant-id", help="Entra tenant GUID of this project (the agent's own tenant for a pilot test)")
+    ap.add_argument("--production-tenant", choices=["yes", "no"],
+                    help="v1.1 F5: is this a production tenant (offboarding needs a second person to confirm)? Not given = keep; never set = production")
     ap.add_argument("--test-scope", help="pilot test: every Azure role in this one resource group (/subscriptions/<id>/resourceGroups/<name>)")
     ap.add_argument("--test-contact", help="test environment: every project contact (PMO, Security, ID team, role team, operators) is this mailbox "
                                            "(never over contacts saved on the Contact inventory page, unless --replace-contacts)")
@@ -421,7 +430,8 @@ def main() -> int:
           f"{sum(r['groupState'] == 'ToBeCreated' for r in rows)} to be created, "
           f"{sum(len(r['azureRoles']) for r in rows)} Azure roles ({unresolved} without a resolved scope). Wrote {out}")
     if args.apply:
-        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register, args.replace_contacts)
+        apply(data, args.project_name, args.domain_suffix, args.tenant_id, args.update, args.database, args.test_contact, register, args.replace_contacts,
+              None if args.production_tenant is None else args.production_tenant == "yes")
     return 0
 
 

@@ -206,8 +206,8 @@ public sealed record GroupResolution : IDocument
     public static string MakeId(string normalisedName) => $"grp-{Workflow.Ids.Hash(normalisedName)}";
 }
 
-/// <summary>Offboarding run status. The four contract values, plus Planning / Executing while the worker works (decision 2).</summary>
-public enum OffboardingStatus { Planning, Planned, Executing, Completed, PartiallyCompleted, Failed, Cancelled }
+/// <summary>Offboarding run status. The four contract values, plus Planning / Executing while the worker works (decision 2). A plan not confirmed in time ends Failed (expired).</summary>
+public enum OffboardingStatus { Planning, Planned, Executing, Completed, PartiallyCompleted, Failed }
 
 public enum OffboardingStepResult { Planned, Done, Skipped, Failed }
 

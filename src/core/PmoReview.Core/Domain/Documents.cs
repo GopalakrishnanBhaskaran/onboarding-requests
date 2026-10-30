@@ -68,9 +68,11 @@ public sealed record Project : IDocument
     public int ContactsVersion { get; init; }
     /// <summary>
     /// v1.1: the tenant is production. Offboarding there needs a second person to confirm (requester ≠ confirmer).
-    /// Independent of a request's environment (Dev/Test/UAT/PreProd/Prod), which decides the Prod read-only rule.
+    /// Not set (null) counts as production (fails closed, REVIEW finding 2); only an explicit false (SAMPLE and test
+    /// tenants, <c>import_workbook.py --production-tenant no</c>) lets one person plan and confirm. Independent of a
+    /// request's environment (Dev/Test/UAT/PreProd/Prod), which decides the Prod read-only rule.
     /// </summary>
-    public bool IsProductionTenant { get; init; }
+    public bool? IsProductionTenant { get; init; }
     /// <summary>Who saved the contact inventory last (sign-in name) and when.</summary>
     public string? ContactsUpdatedBy { get; init; }
     public DateTimeOffset? ContactsUpdatedAt { get; init; }

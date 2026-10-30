@@ -25,6 +25,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         ReadRbac = "Read Azure role assignments", Rbac = "Remove Azure role assignment", Disable = "Disable account", Delete = "Delete account",
         Leaver = "Mark leaver in people inventory", Close = "Close open request";
     private const int MaxAttempts = 3;
+    private const string ByPeople = "left to people: the account holds an Entra directory role, so the AI agent changes nothing in Entra or Azure for it";
 
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
@@ -36,6 +37,15 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             {
                 try
                 {
+                    if (await OffboardingService.NotOffboardableAsync(stores, project, v.Value.EnterpriseId, settings, ct) is { } why)
+                    {
+                        // Belt and braces: the API checks this before it records a run.
+                        await SaveAsync(project, v, v.Value with
+                        {
+                            Status = OffboardingStatus.Failed, FinishedAt = clock.UtcNow, UpdatedAt = clock.UtcNow, Leftovers = [$"{why}: nothing was changed"],
+                        }, "offboarding-failed", why, ct);
+                        continue;
+                    }
                     if (v.Value.Status == OffboardingStatus.Planning) await PlanAsync(project, v, ct);
                     else await ExecuteAsync(project, v, ct);
                     handled++;
@@ -89,25 +99,31 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     {
         var id = user.ObjectId;
         var steps = new List<OffboardingStep> { Step(Resolve, run.EnterpriseId, "find the Entra user by Enterprise ID (UPN)", OffboardingStepResult.Done, $"object id {id}") };
+        var memberships = await reader.MembershipsAsync(id, ct);
+        // An account that holds an Entra directory role (directly or through a role-assignable group) is offboarded by
+        // people: the AI agent plans no Entra or Azure change for it (PERMISSIONS.md row C); verify then lists what is left.
+        var roleHolder = memberships.Any(m => m.DirectoryRole);
+        OffboardingStep Write(string name, string target, string action, string detail) =>
+            roleHolder ? Step(name, target, action, OffboardingStepResult.Skipped, $"{detail}: {ByPeople}") : Step(name, target, action, OffboardingStepResult.Planned, detail);
         steps.Add(user.IsGuest
             ? Step(Revoke, id, "POST /users/{id}/revokeSignInSessions", OffboardingStepResult.Skipped, "guest account: its home tenant ends its sessions (F71)")
-            : Step(Revoke, id, "POST /users/{id}/revokeSignInSessions", OffboardingStepResult.Planned, "every refresh token and session cookie; takes a few minutes (F71)"));
+            : Write(Revoke, id, "POST /users/{id}/revokeSignInSessions", "every refresh token and session cookie; takes a few minutes (F71)"));
         foreach (var tap in await reader.TapMethodIdsAsync(id, ct))
-            steps.Add(Step(Tap, tap, "DELETE the user's Temporary Access Pass method", OffboardingStepResult.Planned, "Temporary Access Pass method"));
-        foreach (var m in (await reader.MembershipsAsync(id, ct)).Where(m => m.Direct || m.NotChangeable is not null).OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase))
+            steps.Add(Write(Tap, tap, "DELETE the user's Temporary Access Pass method", "Temporary Access Pass method"));
+        foreach (var m in memberships.Where(m => m.Direct || m.NotChangeable is not null).OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase))
             steps.Add(m.NotChangeable is null
-                ? Step(Membership, m.GroupObjectId, "DELETE /groups/{group}/members/{id}/$ref", OffboardingStepResult.Planned, m.DisplayName)
+                ? Write(Membership, m.GroupObjectId, "DELETE /groups/{group}/members/{id}/$ref", m.DisplayName)
                 : Step(Membership, m.GroupObjectId, "left to people", OffboardingStepResult.Skipped, $"{m.DisplayName}: {m.NotChangeable}"));
         var (assignments, unreadable) = await AssignmentsAsync(id, ct);
         foreach (var s in unreadable)
             steps.Add(Step(ReadRbac, $"/subscriptions/{s}", "GET role assignments", OffboardingStepResult.Skipped, "the AI agent may not read role assignments in this subscription"));
         foreach (var a in assignments)
-            steps.Add(Step(Rbac, a.Id, "DELETE role assignment", OffboardingStepResult.Planned, $"{BuiltInRoles.NameOf(a.RoleDefinitionId) ?? a.RoleDefinitionId} at {a.Scope}"));
+            steps.Add(Write(Rbac, a.Id, "DELETE role assignment", $"{BuiltInRoles.NameOf(a.RoleDefinitionId) ?? a.RoleDefinitionId} at {a.Scope}"));
         steps.Add(user.AccountEnabled
-            ? Step(Disable, id, "PATCH /users/{id} accountEnabled=false", OffboardingStepResult.Planned, "sign-in blocked")
+            ? Write(Disable, id, "PATCH /users/{id} accountEnabled=false", "sign-in blocked")
             : Step(Disable, id, "PATCH /users/{id} accountEnabled=false", OffboardingStepResult.Skipped, "already disabled"));
         steps.Add(settings.OffboardDeleteUser
-            ? Step(Delete, id, "DELETE /users/{id}", OffboardingStepResult.Planned, "soft delete: restorable for 30 days (F75)")
+            ? Write(Delete, id, "DELETE /users/{id}", "soft delete: restorable for 30 days (F75)")
             : Step(Delete, id, "DELETE /users/{id}", OffboardingStepResult.Skipped, "off (OFFBOARD_DELETE_USER=false): the account stays, disabled"));
         var person = await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(run.EnterpriseId), ct);
         steps.Add(person is null
@@ -299,8 +315,17 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             await TransientAsync(project, v, "verify", e.Category, ct);
             return;
         }
-        // Steps that failed and nothing above shows (sessions, inventory, requests) are leftovers too.
-        foreach (var s in run.Steps.Where(s => s.Result == OffboardingStepResult.Failed && s.Name is Revoke or Leaver or Close))
+        // A request for the person opened after the plan (or anything else still open) would grant access again: a leftover.
+        var planned = run.Steps.Where(s => s.Name == Close).Select(s => s.Target).ToHashSet(StringComparer.Ordinal);
+        foreach (var r in (await stores.Requests.ListAsync(project.ProjectId, ct)).Select(x => x.Value)
+                     .Where(r => r.Flow is { IsFinal: false } && string.Equals(r.DomainId, run.EnterpriseId, StringComparison.OrdinalIgnoreCase)))
+            leftovers.Add(planned.Contains(r.Id)
+                ? $"request {r.Id} is still open ({StatusText.Label(r.Flow!.Status)})"
+                : $"request {r.Id} was opened after the plan ({StatusText.Label(r.Flow!.Status)}): reject it, or offboard again");
+        // Steps that failed and nothing above shows (sessions, inventory, requests) are leftovers too, and so are sessions
+        // of a directory-role holder (left to people).
+        foreach (var s in run.Steps.Where(s => (s.Result == OffboardingStepResult.Failed && s.Name is Revoke or Leaver)
+                                               || (s.Result == OffboardingStepResult.Skipped && s.Name == Revoke && s.Detail.EndsWith(ByPeople, StringComparison.Ordinal))))
             leftovers.Add($"{s.Name} {s.Target}: {s.Detail}");
 
         var now = clock.UtcNow;

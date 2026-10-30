@@ -40,5 +40,6 @@ public static class Environments
     /// <summary>The project's spelling of the environment, or null if the project does not have it.</summary>
     public static string? Canonical(Project? p, string? env) => p?.Environments.FirstOrDefault(e => Same(e, env));
 
-    public static bool IsProduction(string? env) => Key(env) == "prod";
+    /// <summary>Prod, and any spelling that starts with prod / prd (e.g. "Prod-EU", "prd2"): unknown variants fail closed.</summary>
+    public static bool IsProduction(string? env) => Key(env) is var k && (k == "prod" || k.StartsWith("prod", StringComparison.Ordinal) || k.StartsWith("prd", StringComparison.Ordinal));
 }

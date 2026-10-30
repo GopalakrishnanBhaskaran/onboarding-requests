@@ -61,9 +61,15 @@ public static partial class ReviewChecks
     public static RowMatch Match(RequestSnapshot s, IReadOnlyList<MappingRow> sheet)
     {
         var resourceRows = MappingSheet.ForResource(sheet, s.Resource);
-        var matches = resourceRows.Where(r => MappingSheet.Same(r.AccessLevel, s.AccessLevel) && InEnvironment(r, s.Environment)).ToList();
-        return new RowMatch(resourceRows, matches);
+        var candidates = resourceRows.Where(r => MappingSheet.Same(r.AccessLevel, s.AccessLevel) && InEnvironment(r, s.Environment)).ToList();
+        // v1.1: a usable row (not retired, within its I1 dates) wins over a retired or expired one (a renamed group after
+        // "Retire missing rows" is one match, not a conflict). With no usable row the retired/expired one is matched, so
+        // MAP_NOT_DEPRECATED fails with the specific reason and nothing is granted from it.
+        var live = candidates.Where(r => MappingSheet.Usable(r, Day(s))).ToList();
+        return new RowMatch(resourceRows, live.Count > 0 ? live : candidates);
     }
+
+    private static DateOnly Day(RequestSnapshot s) => DateOnly.FromDateTime(s.CapturedAt.UtcDateTime);
 
     /// <summary>A row without an environment applies to every environment.</summary>
     public static bool InEnvironment(MappingRow r, string? environment) =>
@@ -129,7 +135,7 @@ public static partial class ReviewChecks
         else
         {
             // One group carries one role for one resource/level: another live row on the same group is a conflict.
-            var sharing = sheet.Where(r => r.RowId != row.RowId && !r.Deprecated && MappingSheet.Same(r.EntraGroup, row.EntraGroup)).ToList();
+            var sharing = sheet.Where(r => r.RowId != row.RowId && !r.Deprecated && !r.Retired && MappingSheet.Same(r.EntraGroup, row.EntraGroup)).ToList();
             Add(CheckCodes.MapNoConflict, CheckGroups.MappingSheet, sharing.Count == 0 ? CheckStatus.Pass : CheckStatus.Fail, sharing.Count == 0
                 ? $"No other row uses group {row.EntraGroup}."
                 : $"Group {row.EntraGroup} is also used by {string.Join("; ", sharing.Select(r => $"{r.RowId} ({r.Resource} / {r.AccessLevel} → {r.Role})"))}. One group must map to one resource, access level and role.");
@@ -140,9 +146,11 @@ public static partial class ReviewChecks
                 ? $"Group name {row.EntraGroup} follows the naming convention."
                 : $"Group name {row.EntraGroup} does not follow the naming convention ({pattern}).");
 
-            Add(CheckCodes.MapNotDeprecated, CheckGroups.MappingSheet, row.Deprecated ? CheckStatus.Fail : CheckStatus.Pass, row.Deprecated
-                ? $"Row {row.RowId} is marked deprecated. PMO must point this resource and access level to a current row."
-                : $"Row {row.RowId} is current (not deprecated).");
+            Add(CheckCodes.MapNotDeprecated, CheckGroups.MappingSheet, row.Deprecated || !MappingSheet.Usable(row, Day(s)) ? CheckStatus.Fail : CheckStatus.Pass,
+                row.Deprecated ? $"Row {row.RowId} is marked deprecated. PMO must point this resource and access level to a current row."
+                : row.Retired ? $"Row {row.RowId} is retired (removed by a mapping upload). PMO or the DataMaintainer must point this resource and access level to a current row."
+                : !MappingSheet.Effective(row, Day(s)) ? $"Row {row.RowId} is not in effect on {Day(s):yyyy-MM-dd} (effective {row.EffectiveFrom?.ToString("yyyy-MM-dd") ?? "…"} to {row.EffectiveTo?.ToString("yyyy-MM-dd") ?? "…"})."
+                : $"Row {row.RowId} is current (not deprecated, not retired, in effect).");
 
             // Workbook colour coding: red = wrong or undecided, never acted on without a human decision.
             Add(CheckCodes.MapRowFlag, CheckGroups.MappingSheet, row.Flag == RowFlag.Red ? CheckStatus.Fail : CheckStatus.Pass, row.Flag == RowFlag.Red

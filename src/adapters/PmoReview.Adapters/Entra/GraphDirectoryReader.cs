@@ -19,7 +19,8 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
     /// <summary>
     /// F5: every group (and directory role) the user is in, transitively (getMemberGroups, F77/F102), each with whether the
     /// user is a direct member (direct members only, advanced query, F94). Dynamic and role-assignable groups and
-    /// anything that is not a group (a directory role) are marked not changeable: they are left to people.
+    /// anything that is not a group (a directory role) are marked not changeable: they are left to people. A directory role
+    /// or a role-assignable group also marks the account as a directory-role holder (the agent then changes nothing).
     /// </summary>
     public async Task<IReadOnlyList<GroupMembership>> MembershipsAsync(string userObjectId, CancellationToken ct)
     {
@@ -32,7 +33,7 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
             using var g = await SendAsync(HttpMethod.Get, $"{V1}groups/{Guid(id)}?$select=id,displayName,groupTypes,isAssignableToRole", null, ct, notFoundIsNull: true);
             if (g is null)
             {
-                result.Add(new GroupMembership(id, id, true, "not a group (for example an Entra directory role): left to people"));
+                result.Add(new GroupMembership(id, id, true, "not a group (for example an Entra directory role): left to people", DirectoryRole: true));
                 continue;
             }
             var name = Str(g.RootElement, "displayName") ?? id;
@@ -42,8 +43,9 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
             var filter = Q($"id eq '{user}'");
             using var m = await SendAsync(HttpMethod.Get, $"{V1}groups/{Guid(id)}/members?$filter={filter}&$count=true&$select=id", null, ct, eventual: true);
             var direct = m is not null && Values(m).Any();
+            var roleAssignable = Bool(g.RootElement, "isAssignableToRole") == true;
             result.Add(new GroupMembership(id, name, direct,
-                direct && Bool(g.RootElement, "isAssignableToRole") == true ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null));
+                direct && roleAssignable ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null, DirectoryRole: roleAssignable));
         }
         return result;
     }

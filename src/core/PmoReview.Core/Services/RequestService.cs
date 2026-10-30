@@ -83,6 +83,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var (clean, fixes) = Validate(input);
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
@@ -112,6 +113,17 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         return await stores.Requests.CreateAsync(doc, ct);
     }
 
+    /// <summary>
+    /// v1.1 F5: a person the people inventory marks Leaver (offboarded) gets no new access: a new or corrected request is
+    /// refused until the DataMaintainer marks the person Active again (a rehire).
+    /// </summary>
+    private async Task RefuseLeaverAsync(string projectId, string domainId, CancellationToken ct)
+    {
+        if ((await stores.PeopleInventory.GetAsync(projectId, Person.MakeId(domainId), ct))?.Value is { Status: PersonStatus.Leaver, Retired: false })
+            throw AppException.Conflict("person_is_leaver",
+                $"{domainId} is marked as a leaver (offboarded) in the people inventory. A rehire is marked Active again by the DataMaintainer first.");
+    }
+
     /// <summary>Edits a Returned request and submits it again (new revision, back to AI review).</summary>
     public async Task<Versioned<AccessRequest>> ResubmitAsync(
         CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, CancellationToken ct)
@@ -127,6 +139,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
         if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");

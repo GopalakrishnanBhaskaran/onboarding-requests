@@ -155,7 +155,8 @@ public static class PilotApp
         host.MapV11(parts.Service, parts.Resources, parts.Bundles);
         // F4: the Data uploads page, and the external upload API (404 unless EXTERNAL_UPLOAD_API_ENABLED=true).
         var tokens = settings.Workflow.ExternalUploadApiEnabled
-            ? new UploadTokenValidator(signingKeys ?? new OpenIdSigningKeys(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, clock), settings.Workflow.ExternalUploadAudience, clock)
+            ? new UploadTokenValidator(signingKeys ?? new OpenIdSigningKeys(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, clock), settings.Workflow.ExternalUploadAudience, clock,
+                async (tid, ct) => (await stores.Projects.ListAllAsync(ct)).Any(p => string.Equals(p.Value.TenantId?.Trim(), tid, StringComparison.OrdinalIgnoreCase)))
             : null;
         host.MapUploads(parts.Uploads, stores, tokens, settings.Workflow);
         host.MapOffboarding(parts.Offboarding); // F5: plans and confirmations only; the worker reads and writes Entra / Azure

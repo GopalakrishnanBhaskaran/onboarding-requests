@@ -369,7 +369,8 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         if (flow.Scope is null) return null;
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
-        if (MappingSheet.Fingerprint(sheet, r.Resource) == flow.Scope.SheetFingerprint) return null;
+        // Also when the reviewed row is retired or has passed its I1 end date since the review: nothing is granted from it.
+        if (MappingSheet.AsReviewed(sheet, r.Resource, flow.Scope.SheetFingerprint, flow.Scope.MappingRowId, clock.UtcNow)) return null;
         var from = flow.Status;
         var next = (flow with { ResumeStatus = from, ReviewRunId = null })
             .To(RequestStatus.AiReview, WaitingOn.Agent, clock.UtcNow, Agent, "mapping-changed",

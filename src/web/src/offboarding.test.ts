@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canConfirm, canPlan, changes, inProgress } from './lib/offboarding';
+import { canConfirm, canPlan, changes, inProgress, planExpired } from './lib/offboarding';
 import type { OffboardingView } from './lib/types';
 
 const run = (status: OffboardingView['status'], results: OffboardingView['steps'][number]['result'][] = []): OffboardingView => ({
@@ -22,6 +22,14 @@ describe('F5 offboarding panel', () => {
     expect(canPlan(run('Completed'))).toBe(true);
     expect(canPlan(run('PartiallyCompleted'))).toBe(true);
     for (const s of ['Planning', 'Planned', 'Executing'] as const) expect(canPlan(run(s))).toBe(false);
+  });
+
+  it('offers a new plan when the confirm says the shown plan expired', () => {
+    const expired = { status: 409, code: 'plan_expired', message: 'old' };
+    expect(planExpired(expired)).toBe(true);
+    expect(planExpired({ status: 409, code: 'plan_not_ready' })).toBe(false);
+    expect(planExpired(null)).toBe(false);
+    expect(canPlan(run('Planned'), planExpired(expired))).toBe(true);
   });
 
   it('refreshes while the worker plans or executes and counts the planned changes', () => {

@@ -56,13 +56,16 @@ public sealed partial class WorkflowService
         if (e.RequestRevision != r.Revision || revision != r.Revision || e.ScopeFingerprint != ProdGuard.Fingerprint(r, scope) || e.Id != ProdGuard.EscalationId(r, scope))
             throw AppException.Conflict("stale_escalation",
                 $"The request changed after this escalation was raised (now revision {r.Revision}). Nothing was approved; read the current request and its escalation.");
-        // Four eyes: the requester and the people who approved the earlier stages never decide the Prod stage.
-        if (caller.UserId == r.CreatedBy || caller.Is(r.CreatedByName))
-            throw new AppException(ErrorKind.Forbidden, "requester_cannot_approve", "You submitted this request; another ProdApprover must decide it.");
+        // Four eyes: whoever submitted or resubmitted any revision, the person who gets the access, and the people who
+        // approved the earlier stages never decide the Prod stage.
+        if (SubmittedBy(r, caller))
+            throw new AppException(ErrorKind.Forbidden, "requester_cannot_approve", "You submitted or changed this request; another ProdApprover must decide it.");
+        if (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId))
+            throw new AppException(ErrorKind.Forbidden, "beneficiary_cannot_approve", "This request gives you access; another ProdApprover must decide it.");
         if (flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId || flow.CurrentApproval(ApprovalStage.Security)?.By == caller.UserId)
             throw AppException.Conflict("same_approver", "You approved an earlier stage of this request; another ProdApprover must decide the Prod stage.");
         var sheet = await sources.ReadMappingSheetAsync(projectId, ct);
-        if (MappingSheet.Fingerprint(sheet, r.Resource) != scope.SheetFingerprint)
+        if (!MappingSheet.AsReviewed(sheet, r.Resource, scope.SheetFingerprint, scope.MappingRowId, clock.UtcNow))
         {
             await agent.AdvanceAsync(projectId, r.Id, cid, ct);
             throw AppException.Conflict("mapping_changed", "The mapping sheet changed after the AI review. The review is being re-run; your decision was not recorded.");
@@ -128,6 +131,11 @@ public sealed partial class WorkflowService
         return new EscalationDecisionResult(Endpoints.ToItem(decided), view);
     }
 
+    /// <summary>The caller created the request, submitted or resubmitted one of its revisions, or last changed it.</summary>
+    private static bool SubmittedBy(AccessRequest r, CallerContext caller) =>
+        caller.UserId == r.CreatedBy || caller.Is(r.CreatedByName) || caller.UserId == r.UpdatedBy
+        || (r.Flow?.Events ?? []).Any(e => e.Step is "submit" or "resubmit" && e.Actor == caller.UserId);
+
     /// <summary>A team report for Prod above Read is refused until the ProdWrite escalation of this revision and scope is Approved.</summary>
     private async Task RequireProdApprovedAsync(AccessRequest r, CancellationToken ct)
     {
@@ -135,7 +143,7 @@ public sealed partial class WorkflowService
         if (scope is null) return;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var e = (await stores.Escalations.GetAsync(r.ProjectId, ProdGuard.EscalationId(r, scope), ct))?.Value;
-        if (!ProdGuard.MayFulfil(r, scope, ProdGuard.Privileged(scope, row), e, out var reason))
+        if (!ProdGuard.MayFulfil(r, scope, row, e, out var reason))
             throw AppException.Conflict("prod_write_not_approved",
                 $"Production above Read ({reason}) needs an approved ProdApprover escalation for this request revision before anything is granted or recorded.");
     }

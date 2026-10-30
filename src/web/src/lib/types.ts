@@ -591,7 +591,7 @@ export interface UploadsOverview {
 
 // ---- v1.1 F5: offboarding ----------------------------------------------------------------------------------------------
 
-export type OffboardingStatus = 'Planning' | 'Planned' | 'Executing' | 'Completed' | 'PartiallyCompleted' | 'Failed' | 'Cancelled';
+export type OffboardingStatus = 'Planning' | 'Planned' | 'Executing' | 'Completed' | 'PartiallyCompleted' | 'Failed';
 
 export interface OffboardingStep {
   name: string;

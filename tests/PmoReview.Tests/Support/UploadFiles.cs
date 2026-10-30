@@ -122,14 +122,14 @@ public sealed class TestTokens : ISigningKeys, IDisposable
     }
 
     public string Token(DateTimeOffset now, string[]? roles = null, string tenant = Tenant, string audience = Audience, string? issuer = null, string ver = "2.0",
-        TimeSpan? lifetime = null, bool delegated = false, RSA? signer = null, string? kid = null)
+        TimeSpan? lifetime = null, bool delegated = false, RSA? signer = null, string? kid = null, string app = ClientApp)
     {
         var header = new Dictionary<string, object> { ["alg"] = "RS256", ["typ"] = "JWT", ["kid"] = kid ?? Kid };
         var claims = new Dictionary<string, object>
         {
             ["aud"] = audience, ["iss"] = issuer ?? $"https://login.microsoftonline.com/{tenant}/v2.0", ["tid"] = tenant, ["ver"] = ver,
             ["iat"] = now.ToUnixTimeSeconds(), ["nbf"] = now.ToUnixTimeSeconds(), ["exp"] = (now + (lifetime ?? TimeSpan.FromHours(1))).ToUnixTimeSeconds(),
-            ["azp"] = ClientApp, ["oid"] = "cccccccc-dddd-4eee-8fff-000000000000", ["idtyp"] = delegated ? "user" : "app",
+            ["azp"] = app, ["oid"] = "cccccccc-dddd-4eee-8fff-000000000000", ["idtyp"] = delegated ? "user" : "app",
             ["roles"] = roles ?? [UploadTokenValidator.Role],
         };
         if (delegated) claims["scp"] = "Uploads.Write";

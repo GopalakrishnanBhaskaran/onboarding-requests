@@ -154,9 +154,9 @@ public sealed partial class WorkflowService(
         if (stage == ApprovalStage.Security && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
             throw AppException.Conflict("same_approver", "You gave the Owner approval. The Security approval must come from a different person.");
 
-        // Mapping sheet changed after the AI review: re-run the review before continuing.
+        // Mapping sheet changed after the AI review (or the reviewed row was retired or ended): re-run the review before continuing.
         var sheet = await sources.ReadMappingSheetAsync(projectId, ct);
-        if (MappingSheet.Fingerprint(sheet, r.Resource) != flow.Scope.SheetFingerprint)
+        if (!MappingSheet.AsReviewed(sheet, r.Resource, flow.Scope.SheetFingerprint, flow.Scope.MappingRowId, clock.UtcNow))
         {
             await agent.AdvanceAsync(projectId, requestId, cid, ct);
             throw AppException.Conflict("mapping_changed", "The mapping sheet changed after the AI review. The review is being re-run; your response was not recorded. Refresh and read the new summary.");
@@ -191,7 +191,7 @@ public sealed partial class WorkflowService(
         {
             // F3: Prod above Read waits for a ProdApprover; nothing is granted before that decision.
             var row = sheet.FirstOrDefault(x => x.RowId == flow.Scope.MappingRowId);
-            if (ProdGuard.AboveReadInProd(r, flow.Scope, ProdGuard.Privileged(flow.Scope, row)) is { } prodReason)
+            if (ProdGuard.AboveReadInProd(r, flow.Scope, row) is { } prodReason)
             {
                 var escalation = agent.NewProdEscalation(r, flow.Scope, prodReason, cid);
                 next = next.To(RequestStatus.AwaitingProdApproval, WaitingOn.ProdApprover, now, caller.UserId, "security-approved",

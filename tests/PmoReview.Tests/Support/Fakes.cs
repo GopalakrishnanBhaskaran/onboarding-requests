@@ -348,9 +348,9 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
         var upn = Upn(userObjectId);
         var list = directory.GroupsOf(upn).Select(g => new GroupMembership(directory.GroupId(g), g, true,
             Dynamic.Contains(g) ? "dynamic group (membership by rule; members cannot be removed, F102)"
-            : RoleAssignable.Contains(g) ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null)).ToList();
+            : RoleAssignable.Contains(g) ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null, RoleAssignable.Contains(g))).ToList();
         list.AddRange(Nested.GetValueOrDefault(upn, []).Select(g => new GroupMembership(directory.GroupId(g), g, false)));
-        list.AddRange(Roles.GetValueOrDefault(upn, []).Select(r => new GroupMembership(r, r, true, "not a group (for example an Entra directory role): left to people")));
+        list.AddRange(Roles.GetValueOrDefault(upn, []).Select(r => new GroupMembership(r, r, true, "not a group (for example an Entra directory role): left to people", true)));
         return Task.FromResult<IReadOnlyList<GroupMembership>>(list);
     }
 
