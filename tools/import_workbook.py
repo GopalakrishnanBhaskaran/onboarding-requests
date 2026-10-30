@@ -269,7 +269,8 @@ def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, not
     }
 
 
-ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator"}
+# The app's roles (AppRole); v1.1 adds ProdApprover (F3) and DataMaintainer (F4). The retired Reviewer / Maintainer grant nothing.
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataMaintainer"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 MAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 CONTACT_LISTS = ("pmo", "security", "idTeam", "roleTeam", "operators")

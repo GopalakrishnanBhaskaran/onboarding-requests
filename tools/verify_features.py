@@ -14,6 +14,8 @@ from collections import Counter
 from dataclasses import dataclass
 
 PASS, WAIT, FAIL = "PASS", "WAIT", "FAIL"
+V11_CONTAINERS = ("mappingVersions", "peopleInventory", "inventoryVersions", "escalations", "mappingQualityIssues", "groupResolutions",
+                  "offboardingRuns", "auditEvents")
 READ_ROLES = {"User.Read.All", "GroupMember.Read.All", "UserAuthenticationMethod.Read.All", "AuditLog.Read.All"}
 CREATE_ROLES = {"User.Create", "Group.Create", "GroupMember.ReadWrite.All"}
 RETIRED_ROLES = {"EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All",
@@ -242,6 +244,21 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     out.append(Result("13. No open High issues", PASS if not high else WAIT,
                       "; ".join(f"{str(i.get('requestId'))[:8]} {i.get('kind')}: {(i.get('summary') or '')[:90]}" for i in high[:5]) or "none",
                       "" if not high else "Issues and reports page; SLA escalations clear once the stage moves on"))
+
+    # 16. v1.1 (P7 option 1): the v1.1 containers exist, every new switch is still off, and each tenant names its Entra
+    # tenant id and whether it is production (not set counts as production: a second person confirms offboarding).
+    have = set(ctx.get("containers") or [])
+    missing_c = [c for c in V11_CONTAINERS if c not in have]
+    switched_on = [k for k in ("AGENT_OFFBOARDING", "OFFBOARD_DELETE_USER") if on(k)] \
+        + (["EXTERNAL_UPLOAD_API_ENABLED"] if str(swa.get("EXTERNAL_UPLOAD_API_ENABLED", "")).lower() == "true" else [])
+    unflagged = sorted(k for k, v in real.items() if not v.get("tenantId") or v.get("isProductionTenant") is None)
+    out.append(Result("16. v1.1 data in place, new switches off, tenants flagged (P7 option 1)",
+                      FAIL if switched_on else WAIT if missing_c or unflagged or not real else PASS,
+                      f"missing containers {missing_c or 'none'}; switched on {switched_on or 'none'}; "
+                      f"projects without tenant id or production flag {unflagged or 'none'}",
+                      "switch it off: only P7 option 3 (with its approval) turns offboarding on" if switched_on
+                      else "tools/deploy_free.sh whatif → approved → apply (docs/V1_1_DEPLOY.md)" if missing_c
+                      else "import_workbook.py --tenant-id <guid> --production-tenant yes|no for each project" if unflagged or not real else ""))
     return out
 
 
@@ -267,7 +284,7 @@ def load() -> tuple:
             print(f"  ({container} not readable: {type(e).__name__})")
             return []
 
-    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion FROM c"),
+    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion, c.isProductionTenant FROM c"),
             q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.entraGroup, c.azureRoles, c.isSample FROM c"),
             q("requests", "SELECT c.id, c.projectId, c.environment, c.flow.status, c.flow.waitingOn, c.flow.events FROM c"),
             q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind, c.createdAt FROM c"),
@@ -292,10 +309,13 @@ def self_test() -> None:
                                "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "AGENT_PRIVILEGED": "true",
                                "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
                                "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"}}
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"},
+           "containers": ["projects", "requests", *V11_CONTAINERS]}
     team = {"security": ["sec@company.example"], "idTeam": ["id@company.example"], "roleTeam": ["roles@company.example"]}
-    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1},
-                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team}]
+    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1,
+                 "isProductionTenant": True},
+                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team,
+                 "isProductionTenant": False}]
     rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
              "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
             {"projectId": "PEST", "rowId": PRIVILEGED_ROW, "privileged": True,
@@ -349,6 +369,19 @@ def self_test() -> None:
     ctx3["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES | {"Group.ReadWrite.All"})
     assert next(r for r in evaluate(ctx3, projects, rows, requests, notes, []) if r.feature.startswith("5.")).status == FAIL
     assert flatten([{"id": "x", "status": "Completed", "events": [{"step": "completed"}]}])[0]["flow"]["status"] == "Completed"
+    # 16. v1.1 option 1: containers missing → WAIT (whatif/apply); a switch on → FAIL; a tenant without its flag → WAIT (import).
+    line16 = lambda c, p=projects: next(r for r in evaluate(c, p, rows, requests, notes, []) if r.feature.startswith("16."))  # noqa: E731
+    assert line16(ctx).status == PASS, line16(ctx).detail
+    before = {**ctx, "containers": ["projects", "requests"]}
+    assert line16(before).status == WAIT and "whatif" in line16(before).next and "offboardingRuns" in line16(before).detail
+    on16 = json.loads(json.dumps(ctx))
+    on16["worker_settings"]["AGENT_OFFBOARDING"] = "true"
+    assert line16(on16).status == FAIL and "AGENT_OFFBOARDING" in line16(on16).detail
+    ext = json.loads(json.dumps(ctx))
+    ext["swa_settings"]["EXTERNAL_UPLOAD_API_ENABLED"] = "true"
+    assert line16(ext).status == FAIL
+    noflag = [dict(projects[0], isProductionTenant=None), projects[1]]
+    assert line16(ctx, noflag).status == WAIT and "PEST" in line16(ctx, noflag).detail and "--production-tenant" in line16(ctx, noflag).next
     print("verify_features: self-test passed")
 
 

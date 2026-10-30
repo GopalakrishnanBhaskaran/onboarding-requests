@@ -575,8 +575,10 @@ case "$CMD" in
       --result-format FullResourcePayloads | tee "$ROOT/.local/whatif.txt"
     echo
     echo "Expected resources: resource group, policy assignment, budget, Cosmos DB account (free tier) + 1 database"
-    echo "  + 13 containers (8 used by v2: projects, requests, reviewRuns, userAccess, mappingSheet, responseDocument,"
-    echo "  notifications, issues; 5 legacy v1 kept untouched), Static Web App (Free)."
+    echo "  + 21 containers (8 used by v2: projects, requests, reviewRuns, userAccess, mappingSheet, responseDocument,"
+    echo "  notifications, issues; 8 new in v1.1: mappingVersions, peopleInventory, inventoryVersions, escalations,"
+    echo "  mappingQualityIssues, groupResolutions, offboardingRuns, auditEvents; 5 legacy v1 kept untouched), Static Web App (Free)."
+    echo "  21 of the 25 containers a shared-throughput free-tier database allows (F90)."
     echo "Expected cost: ₹0 while within free limits (SWA Free plan; Cosmos free tier 1000 RU/s + 25 GB; policy and budgets are free)."
     if handoff_enabled && ! worker_enabled; then
       echo "STAGE A (enableHandoff=true, deployWorker=false): policy allows the worker types, budget ₹2,000 with 50/80/100% alerts. Creates nothing paid."
@@ -584,8 +586,10 @@ case "$CMD" in
     if worker_enabled; then
       echo "STAGE B / v2 worker (paid from credits): Flex Consumption plan + Function App (system identity) + storage account"
       echo "  (Standard_LRS, no shared keys) + Storage Blob Data Owner + Cosmos data roles scoped to requests, reviewRuns, mappingSheet,"
-      echo "  responseDocument, notifications, issues (+ read on projects). App settings: WORKFLOW_SCHEDULE, NOTIFY_SENDER,"
-      echo "  ROLE_READER, ADO_*, TAP_MAX_LIFETIME_MINUTES; retired ENTRA_AUTO_ASSIGN / ENTRA_PROVISION_JOINERS forced false."
+      echo "  responseDocument, notifications, issues and (v1.1) peopleInventory, escalations, mappingQualityIssues, groupResolutions,"
+      echo "  offboardingRuns, auditEvents (+ read on projects; never userAccess or the upload versions). App settings: WORKFLOW_SCHEDULE,"
+      echo "  NOTIFY_SENDER, ROLE_READER, ADO_*, TAP_MAX_LIFETIME_MINUTES; v1.1 AGENT_OFFBOARDING=false, OFFBOARD_DELETE_USER=false,"
+      echo "  OFFBOARD_SUBSCRIPTIONS empty; retired ENTRA_AUTO_ASSIGN / ENTRA_PROVISION_JOINERS forced false."
       echo "  Expected cost: roughly ₹50-300/month (unchanged). After apply: grant-graph (read-only), then revoke-graph-writes after approval."
       WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
       echo "== Flex Consumption availability for $WLOC =="

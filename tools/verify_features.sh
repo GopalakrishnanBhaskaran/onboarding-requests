@@ -23,8 +23,9 @@ W=$(az functionapp list -g "$RG" --query "[?starts_with(name,'func-pmo-worker-')
 SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
 MI=$([[ -n "$W" ]] && az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv || true)
 ACS=$(az resource list -g "$RG" --resource-type Microsoft.Communication/communicationServices --query "[0].id" -o tsv 2>/dev/null || true)
+COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
 
-export V_HEAD V_APP V_WORKER V_APP_CHANGED V_WORKER_CHANGED V_TENANT V_WORKER_SETTINGS V_SWA_SETTINGS V_GRAPH V_RBAC V_ACS V_ACS_ROLE
+export V_HEAD V_APP V_WORKER V_APP_CHANGED V_WORKER_CHANGED V_TENANT V_WORKER_SETTINGS V_SWA_SETTINGS V_GRAPH V_RBAC V_ACS V_ACS_ROLE V_CONTAINERS
 V_HEAD=$(git -C "$ROOT" rev-parse --short HEAD)
 V_APP=$(stamp app); V_WORKER=$(stamp worker)
 V_APP_CHANGED=$(changed "$V_APP" src/core src/adapters src/api src/web staticwebapp.config.json)
@@ -32,14 +33,16 @@ V_WORKER_CHANGED=$(changed "$V_WORKER" src/core src/adapters src/worker)
 V_TENANT=$(az account show --query tenantId -o tsv)
 # Named settings only (never a connection string).
 V_WORKER_SETTINGS=$([[ -n "$W" ]] && az functionapp config appsettings list -g "$RG" -n "$W" \
-  --query "[?contains(['APP_ENVIRONMENT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','NOTIFY_SENDER','ACS_ENDPOINT','NOTIFY_FROM','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED'], name)].{name:name, value:value}" -o json || echo "[]")
+  --query "[?contains(['APP_ENVIRONMENT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','NOTIFY_SENDER','ACS_ENDPOINT','NOTIFY_FROM','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED','AGENT_OFFBOARDING','OFFBOARD_DELETE_USER'], name)].{name:name, value:value}" -o json || echo "[]")
 V_SWA_SETTINGS=$([[ -n "$SWA" ]] && az staticwebapp appsettings list -n "$SWA" -g "$RG" \
-  --query "properties.{APP_ENVIRONMENT:APP_ENVIRONMENT, NOTIFY_REDIRECT_TO:NOTIFY_REDIRECT_TO, NOTIFY_SENDER:NOTIFY_SENDER, AGENT_PROVISIONING:AGENT_PROVISIONING, AGENT_TAP:AGENT_TAP, AGENT_PRIVILEGED:AGENT_PRIVILEGED}" -o json 2>/dev/null || echo "{}")
+  --query "properties.{APP_ENVIRONMENT:APP_ENVIRONMENT, NOTIFY_REDIRECT_TO:NOTIFY_REDIRECT_TO, NOTIFY_SENDER:NOTIFY_SENDER, AGENT_PROVISIONING:AGENT_PROVISIONING, AGENT_TAP:AGENT_TAP, AGENT_PRIVILEGED:AGENT_PRIVILEGED, EXTERNAL_UPLOAD_API_ENABLED:EXTERNAL_UPLOAD_API_ENABLED}" -o json 2>/dev/null || echo "{}")
 V_GRAPH=$([[ -n "$MI" ]] && az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
   | while read -r id; do az ad sp show --id 00000003-0000-0000-c000-000000000000 --query "appRoles[?id=='$id'].value | [0]" -o tsv; done || true)
 V_RBAC=$([[ -n "$MI" ]] && az role assignment list --assignee "$MI" --role f58310d9-a9f6-439a-9e8d-f62e7b41a168 --all --query "[].scope" -o tsv 2>/dev/null || true)
 V_ACS=$([[ -n "$ACS" ]] && echo true || echo false)
 V_ACS_ROLE=$([[ -n "$ACS" && -n "$MI" && "$(az role assignment list --assignee "$MI" --scope "$ACS" --query "length(@)" -o tsv 2>/dev/null)" -gt 0 ]] && echo true || echo false)
+# v1.1 (P7 option 1): container names only.
+V_CONTAINERS=$([[ -n "$COSMOS" ]] && az cosmosdb sql container list -g "$RG" -a "$COSMOS" -d pmoreview --query "[].name" -o tsv 2>/dev/null || true)
 
 python3 - "$ROOT/.local/verify-ctx.json" <<'PY'
 import json, os, sys
@@ -53,12 +56,12 @@ ctx = {
     "swa_settings": {k: v for k, v in (json.loads(e.get("V_SWA_SETTINGS") or "{}") or {}).items() if v is not None},
     "graph_roles": lines("V_GRAPH"), "rbac_admin_scopes": lines("V_RBAC"),
     "acs_exists": e["V_ACS"] == "true", "acs_role": e["V_ACS_ROLE"] == "true",
+    "containers": lines("V_CONTAINERS"),
 }
 json.dump(ctx, open(sys.argv[1], "w"), indent=2)
 PY
 
 echo "== Feature checklist ($(date -u +%FT%TZ), checkout $V_HEAD) =="
-COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
 PYTHON=$("$ROOT/tools/cosmos_python.sh")
 COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g "$RG" -n "$COSMOS" --type connection-strings \
   --query "connectionStrings[0].connectionString" -o tsv 2>/dev/null) "$PYTHON" "$ROOT/tools/verify_features.py" "$ROOT/.local/verify-ctx.json"

@@ -124,7 +124,7 @@ Risks:
 Next step: P6 — edge-case suite complete, independent review agent → REVIEW.md (STOP).
 
 ## Phase 6 result
-Status: Done — waiting for Gokul's approval at the P6 checkpoint (STOP). Independent review: Critical 0, High 0 (deployment gate met, `REVIEW.md` re-checks 2–4; last re-check on `35e7a62`).
+Status: Done — **approved by Gokul on 30 Oct 2026** (12a and 13a kept; P7 option 1 chosen). Independent review: Critical 0, High 0 (deployment gate met, `REVIEW.md` re-checks 2–4; last re-check on `35e7a62`).
 Changed files:
 - `docs/V1_1_EDGE_CASES.md` — every B.8 edge case and every review finding mapped to a named test; `docs/V1_1_TEST_RESULTS.md` — per-test results and 22 mutation checks
 - `REVIEW.md` — independent review of `c817105` (1 Critical, 5 High, 6 Medium, 7 Low), re-check of `5db8b72` (High 1 left, findings 20–21 new), re-check 2 of `47d66fe` (Critical 0, High 0, findings 22–23 new); written by the review agent only
@@ -162,3 +162,20 @@ Next step: STOP — Gokul approves P6 and picks a P7 deployment option (below). 
 The external upload API (F4) stays off in all three: it needs hosting option B or C (`docs/HOSTING.md`).
 
 Manual steps (people, not code): admin consent for the Graph application permissions (Global or Privileged Role Administrator); Exchange RBAC for Applications scope for `TAP_MAIL_SENDER`; ProdApprover and DataMaintainer users per project (`register_user.py`); PMO and team contacts (Contact inventory page); tenant id and production flag per tenant (`import_workbook.py --tenant-id --production-tenant`); people inventory upload per tenant; an `Uploads.Write` app registration only if the external API is switched on later.
+
+## Phase 7 result
+Status: Needs approval
+Changed files:
+- `docs/V1_1_DEPLOY.md` — runbook for option 1 (data and code, every new switch off): what-if → "approved" → apply → `app` + `worker` → tenant id and production flag → ProdApprover / DataMaintainer → people inventory → `verify_features` line 16; rollback
+- `tools/verify_features.py`, `tools/verify_features.sh` — line 16: the 8 v1.1 containers exist, `AGENT_OFFBOARDING` / `OFFBOARD_DELETE_USER` / `EXTERNAL_UPLOAD_API_ENABLED` are off, every real project has its tenant id and production flag (self-test cases added)
+- `tools/deploy_free.sh` — the what-if summary now lists the 21 containers, the v1.1 worker data roles and the new settings (it still said 13 containers)
+- `tools/import_workbook.py`, `tools/test_register_user.py` — `ProdApprover` and `DataMaintainer` can be registered (the tools refused them, so F3 approvals and F4 uploads could not be used live)
+- `docs/V1_1_PLAN.md`, `docs/DEPLOYMENT_LOG.md`, `docs/NEXT_SESSION.md`, `CLAUDE.md` — P6 approval, decisions 12a / 13a confirmed, option 1 recorded
+Tests: .NET 494/495 (1 opt-in Cosmos emulator skip); SPA 24/24; Python tool self-tests 5/5 (incl. the new verify_features line 16 and role cases); `bash -n` on both scripts. Playwright not re-run: no app code changed in P7.
+Verified facts added: 0
+Open questions: None
+Risks:
+1. Nothing is deployed (the goal says: do not deploy). The what-if, apply and live checks run in Gokul's Cloud Shell; their output decides the next step.
+2. The first live run is the first time Graph and ARM are called for v1.1 reads (F84, F94, F103); offboarding plans in option 1 only read.
+Next step: Gokul runs `tools/deploy_free.sh whatif <subscriptionId> .local/params.json` (docs/V1_1_DEPLOY.md step 2) and sends `.local/whatif.txt`; apply only after "approved".
+
