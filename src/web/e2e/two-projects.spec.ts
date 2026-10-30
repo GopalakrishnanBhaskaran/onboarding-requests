@@ -369,7 +369,7 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
     group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
-    justification: 'SAMPLE: views dashboards.',
+    justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
   });
   await expect(alice.page.getByRole('button', { name: 'Offboard user' })).toHaveCount(0);
   await alice.ctx.close();
@@ -379,6 +379,21 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
   await open(paul.page, requestId);
   const panel = paul.page.getByRole('region', { name: 'Offboarding' });
   await expect(panel.getByRole('heading', { name: `Offboarding — ${upn}` })).toBeVisible();
+  // A request alone does not make the person the project's (any Requester can write one): not found until approved.
+  await panel.getByRole('button', { name: 'Offboard user' }).click();
+  await expect(panel.getByText(/Person in this project not found/)).toBeVisible();
+
+  const olivia = await as(browser, 'sample-user-olivia');
+  await open(olivia.page, requestId);
+  await decide(olivia.page, 'Approve business need');
+  await olivia.ctx.close();
+  const sam = await as(browser, 'sample-user-sam');
+  await open(sam.page, requestId);
+  await decide(sam.page, 'Approve risk and access level');
+  await expectStage(sam.page, 'With ID Team');
+  await sam.ctx.close();
+
+  await open(paul.page, requestId);
   await panel.getByRole('button', { name: 'Offboard user' }).click();
   // No worker runs locally: the plan stays with the AI agent, and nothing can be confirmed before it is ready.
   await expect(panel.getByText('Planning (the AI agent reads Entra and Azure)')).toBeVisible();

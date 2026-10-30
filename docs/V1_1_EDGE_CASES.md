@@ -76,7 +76,7 @@ Every edge case the feature pack lists is one named, automated test (xUnit unles
 ## P6 independent review findings → tests (`REVIEW.md`)
 | Finding | Test(s) |
 |---|---|
-| 1 Critical: offboarding not bound to the project; directory-role holders | `F5_Only_the_projects_own_people_are_offboarded`, `F5_A_directory_role_holder_is_left_to_people_and_nothing_is_changed_in_Entra_or_Azure` |
+| 1 Critical: offboarding not bound to the project; directory-role holders (re-check: High remainder, a request alone counted) | `F5_Only_the_projects_own_people_are_offboarded` (approved requests only), `F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project` (the re-check probe), `F5_A_directory_role_holder_is_left_to_people_and_nothing_is_changed_in_Entra_or_Azure`; Playwright "Offboard user: PMO asks for a plan…" (not found before the approvals) |
 | 2 High: four eyes never effective | `F5_Requester_equals_confirmer_in_a_production_tenant_is_refused` (unset = production); `DataModelV11Tests` (every SAMPLE tenant states it); `tools/test_import_workbook.py` (`--production-tenant`) |
 | 3 High: ProdApprover who resubmitted or gets the access | `F3_approver_who_resubmitted_the_request_is_refused`, `F3_approver_who_gets_the_access_is_refused` |
 | 4 High: environment-less row bypass | `F3_an_environment_less_writer_row_requested_for_dev_is_still_escalated` |
@@ -87,4 +87,7 @@ Every edge case the feature pack lists is one named, automated test (xUnit unles
 | 13 Low: keys fetched for any tenant | `F4_External_api_without_the_app_role_or_a_valid_token_is_refused` (no key lookup for an unknown tenant) |
 | 14 Low: Prod spellings | `DataModelV11Tests.Access_levels_rank_read_lowest_and_environments_know_uat` (Prod-EU, Prod2, prd-weu, Production, LIVE are Prod; PreProd, ppd are not) |
 | 16 Low: idempotency per app | `F4_Replayed_idempotency_key_returns_the_first_answer_and_never_applies_twice` |
+| 20 Medium (new, re-check): a half-executed run closed as "nothing was changed" | `F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile` |
+| 21 Low (new, re-check): directory role given after the plan | `F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write` |
+| 9 (re-check remainder): a person known only from requests requests again after offboarding | `F5_Only_the_projects_own_people_are_offboarded` (`409 person_is_leaver`) |
 | 17 Low: `Cancelled` status | removed (enum, SPA types); SPA `src/offboarding.test.ts` "offers a new plan when the confirm says the shown plan expired" |

@@ -332,11 +332,24 @@ public class F5OffboardingTests
         Assert.Equal(404, (await Plan(app, outsider)).Status);
         Assert.Equal(404, (await Plan(app, retired)).Status);
         Assert.Equal(404, (await Plan(app, "sample.leaver@other.invalid")).Status);
-        // A person known only from a request of the project (no inventory entry) is the project's person.
+        // A person known only from a request of the project: only a request its Owner and Security approved counts (any
+        // Requester can write a request for anyone).
+        const string joiner = "sample.joiner@sample.invalid";
         var id = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.joiner@company.example"));
-        app.Directory.AddUser((await app.Request(id)).DomainId!);
-        Assert.Equal(202, (await Plan(app, "sample.joiner@sample.invalid")).Status);
+        Assert.Equal(404, (await Plan(app, joiner)).Status);
+        await app.RunWorker();
+        Assert.Equal(200, (await app.Approve(id, TestApp.Olivia)).Status);
+        Assert.Equal(200, (await app.Approve(id, TestApp.Sam)).Status);
+        app.Directory.AddUser(joiner);
+        var j = await Planned(app, joiner);
+        Assert.Equal("Planned", Status(j));
         Assert.Empty(await app.Stores.OffboardingRuns.ListAsync(TestApp.Beta));
+        await Execute(app, IdOf(j), joiner);
+        await app.RunWorker();
+        Assert.False(app.Directory.User(joiner)!.AccountEnabled);
+        // Offboarded without a people inventory entry: no new request until the DataMaintainer adds a rehire as Active.
+        var again = await app.Submit(TestApp.Intake(enterpriseId: "sample.joiner@company.example"));
+        Assert.Equal((409, "person_is_leaver"), (again.Status, again.ErrorCode));
 
         // A run that reaches the store some other way is refused by the worker too, and nothing is changed.
         await app.Stores.OffboardingRuns.CreateAsync(new OffboardingRun
@@ -348,8 +361,73 @@ public class F5OffboardingTests
         var forged = (await app.Stores.OffboardingRuns.GetAsync(TestApp.Alpha, "off-forged"))!.Value;
         Assert.Equal(OffboardingStatus.Failed, forged.Status);
         Assert.Contains("people inventory", Assert.Single(forged.Leftovers));
-        Assert.Empty(app.Offboarding.Calls);
+        Assert.DoesNotContain(app.Offboarding.Calls, c => c.Contains(outsider, StringComparison.Ordinal));
         Assert.True(app.Directory.User(outsider)!.AccountEnabled);
+    }
+
+    [Fact]
+    public async Task F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project()
+    {
+        var (app, _) = await Leaver();
+        await OwnTenant(app, TestApp.Beta); // two projects name the same (the agent's) tenant
+        // The re-check probe: Bob (Requester, BETA) writes a BETA request for ALPHA's person; Bella (PMO, BETA) tries alone.
+        var bobs = await app.Submit(TestApp.Intake(enterpriseId: "sample.leaver@company.example", resource: "SAMPLE Test Portal", accessLevel: "User",
+            owner: "sample-user-bella@sample.invalid"), TestApp.Bob, TestApp.Beta);
+        Assert.True(bobs.Status == 201, bobs.Body);
+        Assert.Equal(404, (await Plan(app, user: TestApp.Bella, project: TestApp.Beta)).Status);
+        // Even when BETA lists the person too, ALPHA still holds them (Active): neither project offboards alone.
+        await AddPerson(app, Upn, TestApp.Beta);
+        var shared = await Plan(app, user: TestApp.Bella, project: TestApp.Beta);
+        Assert.Equal((409, "person_in_other_project"), (shared.Status, shared.ErrorCode));
+        Assert.Equal((409, "person_in_other_project"), (await Plan(app)).Pipe(x => (x.Status, x.ErrorCode)));
+        await app.RunWorker();
+        Assert.Empty(app.Offboarding.Calls);
+        Assert.True(app.Directory.User(Upn)!.AccountEnabled);
+        // BETA releases the person (its DataMaintainer marks them Leaver): ALPHA offboards them.
+        var b = (await app.Stores.PeopleInventory.GetAsync(TestApp.Beta, Person.MakeId(Upn)))!;
+        await app.Stores.PeopleInventory.ReplaceAsync(b.Value with { Status = PersonStatus.Leaver }, b.ETag);
+        var planned = await Planned(app);
+        Assert.Equal(202, (await Execute(app, IdOf(planned))).Status);
+        await app.RunWorker();
+        Assert.Equal("Completed", Status(await Get(app)));
+    }
+
+    [Fact]
+    public async Task F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile()
+    {
+        var (app, _) = await Leaver();
+        var planned = await Planned(app);
+        app.Offboarding.FailOnce = $"revoke {Upn}"; // Graph unavailable at the first write: the confirmed run waits
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        Assert.Equal("Executing", Status(await Get(app)));
+        // HR drops the leaver from the next people export ("Retire missing rows").
+        var p = (await app.Stores.PeopleInventory.GetAsync(TestApp.Alpha, Person.MakeId(Upn)))!;
+        await app.Stores.PeopleInventory.ReplaceAsync(p.Value with { Retired = true }, p.ETag);
+        await app.RunWorker();
+        var done = await Get(app);
+        Assert.Equal("Completed", Status(done));
+        Assert.DoesNotContain(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("nothing was changed"));
+        Assert.False(app.Directory.User(Upn)!.AccountEnabled);
+        Assert.Empty(app.Directory.GroupsOf(Upn));
+        // The project changed this account: a new plan is still allowed (to check or finish it).
+        Assert.Equal(202, (await Plan(app)).Status);
+    }
+
+    [Fact]
+    public async Task F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write()
+    {
+        var (app, _) = await Leaver();
+        var planned = await Planned(app);
+        app.Offboarding.Roles[Upn] = ["62e90394-69f5-4237-9190-012177145e10"]; // a directory role, given after the plan
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        var done = await Get(app);
+        Assert.Equal("PartiallyCompleted", Status(done));
+        Assert.Empty(app.Offboarding.Calls);
+        Assert.True(app.Directory.User(Upn)!.AccountEnabled);
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("directory role"));
+        Assert.Empty(await OffboardingMails(app));
     }
 
     [Fact]

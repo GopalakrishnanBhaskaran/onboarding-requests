@@ -1,10 +1,10 @@
-# v1.1 test results (P6: after the review fixes)
+# v1.1 test results (P6: after the review fixes and the re-check fixes)
 
 Run in the build container on 30 Oct 2026 after a clean rebuild (`dotnet build PmoReview.slnx --no-incremental`; no Azure; Graph and ARM mocked). Commands: the xUnit runner `dotnet tests/PmoReview.Tests/bin/Debug/net10.0/PmoReview.Tests.dll -ctrf <file>` (the same suite as `dotnet test --project tests/PmoReview.Tests -f net10.0`), `npx vitest run --reporter=verbose` in `src/web`, `npx playwright test` in `src/web` against `tools/run_local.sh`, and the Python tool self-tests. The first run (before the review: .NET 477, SPA 23) is in git history at commit `c817105`.
 
 | Suite | Total | Passed | Failed | Skipped |
 |---|---|---|---|---|
-| .NET xUnit (net10.0) | 489 | 488 | 0 | 1 |
+| .NET xUnit (net10.0) | 492 | 491 | 0 | 1 |
 | SPA vitest | 24 | 24 | 0 | 0 |
 | Playwright (local SWA emulator) | 11 | 11 | 0 | 0 |
 | Python tool self-tests (`test_import_workbook.py`, `test_register_user.py`, `test_seed_sample_data.py`, `verify_features.py --self-test`, `seed_sample_data.py --dry-run`) | 5 | 5 | 0 | 0 |
@@ -33,6 +33,11 @@ Each line breaks one fix in the source, re-runs the named test class and restore
 | M12 | `nextLink` to another host followed | same |
 | M13 | unknown token tenant fetches signing keys | `F4_External_api_without_the_app_role_or_a_valid_token_is_refused` |
 | M14 | idempotency key not scoped by app | `F4_Replayed_idempotency_key_returns_the_first_answer_and_never_applies_twice` |
+| M15 | any request (not only an approved one) makes the person the project's (re-check, finding 1) | `F5_Only_the_projects_own_people_are_offboarded`, `F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project` |
+| M16 | another project of the tenant holding the person ignored | `F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project` |
+| M17 | the worker's re-check stops a confirmed run (finding 20) | `F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile` (first survived; the test now pauses before any write) |
+| M18 | a directory role given after the plan ignored (finding 21) | `F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write` |
+| M19 | a person offboarded from requests only may request again | `F5_Only_the_projects_own_people_are_offboarded` |
 
 ## .NET tests (name — result)
 
@@ -181,6 +186,7 @@ Each line breaks one fix in the source, re-runs the named test class and restore
 - PmoReview.Tests.Unit.AgentTests.Security_escalation_goes_to_the_configured_security_manager — passed
 - PmoReview.Tests.Unit.F3ProdGuardTests.F3_prod_write_via_ui_bundle_is_needs_human_approval_and_escalated — passed
 - PmoReview.Tests.Security.RunAccessTests.Operator_can_advance_a_request_without_the_worker — passed
+- PmoReview.Tests.Unit.F5OffboardingTests.F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile — passed
 - PmoReview.Tests.Unit.ReviewChecksTests.Assigned_role_that_no_longer_matches_the_mapping_fails — passed
 - PmoReview.Tests.Unit.OutboundTests.Ado_work_item_is_created_once_per_request_and_updated_with_new_events — passed
 - PmoReview.Tests.Unit.IntakeTests.Invalid_formats_are_rejected(enterpriseId: "bad id!", first: "Sample", owner: "o@sample.invalid", message: "Enterprise ID") — passed
@@ -330,6 +336,7 @@ Each line breaks one fix in the source, re-runs the named test class and restore
 - PmoReview.Tests.Unit.ProvisioningTests.Existing_account_the_agent_records_the_id_step_itself_and_verifies_it_on_the_next_run — passed
 - PmoReview.Tests.Unit.AgentTapTests.A_failed_mail_leaves_the_pass_to_the_id_team_and_the_unseen_pass_is_never_kept — passed
 - PmoReview.Tests.Unit.ProvisioningTests.A_refused_role_assignment_waits_for_the_permission_too — passed
+- PmoReview.Tests.Unit.F5OffboardingTests.F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project — passed
 - PmoReview.Tests.Unit.ContactsAndMailTests.With_mail_on_an_action_mail_that_reaches_nobody_raises_a_high_issue — passed
 - PmoReview.Tests.Unit.PrivilegedProvisioningTests.A_task_left_only_because_the_row_was_privileged_goes_back_to_the_agent_when_privileged_rows_are_switched_on(legacyWording: "mapping row A-DBW-ENG-ADMIN is privileged access") — passed
 - PmoReview.Tests.Acceptance.AcceptanceTests.AC22_Auto_fix_limits_then_failed_needs_dev — passed
@@ -357,6 +364,7 @@ Each line breaks one fix in the source, re-runs the named test class and restore
 - PmoReview.Tests.Unit.ProcessingTests.Edit_during_processing_marks_the_run_superseded — passed
 - PmoReview.Tests.Unit.ReviewChecksTests.Mapping_sheet_gaps_fail_with_a_specific_reason(resource: "SAMPLE Team Wiki", level: "Edit", code: "MAP_GROUP_NAME", reason: "naming convention") — passed
 - PmoReview.Tests.Unit.ProvisioningTests.An_account_outside_the_projects_current_domain_is_never_created — passed
+- PmoReview.Tests.Unit.F5OffboardingTests.F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write — passed
 - PmoReview.Tests.Unit.TenantEnvironmentTests.A_project_bound_to_the_agents_own_tenant_is_provisioned — passed
 - PmoReview.Tests.Unit.F1ResourceSelectorTests.F1_banded_edit_distance_matches_a_plain_levenshtein — passed
 - PmoReview.Tests.Unit.MailTests.The_acs_sender_reports_a_failure_as_a_category(status: 503, category: "MailUnavailable") — passed

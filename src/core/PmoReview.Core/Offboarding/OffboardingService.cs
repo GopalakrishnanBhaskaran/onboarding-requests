@@ -48,8 +48,8 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
             throw AppException.Conflict("tenant_not_connected", $"Offboarding is not available for {Tenants.Label(project)}: " +
                 (Tenants.NotConnected(project, settings.AgentTenantId) ?? "the project names no Entra tenant, so the AI agent does not know the account is in its tenant") + ".");
         // Only this project's own people: a PMO or Operator never offboards an account of another project (404, like any
-        // record outside the caller's projects).
-        if (await NotOffboardableAsync(stores, project, upn, settings, ct) is not null) throw AppException.NotFound("Person in this project");
+        // record outside the caller's projects), nor one another project of the tenant still holds (409).
+        Refuse(await NotOffboardableAsync(stores, project, upn, settings, ct));
         var runs = await RunsAsync(project.ProjectId, upn, ct);
         if (runs.FirstOrDefault(r => r.Status is OffboardingStatus.Planning or OffboardingStatus.Executing
                                      || (r.Status == OffboardingStatus.Planned && !Expired(r))) is { } open)
@@ -94,8 +94,8 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
             throw AppException.Conflict("offboarding_off", "Offboarding changes are switched off (AGENT_OFFBOARDING). The plan shows what would change; the teams do it by hand.");
         if (Expired(run))
             throw AppException.Conflict("plan_expired", $"The plan is older than {settings.OffboardPlanValidFor.TotalHours:0} hours. Make a new plan and confirm that one.");
-        if (!Owned(project, settings.AgentTenantId) || await NotOffboardableAsync(stores, project, upn, settings, ct) is not null)
-            throw AppException.NotFound("Person in this project");
+        if (!Owned(project, settings.AgentTenantId)) throw AppException.NotFound("Person in this project");
+        Refuse(await NotOffboardableAsync(stores, project, upn, settings, ct));
         // Four eyes in a production tenant (and in any tenant not marked otherwise): the person who asked for the plan does not confirm it.
         if (project.IsProductionTenant != false && (caller.UserId == run.RequestedBy || (run.RequestedByName is { Length: > 0 } n && caller.Is(n))))
             throw new AppException(ErrorKind.Forbidden, "requester_cannot_confirm", "In a production tenant a second person (PMO or Operator) confirms the offboarding, not the one who asked for the plan.");
@@ -127,19 +127,52 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         return OffboardingView.Of(run ?? throw AppException.NotFound("Offboarding"));
     }
 
+    /// <summary>Why an account may not be offboarded from a project. <see cref="Shared"/>: another project of the tenant still holds it.</summary>
+    public sealed record Refusal(string Reason, bool Shared = false);
+
     /// <summary>
-    /// Why this account is not one of the project's people (null = it is): the project names its own Entra tenant, the
-    /// account ends with the project's Domain ID suffix (when set), and it is a person of the project's people inventory
-    /// (not retired) or the Domain ID of one of the project's requests.
+    /// Why this account is not one of the project's own people (null = it is). The project names the agent's own Entra
+    /// tenant; the account ends with the project's Domain ID suffix (when set); it is a non-retired person of the project's
+    /// people inventory, or the Domain ID of a request of the project that both its Owner and Security approved (a request
+    /// alone is not enough: any Requester can write one), or an earlier run of the project already changed it. And no other
+    /// project of the same tenant still holds it (an Active person of its inventory, or an approved request not closed):
+    /// offboarding is tenant-wide, so that project releases the person first (review finding 1).
     /// </summary>
-    public static async Task<string?> NotOffboardableAsync(DataStores stores, Project project, string upn, WorkflowSettings settings, CancellationToken ct)
+    public static async Task<Refusal?> NotOffboardableAsync(DataStores stores, Project project, string upn, WorkflowSettings settings, CancellationToken ct)
     {
-        if (!Owned(project, settings.AgentTenantId)) return $"{Tenants.Label(project)} is not the AI agent's tenant";
+        if (!Owned(project, settings.AgentTenantId)) return new($"{Tenants.Label(project)} is not the AI agent's tenant");
         if (project.DomainIdSuffix is { Length: > 0 } suffix && !upn.EndsWith(suffix.Trim(), StringComparison.OrdinalIgnoreCase))
-            return $"{upn} does not end with the project's Domain ID suffix {suffix.Trim()}";
-        if ((await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false }) return null;
-        return (await stores.Requests.ListAsync(project.ProjectId, ct)).Any(r => r.Value.ProjectId == project.ProjectId && string.Equals(r.Value.DomainId, upn, StringComparison.OrdinalIgnoreCase))
-            ? null : $"{upn} is not in the project's people inventory and has no request in the project";
+            return new($"{upn} does not end with the project's Domain ID suffix {suffix.Trim()}");
+        var mine = (await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false }
+                   || (await RequestsForAsync(stores, project.ProjectId, upn, ct)).Any(Granted)
+                   || (await stores.OffboardingRuns.ListAsync(project.ProjectId, ct)).Any(r => r.Value.EnterpriseId == upn
+                          && r.Value.Steps.Any(s => s.Result == OffboardingStepResult.Done && s.Name != OffboardingJob.Resolve));
+        if (!mine) return new($"{upn} is not in the project's people inventory and no request of the project was approved for them");
+        foreach (var other in (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value)
+                     .Where(p => p.ProjectId != project.ProjectId && Tenants.Connected(p, settings.AgentTenantId)))
+        {
+            var held = (await stores.PeopleInventory.GetAsync(other.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false, Status: PersonStatus.Active }
+                       || (await RequestsForAsync(stores, other.ProjectId, upn, ct)).Any(r => Granted(r) && r.Flow!.Status != RequestStatus.Closed);
+            if (held)
+                return new($"{upn} also belongs to another project in this tenant; offboarding is tenant-wide, so that project releases the person first " +
+                           "(its DataMaintainer marks them Leaver or removes them from its people inventory, and its approved requests are closed)", Shared: true);
+        }
+        return null;
+    }
+
+    private static async Task<List<AccessRequest>> RequestsForAsync(DataStores stores, string projectId, string upn, CancellationToken ct) =>
+        (await stores.Requests.ListAsync(projectId, ct)).Select(r => r.Value)
+            .Where(r => r.ProjectId == projectId && string.Equals(r.DomainId, upn, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    /// <summary>The project's Owner and Security both approved this request (its access was, or is being, granted).</summary>
+    private static bool Granted(AccessRequest r) =>
+        r.Flow is { } f && f.CurrentApproval(ApprovalStage.Owner)?.Decision == ApprovalDecision.Approved && f.CurrentApproval(ApprovalStage.Security)?.Decision == ApprovalDecision.Approved;
+
+    private static void Refuse(Refusal? refusal)
+    {
+        if (refusal is null) return;
+        if (refusal.Shared) throw AppException.Conflict("person_in_other_project", refusal.Reason + ".");
+        throw AppException.NotFound("Person in this project");
     }
 
     /// <summary>The project names an Entra tenant and it is the AI agent's own (stricter than <see cref="Tenants.Connected"/>, which lets a project with no tenant through).</summary>

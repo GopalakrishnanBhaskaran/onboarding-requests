@@ -37,13 +37,15 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             {
                 try
                 {
-                    if (await OffboardingService.NotOffboardableAsync(stores, project, v.Value.EnterpriseId, settings, ct) is { } why)
+                    // Belt and braces before anything is read or changed: the API checks this before it records a run and again
+                    // at the confirmation. A confirmed run is never stopped half-way by it (it goes through verify instead).
+                    if (v.Value.Status == OffboardingStatus.Planning
+                        && await OffboardingService.NotOffboardableAsync(stores, project, v.Value.EnterpriseId, settings, ct) is { } why)
                     {
-                        // Belt and braces: the API checks this before it records a run.
                         await SaveAsync(project, v, v.Value with
                         {
-                            Status = OffboardingStatus.Failed, FinishedAt = clock.UtcNow, UpdatedAt = clock.UtcNow, Leftovers = [$"{why}: nothing was changed"],
-                        }, "offboarding-failed", why, ct);
+                            Status = OffboardingStatus.Failed, FinishedAt = clock.UtcNow, UpdatedAt = clock.UtcNow, Leftovers = [$"{why.Reason}: nothing was changed"],
+                        }, "offboarding-failed", why.Reason, ct);
                         continue;
                     }
                     if (v.Value.Status == OffboardingStatus.Planning) await PlanAsync(project, v, ct);
@@ -195,10 +197,20 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
 
         var steps = run.Steps.ToList();
         var attempts = new Dictionary<string, int>(run.Attempts);
+        // The account got an Entra directory role after the plan: no more Entra or Azure writes; people offboard it (verify lists it).
+        var roleHolder = memberships.Any(m => m.DirectoryRole);
         for (var i = 0; i < steps.Count; i++)
         {
             var s = steps[i];
             if (s.Result != OffboardingStepResult.Planned) continue;
+            if (roleHolder && s.Name is Revoke or Tap or Membership or Rbac or Disable or Delete)
+            {
+                steps[i] = s with { Result = OffboardingStepResult.Skipped, Detail = $"{s.Detail}: {ByPeople}" };
+                await AuditAsync(project, "offboarding-step", s.Target, $"run {run.Id}: {s.Name} → Skipped (directory role found at execute)", run.CorrelationId, ct);
+                v = await stores.OffboardingRuns.ReplaceAsync(run with { Steps = steps, Attempts = attempts, UpdatedAt = clock.UtcNow }, v.ETag, ct);
+                run = v.Value;
+                continue;
+            }
             string detail;
             try
             {
