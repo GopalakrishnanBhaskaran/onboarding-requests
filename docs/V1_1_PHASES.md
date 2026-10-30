@@ -54,3 +54,23 @@ Risks:
 2. A mapping group still "to be created" is Unresolved in the selector (F1: never granted): the ID team creates it and the worker resolves it before it can be requested through the selector. The older single-request API stays for compatibility (resubmit, tests).
 3. Near-duplicates use edit distance ≤ 2 as specified; short domain codes can collide (e.g. "ph"/"hr"). When both names resolve to different Entra groups, both stay visible with a note instead of hiding one.
 Next step: P3 checkpoint (PERMISSIONS.md, HOSTING.md) — STOP
+
+## Phase 3 result
+Status: Needs approval
+Changed files:
+- `docs/PERMISSIONS.md` — every Graph / ARM / Exchange / Entra app-role permission for F1–F5, why, narrowest option, held or new, what to approve at deploy time
+- `docs/HOSTING.md` — no new Function App needed: F2/F5 run in the existing worker (managed identity), asynchronously; options A (recommended, ≈ ₹0), B (SWA Standard + worker linked as API backend), C (actual-tenant App Service); cost and rollback per option
+- `docs/VERIFIED_FACTS.md` — F93 (Flex Consumption billing), F94 (direct group members, advanced query)
+Tests: .NET 425/426 (1 opt-in Cosmos emulator skip); SPA 16/16; Playwright 9/9 — unchanged since P2 (documents only)
+Verified facts added: 2 (see VERIFIED_FACTS.md)
+Open questions:
+1. Hosting: option A (existing worker, asynchronous, ≈ ₹0) — approve? (B and C need written approval of a plan change / new resources.)
+2. Offboarding app role assignments: leave them under "Not covered" (no `Directory.Read.All`), or grant `Directory.Read.All` so the plan lists them?
+3. Offboarding RBAC reach: which subscriptions get Reader + the users-only constrained RBAC Administrator (delete)?
+4. TAP mail: confirm Graph `sendMail` with the Exchange-scoped `Application Mail.Send` (needs the sender mailbox name and an Exchange admin), or keep ACS for the TAP mail.
+Risks:
+1. `User.RevokeSessions.All`, `User.EnableDisableAccount.All` and `GroupMember.ReadWrite.All` are tenant-wide; only the code limits them to the confirmed offboarding user (and the switch keeps them unused until approved).
+2. TAP delete: Learn lists `UserAuthenticationMethod.ReadWrite.All` as least privileged; the plan reuses the narrower-in-effect `UserAuthMethod-TAP.ReadWrite.All` (listed as sufficient) — prove with the first dry run.
+3. Which subscriptions the worker can list (F84) and the member filter (F94) are to be proven live before F5 relies on them; the code falls back safely (leftover → PartiallyCompleted + escalation).
+4. SWA Standard price is not on Learn (F87): check the pricing calculator before choosing B.
+Next step: Gokul approves P3 (answers 1–4) → P4 (F2 + F4).

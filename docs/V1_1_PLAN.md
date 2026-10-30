@@ -1,7 +1,7 @@
 # v1.1 feature pack — Phase 0 plan (30 Oct 2026)
 
 Binding instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md` (Section B). This file is the P0 output: what exists, what conflicts, the plan per phase, the data model changes, the questions that block P1, and the manual prerequisites.
-Status: **P0 approved 30 Oct 2026 (Gokul: "approved, use your proposals"; Q8: "add the fields to existing testing samples").** P1 and P2 in progress; P3 is the next stop. Nothing deployed.
+Status: **P0 approved 30 Oct 2026 (Gokul: "approved, use your proposals"; Q8: "add the fields to existing testing samples").** P1 and P2 done; P3 checkpoint written and waiting for approval (`docs/V1_1_PHASES.md`). Nothing deployed.
 
 ## 0. Decisions (30 Oct 2026, Gokul)
 Every proposal in sections 2 and 5 is the decision. In short:

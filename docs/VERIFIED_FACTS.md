@@ -108,6 +108,10 @@ Read on the live Microsoft Learn pages from this container (learn.microsoft.com 
 | F91 | App roles for daemon callers: app roles assigned to an application are **application permissions** (client credentials, admin consent); the access token's **`roles`** claim carries them, **`tid`** names the tenant, **`aud`** is the API's client id (v2.0 tokens). | https://learn.microsoft.com/entra/identity-platform/howto-add-app-roles-in-apps [2026-09-25] · https://learn.microsoft.com/entra/identity-platform/access-token-claims-reference [2026-07-24] | 2026-10-30 |
 | F92 | Find a user: `GET /users?$filter=…`, page size up to 999; `ConsistencyLevel: eventual` + `$count` needed for advanced filters (e.g. on `proxyAddresses`). | https://learn.microsoft.com/graph/api/user-list?view=graph-rest-1.0 [2026-05-14] | 2026-10-30 |
 
+| F93 | Flex Consumption billing: **on demand** = memory GB-seconds while executing **minus a monthly free grant**, plus executions **minus a free grant**; **always ready** instances have a baseline charge and **no free grants**. Minimum billable execution 1,000 ms, then rounded up to 100 ms. Amounts: "see the Azure Functions pricing page" (not on Learn). | https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan [2026-09-30] | 2026-10-30 |
+
+| F94 | Direct group members: `GET /groups/{id}/members` returns the group's **direct** members ("not transitive"); supports `$filter`, `$count`, `$select`, `$search`, `$top` **only as advanced queries** (`ConsistencyLevel: eventual` + `$count=true`). Application: least privileged `GroupMember.ReadBasic.All`; `GroupMember.Read.All` (held) is listed as sufficient. Inaccessible member types come back with id and type only. The exact filter on a member id is to be proven with the live dry run before F5 relies on it (fallback: page through the members). | https://learn.microsoft.com/graph/api/group-list-members?view=graph-rest-1.0 | 2026-10-30 |
+
 Not stated on Learn (open): whether SWA forwards an `Authorization: Bearer` header to managed Functions (affects the external upload API, plan C15); the SWA Standard price (F87).
 
 ### Build-environment facts (not platform limits)
