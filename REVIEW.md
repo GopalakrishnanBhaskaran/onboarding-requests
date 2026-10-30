@@ -146,3 +146,69 @@ Every other finding keeps the status from the first re-check.
 | Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 23 |
 
 Deployment gate (spec P6): **met**. Critical = 0 and High = 0. Six Medium and five Low findings stay open; none is a Prod write path or a cross-project authorization breach. The worst is finding 22: offboarding is refused for good, failing closed, for people with approved requests in two projects of one tenant.
+
+## Re-check 3 (commit 291438a, 2026-10-30)
+Scope:
+- The fixes for findings 22 and 23 in `5da7371` (`git diff 47d66fe..5da7371`).
+- Commit `291438a`, which changes only docs and adds one docs test.
+- Done-criterion 7 of the feature pack (Learn citations).
+
+Same rules as before: judged from code and tests only; nothing deployed; no Graph, ARM, Entra or mail call; no repo file other than this one changed.
+
+What was run:
+- `dotnet build PmoReview.slnx --no-incremental`: 0 warnings, 0 errors.
+- `dotnet test --project tests/PmoReview.Tests -f net10.0`: **495 total, 494 passed, 0 failed, 1 skipped** (the opt-in `CosmosEmulatorTests`). `docs/V1_1_TEST_RESULTS.md` still says 494 / 493. The extra test is `Every_verified_fact_cites_learn_and_the_v11_documents_cite_only_existing_facts`, added in `291438a` after the results file was written.
+- `npm --prefix src/web test`: **24/24 passed**, 5 files.
+- Playwright was not re-run.
+- **(probe)** marks 5 throwaway xUnit probes. They ran in a scratch copy outside the repo, deleted afterwards, against the real API host and worker jobs with fake Graph and ARM.
+- 8 Learn pages were fetched read-only (plain HTTPS GET, saved to a scratch folder, deleted afterwards).
+
+### Status changes
+| # | status | evidence (file:line, test) | remaining risk |
+|---|---|---|---|
+| 22 | Closed | **Fix.** `OffboardingService.cs:156-159`: another project's people inventory now decides when it lists the person (Active holds, Leaver releases). When the inventory does not list them, an approved request that is open or Completed holds. The refusal now names a release that can actually be done: list the person as Leaver. **Test.** `F5_A_person_another_project_granted_access_to_is_released_by_its_people_inventory_never_blocked_for_good`. **Probe 22a–c.** Completed requests in both ALPHA and BETA, both naming the agent tenant: ALPHA plan → 409, BETA plan → 409. BETA lists the person as Leaver: ALPHA plan → 202, confirm → 202, run Completed, account disabled. | None. |
+| 23 | Closed | **Fix.** `OffboardingJob.cs:163-178`: a run switched off with some step already Done marks every Planned step Skipped ("left to people"), audits `offboarding-switched-off`, then runs verify. "Nothing was changed" is kept only when no step was Done. **Test.** `F5_Switched_off_half_way_the_rest_is_left_to_people_and_verified_with_an_escalation`. **Probe.** Run paused after "revoke", then switched off: PartiallyCompleted, leftovers list the enabled account, both groups and the Reader assignment, 1 `OffboardingLeftover` escalation, re-plan 202. In the real worker the readers still exist while the switch is off (`src/worker/PmoReview.Worker/Program.cs:92-94`), so verify can read. | None. |
+| 1 | Stays closed | Attempts to re-open it through the 22 fix (both projects naming the agent tenant): **B2.** ALPHA has an empty `TenantId` and holds the person through a Completed request: BETA plan → 409. ALPHA cannot plan itself → 409 `tenant_not_connected`. **B3.** BETA lists the person as Leaver in its *own* inventory while ALPHA has them Active: BETA plan → 409. A BETA listing only releases the person for *other* projects. **B1.** ALPHA lists the person as Leaver, BETA plans, and ALPHA flips back to Active before the worker plans → the run fails at planning ("…nothing was changed"). Flipped back after the plan but before the confirm → 409 at the confirm. **Cross-project inventory writes.** Only a project's own DataMaintainer can write its inventory. The external upload API refuses a tenant that more than one project names (`UploadEndpoints.cs:53`). | Low, not counted, already noted in re-check 2. If ALPHA flips the person back to Active *after* BETA's confirm and before the next worker run (about 5 minutes), the run still completes (probe B1c: Completed, account disabled). Only ALPHA's own DataMaintainer can open this window, by releasing the person and taking them back. By design (B3b): if ALPHA lists the person as Leaver while an approved ALPHA request is still open, ALPHA has released them. |
+
+All other findings keep their earlier status.
+
+### Done-criterion 7 (verified facts cite Learn)
+**`docs/VERIFIED_FACTS.md`**
+- 103 fact rows (F1–F103, no gaps, no duplicates). Every row contains a `https://learn.microsoft.com/` URL (my own parse, which agrees with the new test).
+- For 18 rows (F5, F21, F25–F27, F30–F33, F35–F39, F41, F43, F44, F55) the Learn URL was added in `291438a` as a "Learn (re-read 2026-10-30)" addition next to an earlier non-Learn source.
+
+**The other three documents**
+- `docs/PERMISSIONS.md` cites 38 fact ids, `docs/HOSTING.md` 8, `docs/EXTERNAL_UPLOAD_API.md` 8. All of them exist.
+- Reading them by hand, every permission, limit and platform claim traces to a fact row in the same document. The summary rows B–F of PERMISSIONS.md §3 rely on the detail rows above them (F71–F75, F60/F83, F81).
+
+**Weakness of the new test**
+- Its regex counts the feature labels F1–F5 (for example "F5" in the column "Needed for") as fact ids. Fact ids F1–F5 exist, so a claim that cited only a feature would still pass.
+- Not counted as a finding.
+
+**Live spot-check of 8 citations added in `291438a`.** All pages fetched; the bracketed date of each citation equals the page's `updated_at`.
+
+| Fact | Page | Result |
+|---|---|---|
+| F5 | migrate-dotnet-to-isolated-model | "Support for the in-process model ends on November 10, 2026" ✓ |
+| F21 | static-web-apps/configuration | `apiRuntime` values include `dotnet-isolated:10.0` ✓ |
+| F30 | flex-consumption-plan | instance memory 512 / 2048 / 4096 MB, scale-out up to 1,000 ✓ |
+| F31 | Cosmos DB data-plane RBAC | `00000000-0000-0000-0000-000000000002` and `/dbs/<database-name>/colls/<container-name>` ✓ |
+| F32 | built-in-roles/storage | all four role ids ✓ |
+| F39 | Graph PowerShell authentication-commands | `-UseDeviceAuthentication` ✓ |
+| F41 | TAP create | `lifetimeInMinutes`, `isUsableOnce` ✓ |
+| F38 | user-get | **does not match**: see finding 24 |
+
+### New findings
+| # | finding | severity | file:line | fix |
+|---|---|---|---|---|
+| 24 | **F38's Learn citation misquotes the page.** The citation added in `291438a` says user-get gives `User.ReadBasic.All` as the "least privileged application permission". The live page (`updated_at` 2025-07-23, the date cited) lists **`User.Read.All`** as least privileged for Application; `User.ReadBasic.All` appears only among the higher-privileged *delegated* permissions. The fact is historical: v2 joiner lookup, and `User.ReadBasic.All` is among the retired roles in `tools/verify_features.py:20`. Nothing in code depends on it. Still, a citation that misstates its source breaks R2. | Low | docs/VERIFIED_FACTS.md:48 | Quote the page as it reads (Application, least privileged: `User.Read.All`). If `User.ReadBasic.All` (application) is still relied on, cite the Graph permissions reference for it, or mark F38 as retired. |
+
+### Summary of OPEN findings after re-check 3
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 5 | 7, 8, 9 (partly), 11, 12 |
+| Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 24 |
+
+Deployment gate (spec P6): **met**. Critical = 0 and High = 0. The 5 Medium and 5 Low findings still open include no Prod write path and no cross-project authorization breach.

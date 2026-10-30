@@ -124,7 +124,7 @@ Risks:
 Next step: P6 — edge-case suite complete, independent review agent → REVIEW.md (STOP).
 
 ## Phase 6 result
-Status: Done — waiting for Gokul's approval at the P6 checkpoint (STOP). Independent review: Critical 0, High 0 (deployment gate met, `REVIEW.md` re-check 2).
+Status: Done — waiting for Gokul's approval at the P6 checkpoint (STOP). Independent review: Critical 0, High 0 (deployment gate met, `REVIEW.md` re-checks 2 and 3).
 Changed files:
 - `docs/V1_1_EDGE_CASES.md` — every B.8 edge case and every review finding mapped to a named test; `docs/V1_1_TEST_RESULTS.md` — per-test results and 22 mutation checks
 - `REVIEW.md` — independent review of `c817105` (1 Critical, 5 High, 6 Medium, 7 Low), re-check of `5db8b72` (High 1 left, findings 20–21 new), re-check 2 of `47d66fe` (Critical 0, High 0, findings 22–23 new); written by the review agent only
@@ -137,13 +137,13 @@ Changed files:
 - `tools/import_workbook.py` (`--production-tenant yes|no`) + test; `tools/local-api/Program.cs`, `tools/run_local.sh` (local SAMPLE projects get the local agent tenant)
 - Tests: `F3ProdGuardTests` (+3), `F5OffboardingTests` (+8), `RetiredRowTests` (new, 5), `OffboardingAdapterTests` (+1), `F4UploadTests`, `DataModelV11Tests`, `Support/Fakes.cs`, `Support/UploadFiles.cs`
 - `docs/VERIFIED_FACTS.md` (F103), `docs/PERMISSIONS.md` (row C built), `docs/EXTERNAL_UPLOAD_API.md`, `docs/V1_1_PLAN.md` (P6 fixes 12a, 13a–13c, F3a, F4a; prerequisite 7), `workflows/09-onboarding-flow-v2.md`, `CLAUDE.md`
-Tests: .NET 493/494 (1 opt-in Cosmos emulator skip); SPA 24/24; Playwright 11/11 (local SWA emulator); Python tool tests 5/5; `tsc`, SPA build and `az bicep build infra/main.bicep` clean. 22 mutation checks, all caught (`docs/V1_1_TEST_RESULTS.md`).
-Verified facts added: 1 (F103, see VERIFIED_FACTS.md)
+Tests: .NET 494/495 (1 opt-in Cosmos emulator skip); SPA 24/24; Playwright 11/11 (local SWA emulator); Python tool tests 5/5; `tsc`, SPA build and `az bicep build infra/main.bicep` clean. 22 mutation checks, all caught (`docs/V1_1_TEST_RESULTS.md`).
+Verified facts added: 1 (F103, see VERIFIED_FACTS.md); 18 older rows (F5–F55) now cite a Learn page re-read on 30 Oct 2026, with F21, F30, F38 and F39 corrected where Learn differs
 Open questions:
 1. Decision 12 is tightened (12a): a tenant whose production flag is not set counts as production, so offboarding there needs a second person to confirm. Confirm, or say which tenants are not production (`import_workbook.py --production-tenant no`).
 2. Offboarding a person that two projects of one tenant hold now needs the other project to list them as Leaver first (13a). Confirm this is the wanted rule.
 Risks:
-1. Findings 22 and 23 were fixed after re-check 2 (tests + mutations M20–M22); the review agent has not re-checked them, so `REVIEW.md` still lists them open.
+1. Re-check 3 (`291438a`) closed 22 and 23 and added Low 24 (F38's citation misquoted Learn), corrected afterwards in `VERIFIED_FACTS.md` (not re-checked). The docs test counts the feature names F1–F5 as fact ids (F1–F5 also exist), so it proves cited ids exist, not that every claim is cited; the reviewer traced the claims by hand.
 2. Open by decision (not fixed in P6): Medium 7 (Prod "Read" rows with no Azure roles are trusted), 8 (no list of mapping quality issues for the DataMaintainer), 9 (part: another project of the tenant can still take a new request for an offboarded person; the agent does not refuse a disabled account), 11 (an upload apply cut by the 45 s SWA limit can stay half-applied), 12 (apply is not bound to the validated plan); Low 5 (near-duplicate variants through the single-request route), 15, 18, 19. Each has a proposed fix in `REVIEW.md`.
 3. Graph and ARM are mocked only (R9): subscription listing (F84), the direct-member query (F94), TAP delete and `nextLink` behaviour are proven only by the first approved live dry run.
 4. A project with environments but no Prod now sends environment-less rows above Read to a ProdApprover (fails closed, F3a).

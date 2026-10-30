@@ -4,12 +4,12 @@ Run in the build container on 30 Oct 2026 after a clean rebuild (`dotnet build P
 
 | Suite | Total | Passed | Failed | Skipped |
 |---|---|---|---|---|
-| .NET xUnit (net10.0) | 494 | 493 | 0 | 1 |
+| .NET xUnit (net10.0) | 495 | 494 | 0 | 1 |
 | SPA vitest | 24 | 24 | 0 | 0 |
 | Playwright (local SWA emulator) | 11 | 11 | 0 | 0 |
 | Python tool self-tests (`test_import_workbook.py`, `test_register_user.py`, `test_seed_sample_data.py`, `verify_features.py --self-test`, `seed_sample_data.py --dry-run`) | 5 | 5 | 0 | 0 |
 
-Also clean: `npx tsc -b` and `npm run build` in `src/web`, and `az bicep build --file infra/main.bicep` (local compile, no Azure call).
+Also clean: `npx tsc -b` and `npm run build` in `src/web`, and `az bicep build --file infra/main.bicep` (local compile, no Azure call). Added after this list was generated (commit `291438a`): `InfraConsistencyTests.Every_verified_fact_cites_learn_and_the_v11_documents_cite_only_existing_facts` — passed (its failure was shown by removing one citation).
 
 Skipped: `CosmosEmulatorTests.Full_flow_runs_on_cosmos_next_to_legacy_v1_documents` (opt-in: needs `PMO_COSMOS_EMULATOR`).
 
