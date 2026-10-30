@@ -95,6 +95,9 @@ public sealed class CallerContext(string userId, string displayName, IReadOnlyDi
 
     public bool InProject(string projectId) => Grants.ContainsKey(projectId);
 
+    /// <summary>No signed-in user and no grants: the caller of a route that authenticates an application token itself.</summary>
+    public static CallerContext None { get; } = new("app", "", new Dictionary<string, IReadOnlySet<AppRole>>());
+
     public bool Has(string projectId, Permission permission) =>
         Grants.TryGetValue(projectId, out var roles) && AccessPolicy.Allows(roles, permission);
 

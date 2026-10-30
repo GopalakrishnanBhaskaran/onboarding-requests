@@ -67,7 +67,7 @@ public sealed class TestApp
     public PilotSettings Settings { get; }
 
     private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
-        ILoggerFactory? loggers = null)
+        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null)
     {
         loggers ??= NullLoggerFactory.Instance;
         Stores = stores ?? InMemoryDataStores.Create();
@@ -76,7 +76,7 @@ public sealed class TestApp
         Directory = FakeDirectory.SeededFromSample();
         Roles = new FakeRoles();
         Api = PilotApp.BuildWorkflow(Stores, settings, Clock, loggers, model, queue, apiDirectory);
-        Host = PilotApp.Build(Stores, settings, Clock, loggers, model, queue, apiDirectory);
+        Host = PilotApp.Build(Stores, settings, Clock, loggers, model, queue, apiDirectory, signingKeys: signingKeys);
         Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
         Mail = new FakeDirectMail();
@@ -98,8 +98,8 @@ public sealed class TestApp
 
     /// <summary>Real wiring with an optional scripted reviewer, settings, queue, or a directory reader in the API process.</summary>
     public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null,
-        ILoggerFactory? loggers = null) =>
-        new(settings ?? new PilotSettings(), model, queue, apiDirectory, loggers: loggers);
+        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null) =>
+        new(settings ?? new PilotSettings(), model, queue, apiDirectory, loggers: loggers, signingKeys: signingKeys);
 
     /// <summary>The loggers of the API and the worker (a capturing factory in the F2 "never in the logs" test).</summary>
     public ILoggerFactory Loggers { get; }
@@ -247,6 +247,25 @@ public sealed class TestApp
         if (user is not null) headers[ClientPrincipalParser.HeaderName] = Principal(user);
         if (ifMatch is not null) headers["If-Match"] = ifMatch;
         return Send(method, path, headers, rawBody ?? (body is null ? null : AppJson.Serialize(body)), ct);
+    }
+
+    /// <summary>F4: a file upload from the Data uploads page (multipart body, signed-in user).</summary>
+    public Task<Resp> Upload(string user, string project, string kind, byte[] file, string fileName, string mode = "validate", bool retireMissing = false,
+        int? baseVersion = null, string? sheet = null)
+    {
+        var query = $"mode={mode}&retireMissing={(retireMissing ? "true" : "false")}{(baseVersion is null ? "" : $"&baseVersion={baseVersion}")}{(sheet is null ? "" : $"&sheet={Uri.EscapeDataString(sheet)}")}";
+        return SendRaw("POST", $"projects/{project}/uploads/{kind}?{query}", new Dictionary<string, string>
+        {
+            [ClientPrincipalParser.HeaderName] = Principal(user), ["Content-Type"] = UploadFiles.MultipartType,
+        }, UploadFiles.Multipart(file, fileName));
+    }
+
+    /// <summary>A request with a binary body (file uploads), the way the Functions host passes it.</summary>
+    public async Task<Resp> SendRaw(string method, string path, Dictionary<string, string> headers, byte[] body, CancellationToken ct = default)
+    {
+        var text = body.Length <= ApiHost.MaxBodyBytes + 1 ? System.Text.Encoding.UTF8.GetString(body) : null;
+        var r = await Host.HandleAsync(new ApiRequest(method, path, headers, text, Guid.NewGuid().ToString("n")) { RawBody = body }, ct);
+        return new Resp(r.Status, r.SerializedBody, r.Headers);
     }
 
     public async Task<Resp> Send(string method, string path, Dictionary<string, string> headers, string? body, CancellationToken ct = default)

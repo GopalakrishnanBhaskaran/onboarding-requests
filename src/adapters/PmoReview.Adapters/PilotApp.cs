@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using PmoReview.Adapters.Dispatch;
 using PmoReview.Adapters.Review;
+using PmoReview.Adapters.Uploads;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Http;
@@ -10,6 +11,7 @@ using PmoReview.Core.Security;
 using PmoReview.Core.Services;
 using PmoReview.Core.Sources;
 using PmoReview.Core.Storage;
+using PmoReview.Core.Uploads;
 using PmoReview.Core.Workflow;
 
 namespace PmoReview.Adapters;
@@ -128,7 +130,8 @@ public sealed record WorkflowParts(
     IssueLog Issues,
     ContactInventoryService Contacts,
     ResourceService Resources,
-    RequestBundleService Bundles);
+    RequestBundleService Bundles,
+    UploadService Uploads);
 
 /// <summary>Composition root shared by the Functions hosts and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
@@ -137,14 +140,21 @@ public static class PilotApp
     /// <param name="queue">Paid environment only.</param>
     /// <param name="directory">Read-only Entra reader. None in the SWA-managed API (no managed identity): the worker has it.</param>
     /// <remarks>The API never gets a directory or role writer: only the worker provisions (v2.1).</remarks>
+    /// <param name="signingKeys">F4 external API: the tenants' token signing keys (test seam; default: Entra's public OpenID metadata).</param>
     public static ApiHost Build(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
-        IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null)
+        IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null,
+        ISigningKeys? signingKeys = null)
     {
         var parts = BuildWorkflow(stores, settings, clock, loggers, model, queue, directory, roles);
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
         host.MapCore(stores, parts.Service, parts.MappingSheet, parts.Contacts);
         host.MapRuns(parts.Runs);
         host.MapV11(parts.Service, parts.Resources, parts.Bundles);
+        // F4: the Data uploads page, and the external upload API (404 unless EXTERNAL_UPLOAD_API_ENABLED=true).
+        var tokens = settings.Workflow.ExternalUploadApiEnabled
+            ? new UploadTokenValidator(signingKeys ?? new OpenIdSigningKeys(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, clock), settings.Workflow.ExternalUploadAudience, clock)
+            : null;
+        host.MapUploads(parts.Uploads, stores, tokens, settings.Workflow);
         return host;
     }
 
@@ -172,6 +182,6 @@ public static class PilotApp
             loggers.CreateLogger<WorkflowService>());
         var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
-            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service));
+            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service), new UploadService(stores, clock, settings.Workflow));
     }
 }

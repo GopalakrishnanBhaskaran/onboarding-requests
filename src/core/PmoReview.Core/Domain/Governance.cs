@@ -57,11 +57,21 @@ public sealed record DataVersion : IDocument
     public IReadOnlyList<string> Before { get; init; } = [];
     /// <summary>Parts only: ids of the rows this version added.</summary>
     public IReadOnlyList<string> Added { get; init; } = [];
+    /// <summary>
+    /// Head record only (<see cref="HeadId"/>; <see cref="Version"/> = the current version, 0 before the first upload): the
+    /// version an apply or rollback is writing now, by whom and since when. Claimed with the head's ETag, so two uploads
+    /// never write at once; a claim older than 10 minutes is a crashed apply and is undone from its parts.
+    /// </summary>
+    public int? Applying { get; init; }
+    public string? ApplyingBy { get; init; }
+    public DateTimeOffset? ApplyingSince { get; init; }
     public int SchemaVersion { get; init; } = 1;
     [JsonIgnore] public string PartitionKey => ProjectId;
 
     public static string MakeId(DataKind kind, int version, int part = 0) =>
         part == 0 ? $"{kind.ToString().ToLowerInvariant()}-v{version}" : $"{kind.ToString().ToLowerInvariant()}-v{version}-p{part}";
+
+    public static string HeadId(DataKind kind) => $"{kind.ToString().ToLowerInvariant()}-head";
 }
 
 public enum PersonStatus { Active, Leaver }

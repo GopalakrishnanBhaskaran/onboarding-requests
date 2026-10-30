@@ -172,6 +172,11 @@ public partial class InfraConsistencyTests
         Assert.Contains("HttpMethod.Put", arm);
         Assert.Contains("WriteRefused", arm);
 
+        // F4: the external upload API's key reader only reads Entra's public OpenID metadata (GET, no credential).
+        var keys = File.ReadAllText(Path.Combine(adapters, "Uploads", "OpenIdSigningKeys.cs"));
+        Assert.DoesNotMatch(@"HttpMethod\.|PostAsync|PutAsync|DeleteAsync|SendAsync|TokenCredential|Authorization", keys);
+        Assert.Contains("GetStringAsync", keys);
+
         // The website's API never gets a writer: only the worker composes them, and only when switched on.
         Assert.DoesNotContain("Writer", Read("src", "api", "PmoReview.Api", "Program.cs"));
         var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
