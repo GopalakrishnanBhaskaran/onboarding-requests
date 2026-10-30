@@ -38,7 +38,7 @@ Fix: parameters for tenant, environment, resource group and name prefix, with on
 G2. **Anyone with a Microsoft account can sign in** (F10).
 Fix: App Service sign-in with Entra (single tenant, "assignment required"), and Conditional Access (MFA, compliant device). The API rejects a `tid` other than the tenant's. (A10)
 
-G3. **Static Web Apps hosting.** The database key sits in the website settings, and the API runs on .NET 9 (support ends **10 Nov 2026**).
+G3. **Static Web Apps hosting.** The database key sits in the website settings, and the API runs as SWA managed Functions (.NET 10 since 30 Oct 2026; it was .NET 9, support ends 10 Nov 2026).
 Fix: **one App Service app** (Linux, .NET 10) serving the website and the API (`src/webhost`), with a managed identity to Cosmos and Cosmos keys off (`disableLocalAuth`). (A3, A10)
 
 G4. **The free-tier setup does not fit an enterprise subscription.**

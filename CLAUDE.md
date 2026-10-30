@@ -24,14 +24,14 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 |---|---|---|
 | UI | React + Vite + TypeScript + Fluent UI v9 on SWA Free | — |
 | Auth | SWA built-in, pre-configured Entra provider; `/logout` → public `signed-out.html` | SWA custom Entra registration |
-| API | SWA managed Functions, C# isolated (.NET 9), HTTP only; runs the agent step inline after each action | — |
+| API | SWA managed Functions, C# isolated (.NET 10), HTTP only; runs the agent step inline after each action | — |
 | Data | Cosmos DB NoSQL free tier, shared 1000 RU/s | — |
 | AI agent worker | `src/worker` timer (every 5 min) on Flex Consumption, managed identity, Graph read | v2.1 provisioning: Graph `User.Create`, `Group.Create`, `GroupMember.ReadWrite.All`; RBAC Administrator constrained to allow-listed roles; agent TAP: `UserAuthMethod-TAP.ReadWrite.All` (each off until approved) |
 | Reviewer | `RuleOnlyReviewModel` (deterministic checklist) | `AzureOpenAIReviewModel` (temperature 0, json_schema) |
 | Notifications | Outbox (recorded in `notifications`, shown in the app); recipients from the request and the project's Contact inventory (`ContactInventoryService`, `MailAddresses`) | `AcsEmailSender` (`NOTIFY_SENDER=AcsEmail`, managed identity; `deploy_free.sh email`; one mail per 50 recipients), `GraphMailSender` (`NOTIFY_SENDER=GraphMail`); agent TAP sign-in details sent directly (`DirectMail`, Graph from `TAP_MAIL_SENDER`, one verified recipient, never redirected), not stored (audit event only, F2); `NotificationDispatcher` within `MAIL_MAX_PER_MINUTE` / `MAIL_MAX_PER_HOUR` (default 5 / 10, F70), 429 = MailThrottled (waits, no attempt used) |
 | Audit | Trail in the request + issues list | ADO work item (`ADO_ORG_URL`, `ADO_PROJECT`) |
 
-.NET target: libraries **net9.0 + net10.0**; SWA managed API **.NET 9 isolated** because the SWA CLI rejects 10.0 (VERIFIED_FACTS F21). .NET 9 support ends 10 Nov 2026 — switch API csproj + `staticwebapp.config.json` to 10.0 as soon as the CLI accepts it; `InfraConsistencyTests` keeps them in step.
+.NET target: **net10.0** everywhere (`Directory.Build.props`). SWA managed API `dotnet-isolated:10.0` since 30 Oct 2026: SWA CLI 2.1.0 accepts it and Learn lists it (VERIFIED_FACTS F21); the first live `app` deploy is the proof. .NET 9 support ends 10 Nov 2026. `InfraConsistencyTests` keeps the API csproj, `staticwebapp.config.json` and the SWA CLI pin (>= 2.1.0) in step and refuses net9.0.
 
 ## Layout (WAT)
 - `workflows/` SOPs (09 = v2 flow; 08 superseded).

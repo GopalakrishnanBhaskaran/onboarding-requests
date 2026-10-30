@@ -70,7 +70,7 @@ After both approvals, the agent (deterministic code, not the AI model) can creat
 - `/logout` goes to a public `signed-out.html`.
 
 **API**
-- Code: `src/api` runs on Static Web Apps managed Functions (.NET 9 isolated, HTTP only). The logic is in `src/core`: `ApiHost`, `Endpoints`, `RequestService`, `WorkflowService`, `MappingSheetService`, `ContactInventoryService`.
+- Code: `src/api` runs on Static Web Apps managed Functions (.NET 10 isolated since 30 Oct 2026, HTTP only). The logic is in `src/core`: `ApiHost`, `Endpoints`, `RequestService`, `WorkflowService`, `MappingSheetService`, `ContactInventoryService`.
 - No managed identity (F2) and a 45-second limit (F3). It reaches Cosmos with a connection string held in the Static Web Apps app settings.
 - It runs the agent step inline after each action, so people see the next stage at once.
 
@@ -334,7 +334,7 @@ There is one stack per tenant (PEST, Vestacy). Each stack lives in a subscriptio
 ### Pilot → target, component by component
 
 - **Website and API**
-  - Pilot: Static Web Apps Free with managed Functions (.NET 9).
+  - Pilot: Static Web Apps Free with managed Functions (.NET 10).
   - Target: **one App Service app** (Linux, .NET 10). A new host, `src/webhost`, serves the website and reuses `ApiHost`.
 - **Sign-in**
   - Pilot: the pre-configured provider, where any Microsoft account can sign in.

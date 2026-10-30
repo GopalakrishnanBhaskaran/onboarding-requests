@@ -21,7 +21,7 @@ Prerequisites: .NET SDK 10, Node 22 LTS, Python 3. Optional: Azure Functions Cor
 
 **Why `tools/local-api` exists.** Azure Functions Core Tools could not be downloaded in the build environment. `tools/local-api` is a loopback-only, dev-only host that serves the *same* `ApiHost` (routing, auth, processing) as the Functions entry point. It refuses to start without `PILOT_LOCAL_DEV=true`. With Core Tools installed you can instead run `func start` in `src/api/PmoReview.Api` (copy `local.settings.example.json` to `local.settings.json`).
 
-**API runtime.** The managed API runs on `dotnet-isolated:9.0` because SWA CLI 2.0.10 rejects 10.0 (F21). To move to .NET 10 later: set `<TargetFramework>net10.0</TargetFramework>` in `src/api/PmoReview.Api/PmoReview.Api.csproj` and `platform.apiRuntime` to `dotnet-isolated:10.0`, run `dotnet test`, then `tools/deploy_free.sh app <subscriptionId>`.
+**API runtime.** The managed API runs on `dotnet-isolated:10.0` (30 Oct 2026; SWA CLI 2.1.0 accepts it, F21). Rollback if the first deploy is refused: check out the commit before the switch and run `tools/deploy_free.sh app <subscriptionId>` (it deploys .NET 9, supported until 10 Nov 2026).
 
 ## Deploy (only after approval)
 

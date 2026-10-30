@@ -2,9 +2,6 @@
   <!-- Infrastructure adapters: Cosmos repository, dispatchers, review model providers. -->
   <PropertyGroup>
     <RootNamespace>PmoReview.Adapters</RootNamespace>
-    <!-- net9.0 for the SWA managed API today (VERIFIED_FACTS F21, decision A); net10.0 for everything else. -->
-    <TargetFramework></TargetFramework>
-    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../core/PmoReview.Core/PmoReview.Core.csproj" />
