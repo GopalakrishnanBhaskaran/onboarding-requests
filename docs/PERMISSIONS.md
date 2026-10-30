@@ -1,6 +1,6 @@
 # PERMISSIONS — v1.1 (P3 checkpoint, 30 Oct 2026)
 
-**Approved as proposed, 30 Oct 2026 (Gokul; decisions 16–19 in `docs/V1_1_PLAN.md`):** app role assignments stay "Not covered" (no `Directory.Read.All`); RBAC reach = `OFFBOARD_SUBSCRIPTIONS` (the pilot subscription at first); TAP mail through Graph with `Application Mail.Send` scoped by Exchange RBAC for Applications. Approving the design is not a grant: each row below still needs its dry run and `--approved-by`.
+**Approved as proposed, 30 Oct 2026 (Gokul; decisions 16–19 in `docs/V1_1_PLAN.md`):** app role assignments stay "Not covered" (no `Directory.Read.All`, F78); RBAC reach = `OFFBOARD_SUBSCRIPTIONS` (the pilot subscription at first); TAP mail through Graph with `Application Mail.Send` scoped by Exchange RBAC for Applications. Approving the design is not a grant: each row below still needs its dry run and `--approved-by`.
 
 Every Microsoft Graph and Azure (ARM) permission v1.1 needs, why, the narrowest option, and whether the worker already holds it. Facts: `docs/VERIFIED_FACTS.md` (F-numbers, each read on learn.microsoft.com). **Nothing here is granted yet.** Each grant is an Azure/Entra permission change: dry run → Gokul's "approved" → `--approved-by` (CLAUDE.md rule 4).
 
@@ -61,14 +61,14 @@ Built (P5, 30 Oct 2026): reads in `GraphDirectoryReader` (getMemberGroups with `
 | # | Change | Needed for | Scope | Risk and limit |
 |---|---|---|---|---|
 | A | 6 Cosmos container data roles + 8 containers | v1.1 data | the database `pmoreview` | none beyond data; what-if shows it (F31; 21 of 25 containers under shared throughput, F90) |
-| B | `User.RevokeSessions.All` | F5 | tenant-wide (Graph app permissions cannot be scoped to a group) | code calls it only for the confirmed offboarding user |
+| B | `User.RevokeSessions.All` (F71) | F5 | tenant-wide (Graph app permissions cannot be scoped to a group) | code calls it only for the confirmed offboarding user |
 | C | `User.EnableDisableAccount.All` | F5 | tenant-wide | code calls it only for the confirmed offboarding user, who must be a person of the project (people inventory, or a request its Owner and Security approved) in a project that names the agent's own tenant, and held by no other project of that tenant; a user holding an Entra directory role (directly or through a role-assignable group; `getMemberGroups` with `securityEnabledOnly=false` returns directory roles, F77/F102 — no extra permission) is left to people: no Entra or Azure write is planned for that account (built P6, test `F5_A_directory_role_holder_is_left_to_people_and_nothing_is_changed_in_Entra_or_Azure`) |
 | D | Reader (or custom read) + constrained RBAC Administrator (delete, users only) per subscription | F5 | named subscriptions only | could remove any user's assignment there: code limits to the offboarded user; Azure condition limits to users |
 | E | Exchange `Application Mail.Send` scoped to the sender mailbox | F2 (if Graph mail) | one mailbox | needs an Exchange admin; never also in Entra |
 | F | Entra app registration + `Uploads.Write` app role | F4 external API | per client app | only when the external API is switched on |
-| — | `Directory.Read.All`, `User.ReadWrite.All` | optional F5 extras | tenant-wide | **not proposed** |
+| — | `Directory.Read.All` (F78), `User.ReadWrite.All` (F75) | optional F5 extras | tenant-wide | **not proposed** |
 
-Retired / unused that can be removed (optional, approval): `AuditLog.Read.All`.
+Retired / unused that can be removed (optional, approval): `AuditLog.Read.All` (F48).
 
 ## 4. Admin consent
 Graph application permissions need an administrator who can grant tenant-wide admin consent (e.g. Privileged Role Administrator or Global Administrator) — the same as for the v2.1 grants (`deploy_free.sh grant-graph` / `provisioning`). The Exchange scope needs an Exchange administrator. Azure role assignments need Owner or User Access Administrator / RBAC Administrator on the subscriptions in scope.

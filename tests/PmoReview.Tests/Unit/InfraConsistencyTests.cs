@@ -318,6 +318,21 @@ public partial class InfraConsistencyTests
                 .Where(n => n > 5).Distinct().Select(n => $"F{n}").ToList();
             Assert.True(cited.Count >= 5, $"{doc} cites only {cited.Count} facts");
             Assert.All(cited, id => Assert.True(facts.ContainsKey(id), $"{doc} cites {id}, which VERIFIED_FACTS.md does not have"));
+            // Claim level: every line that names a Graph permission, an ARM action or a Microsoft HTTP call cites a fact on
+            // the same line (this app's own /api routes are not platform facts). Code blocks are examples, not claims.
+            var inCode = false;
+            foreach (var (line, n) in Read("docs", doc).Split('\n').Select((l, i) => (l, i + 1)))
+            {
+                if (line.TrimStart().StartsWith("```", StringComparison.Ordinal)) { inCode = !inCode; continue; }
+                if (inCode || !PlatformClaim().IsMatch(line.Replace("/api/", "", StringComparison.Ordinal))) continue;
+                Assert.True(FactCitation().IsMatch(line), $"{doc}:{n} names a permission or API but cites no fact: {line[..Math.Min(line.Length, 120)]}");
+            }
         }
     }
+
+    [GeneratedRegex(@"`[A-Z][A-Za-z]+(?:\.[A-Za-z-]+)*\.(?:All|Send)`|`Microsoft\.[A-Za-z]+/[^`]+`|\b(?:GET|POST|PUT|PATCH|DELETE) (?:/|https://|\{)")]
+    private static partial Regex PlatformClaim();
+
+    [GeneratedRegex(@"\bF(?:[6-9]|\d{2,3})\b|learn\.microsoft\.com")]
+    private static partial Regex FactCitation();
 }
