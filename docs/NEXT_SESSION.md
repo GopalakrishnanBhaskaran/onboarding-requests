@@ -1,5 +1,7 @@
 # Next session — handoff (updated 22 Oct 2026, evening: go-live release)
 
+> **30 Oct 2026 — v1.1 feature pack, Phase 0 done (branch `claude/elegant-darwin-nfot4p`).** Instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`. Plan, conflicts with CLAUDE.md and the 15 open questions: `docs/V1_1_PLAN.md`. New Learn facts F71–F92 in `docs/VERIFIED_FACTS.md`. **Waiting for Gokul's answers before P1.** Nothing built or deployed for v1.1; the go-live steps below are unchanged.
+
 Read first: `docs/GO_LIVE.md` (steps for 23 Oct), `CLAUDE.md`, `SCOPE.md` (22 Oct go-live additions), `workflows/09-onboarding-flow-v2.md` (section *Notifications and the contact inventory*), last rows of `docs/DEPLOYMENT_LOG.md`.
 Branch **`claude/eager-ride-lx6he8`** (on top of `13ca4b9` from `claude/great-goodall-j4ozev`), pushed. No PR.
 
