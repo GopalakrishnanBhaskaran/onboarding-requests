@@ -164,7 +164,7 @@ The external upload API (F4) stays off in all three: it needs hosting option B o
 Manual steps (people, not code): admin consent for the Graph application permissions (Global or Privileged Role Administrator); Exchange RBAC for Applications scope for `TAP_MAIL_SENDER`; ProdApprover and DataMaintainer users per project (`register_user.py`); PMO and team contacts (Contact inventory page); tenant id and production flag per tenant (`import_workbook.py --tenant-id --production-tenant`); people inventory upload per tenant; an `Uploads.Write` app registration only if the external API is switched on later.
 
 ## Phase 7 result
-Status: Needs approval
+Status: Done — P7 is "Deployment options" (feature prompt section 8): the options were delivered, Gokul approved P6 and chose option 1, and its runbook is ready. Deploying is outside this goal ("Do not deploy"); the what-if, Gokul's "approved" and the apply run in Gokul's Cloud Shell (CLAUDE.md rule 4) and are logged in DEPLOYMENT_LOG.md when they happen.
 Changed files:
 - `docs/V1_1_DEPLOY.md` — runbook for option 1 (data and code, every new switch off): what-if → "approved" → apply → `app` + `worker` → tenant id and production flag → ProdApprover / DataMaintainer → people inventory → `verify_features` line 16; rollback
 - `tools/verify_features.py`, `tools/verify_features.sh` — line 16: the 8 v1.1 containers exist, `AGENT_OFFBOARDING` / `OFFBOARD_DELETE_USER` / `EXTERNAL_UPLOAD_API_ENABLED` are off, every real project has its tenant id and production flag (self-test cases added)
