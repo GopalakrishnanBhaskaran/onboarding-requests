@@ -241,6 +241,28 @@ public partial class InfraConsistencyTests
         Assert.Contains("RBAC_ADMIN_ROLE_ID=f58310d9-a9f6-439a-9e8d-f62e7b41a168", deploy);
     }
 
+    /// <summary>
+    /// v1.1 F5 option 3, Entra only (Gokul, 30 Oct 2026): `offboarding … on` grants only the two Graph permissions the writes
+    /// need (F71, F74), never a broad one or an Azure right, is a dry run without approval, names the subscriptions, and the
+    /// website follows the worker's switch on every app deploy.
+    /// </summary>
+    [Fact]
+    public void Offboarding_is_switched_on_only_with_approval_and_only_with_the_two_entra_permissions()
+    {
+        var deploy = Read("tools", "deploy_free.sh");
+        var fn = Regex.Match(deploy, @"agent_offboarding\(\) \{.*?\n\}", RegexOptions.Singleline).Value;
+        var grant = Regex.Match(deploy, @"GRAPH_OFFBOARD_NEW=\((?<r>[^)]*)\)").Groups["r"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(["User.RevokeSessions.All", "User.EnableDisableAccount.All"], grant);
+        Assert.Contains("Dry run: nothing changed.", fn);
+        Assert.Contains("if [[ -z \"${APPROVED_BY:-}\" ]]", fn);
+        Assert.Contains("subs=\"${subs:-$SUB}\"", fn); // never empty: an empty list may mean no subscription is seen
+        Assert.Contains("OFFBOARD_DELETE_USER=false", fn);
+        foreach (var never in new[] { "Directory.Read.All", "User.ReadWrite.All", "az role assignment create", "RoleManagement" })
+            Assert.DoesNotContain(never, fn);
+        Assert.Contains("agent_offboarding \"$MODE\" \"$OFF_SUBS\"", deploy);
+        Assert.Contains("\"AGENT_OFFBOARDING=${offb:-false}\"", deploy);
+    }
+
     [Fact]
     public void Privileged_rows_are_off_by_default_and_privileged_administrator_roles_never_reach_the_agents_allow_list()
     {

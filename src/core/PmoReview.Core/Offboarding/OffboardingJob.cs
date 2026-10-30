@@ -118,7 +118,9 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 : Step(Membership, m.GroupObjectId, "left to people", OffboardingStepResult.Skipped, $"{m.DisplayName}: {m.NotChangeable}"));
         var (assignments, unreadable) = await AssignmentsAsync(id, ct);
         foreach (var s in unreadable)
-            steps.Add(Step(ReadRbac, $"/subscriptions/{s}", "GET role assignments", OffboardingStepResult.Skipped, "the AI agent may not read role assignments in this subscription"));
+            steps.Add(s == NoSubscription
+                ? Step(ReadRbac, "/subscriptions", "GET subscriptions", OffboardingStepResult.Skipped, "the AI agent can see no Azure subscription, so it cannot read role assignments")
+                : Step(ReadRbac, $"/subscriptions/{s}", "GET role assignments", OffboardingStepResult.Skipped, "the AI agent may not read role assignments in this subscription"));
         foreach (var a in assignments)
             steps.Add(Write(Rbac, a.Id, "DELETE role assignment", $"{BuiltInRoles.NameOf(a.RoleDefinitionId) ?? a.RoleDefinitionId} at {a.Scope}"));
         steps.Add(user.AccountEnabled
@@ -138,6 +140,12 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         return steps;
     }
 
+    /// <summary>
+    /// Stands for "no subscription in scope": with nothing to read the agent cannot say that no Azure role is left, so the
+    /// run lists it as a leftover and is never Completed (no PMO mail) on that alone.
+    /// </summary>
+    private const string NoSubscription = "";
+
     /// <summary>The user's own role assignments in every subscription in scope (deduplicated: one above a subscription shows in each).</summary>
     private async Task<(List<RoleAssignmentRef> Assignments, List<string> Unreadable)> AssignmentsAsync(string userObjectId, CancellationToken ct)
     {
@@ -145,6 +153,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         var unreadable = new List<string>();
         if (rbac is null) return ([], []);
         var subscriptions = settings.OffboardSubscriptions.Count > 0 ? settings.OffboardSubscriptions : await rbac.SubscriptionsAsync(ct);
+        if (subscriptions.Count == 0) return ([], [NoSubscription]);
         foreach (var s in subscriptions)
         {
             var list = await rbac.AssignmentsInSubscriptionAsync(s, userObjectId, ct);
@@ -330,7 +339,9 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0) leftovers.Add("a Temporary Access Pass is still registered");
             }
             var (assignments, unreadable) = await AssignmentsAsync(run.ObjectId!, ct);
-            leftovers.AddRange(unreadable.Select(s => $"Azure role assignments in subscription {s} could not be read: check and remove them there"));
+            leftovers.AddRange(unreadable.Select(s => s == NoSubscription
+                ? "the AI agent can see no Azure subscription: check this person's Azure role assignments and remove them there"
+                : $"Azure role assignments in subscription {s} could not be read: check and remove them there"));
             leftovers.AddRange(assignments.Select(a => $"Azure role {BuiltInRoles.NameOf(a.RoleDefinitionId) ?? a.RoleDefinitionId} at {a.Scope} is still assigned"));
         }
         catch (DirectoryReadException e)

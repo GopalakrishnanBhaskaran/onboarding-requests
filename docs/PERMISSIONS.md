@@ -68,6 +68,8 @@ Built (P5, 30 Oct 2026): reads in `GraphDirectoryReader` (getMemberGroups with `
 | F | Entra app registration + `Uploads.Write` app role | F4 external API | per client app | only when the external API is switched on |
 | — | `Directory.Read.All` (F78), `User.ReadWrite.All` (F75) | optional F5 extras | tenant-wide | **not proposed** |
 
+Option 3 as chosen (decision F5a, 30 Oct 2026): **B and C only** (`deploy_free.sh offboarding <sub> on`, dry run → `--approved-by`). **D is deferred:** Learn documents conditions that limit which roles and principal types RBAC Administrator may assign or remove, but no documented way to remove its create right, so the agent gets no Azure right for now and Azure role assignments stay with the role assignment team (a leftover in every run).
+
 Retired / unused that can be removed (optional, approval): `AuditLog.Read.All` (F48).
 
 ## 4. Admin consent

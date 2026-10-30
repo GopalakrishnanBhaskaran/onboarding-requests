@@ -254,6 +254,27 @@ public class F5OffboardingTests
         Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), e => e.Value.Kind == EscalationKind.OffboardingLeftover && e.Value.User == Upn);
     }
 
+    /// <summary>
+    /// Option 3 "Entra only" (Gokul, 30 Oct 2026): the worker has no Azure right and OFFBOARD_SUBSCRIPTIONS is empty, so it
+    /// lists no subscription. It cannot say no Azure role is left: a leftover, never Completed, no PMO mail.
+    /// </summary>
+    [Fact]
+    public async Task F5_No_subscription_visible_is_a_leftover_and_never_completed()
+    {
+        var (app, _) = await Leaver();
+        app.Offboarding.Assignments.Clear();
+        var planned = await Planned(app);
+        Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.ReadRbac && s.Target == "/subscriptions" && s.Result == "Skipped");
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        var done = await Get(app);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("can see no Azure subscription"));
+        Assert.False(app.Directory.User(Upn)!.AccountEnabled); // the Entra steps are done
+        Assert.Empty(await OffboardingMails(app));
+        Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), e => e.Value.Kind == EscalationKind.OffboardingLeftover && e.Value.User == Upn);
+    }
+
     [Fact]
     public async Task F5_Requester_equals_confirmer_in_a_production_tenant_is_refused()
     {
@@ -589,6 +610,7 @@ public class F5OffboardingTests
         await OwnTenant(app);
         const string guest = "sample.partner_corp.invalid#EXT#@sample.invalid";
         app.Directory.AddUser(guest, guest: true);
+        app.Offboarding.Assignments[SubA] = []; // a subscription the agent sees, no role of the guest in it
         await AddPerson(app, guest);
         var planned = await Planned(app, guest);
         Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Revoke && s.Result == "Skipped" && s.Detail.Contains("home tenant"));

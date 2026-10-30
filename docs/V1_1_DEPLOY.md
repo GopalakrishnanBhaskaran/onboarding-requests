@@ -47,4 +47,10 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
 
 ## Next options (each with its own dry run and approval)
 - **Option 2:** `tools/deploy_free.sh tap <subscriptionId> on --sender <mailbox>`, plus the Exchange RBAC for Applications scope on that mailbox (F81).
-- **Option 3:** the offboarding permissions (`docs/PERMISSIONS.md` §3 B, C, D) on the pilot subscription only, plus an `offboarding … on|off` command, still to be built, with a dry run and `--approved-by`.
+- **Option 3, Entra only (chosen by Gokul on 30 Oct 2026, decision F5a):** the agent does the Entra steps of a confirmed offboarding; Azure role assignments stay with the role assignment team.
+  1. Dry run: `tools/deploy_free.sh offboarding <subscriptionId> on`. It lists the Graph permissions (2 new: `User.RevokeSessions.All`, `User.EnableDisableAccount.All`; the others already held), the settings (worker `AGENT_OFFBOARDING=true`, `OFFBOARD_SUBSCRIPTIONS=<subscriptionId>`, `OFFBOARD_DELETE_USER=false`; website `AGENT_OFFBOARDING=true`) and cost ₹0. Nothing changes.
+  2. Gokul replies "approved". Then: `tools/deploy_free.sh offboarding <subscriptionId> on --approved-by "Gokul <date>"` (needs a Global Administrator or Privileged Role Administrator for the Graph grants).
+  3. `tools/deploy_free.sh worker <subscriptionId>` (code with the "no subscription visible" fix), then `bash tools/verify_features.sh <subscriptionId>`: line 17 **PASS**.
+  4. Wait up to 24 hours for the new permissions to reach the worker's token (F61). Then test on a pilot test account: *Offboard user* → plan → tick → *Confirm*. Expected: sessions revoked, TAP and groups removed, account disabled, status **Partially completed** with one leftover (Azure role assignments in the subscription could not be read) and an escalation for the role assignment team. No PMO completion mail while Azure stays with people.
+  - Off at any time, no approval: `tools/deploy_free.sh offboarding <subscriptionId> off`.
+  - Azure role removal by the agent (P3 §3 D) is a later, separate choice: a custom delete-only role, or a proven condition on RBAC Administrator.

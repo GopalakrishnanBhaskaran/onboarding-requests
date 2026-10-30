@@ -56,6 +56,15 @@
 #       or Key Vault Data Access Administrator. Settings only (AGENT_PRIVILEGED); the roles still need the allow-list
 #       (provisioning ... on <scope> <roleIds>). "on" is a security change: dry run without --approved-by. "off" any time.
 #
+#   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh offboarding <subscriptionId> off
+#       v1.1 F5, option 3 "Entra only" (Gokul, 30 Oct 2026): for a plan a PMO or Operator confirmed, the agent revokes the
+#       sessions, removes the TAP and the group memberships, disables the account, verifies and mails the PMO. "on": Graph
+#       User.RevokeSessions.All + User.EnableDisableAccount.All (F71, F74; the rest is held) + worker AGENT_OFFBOARDING=true,
+#       OFFBOARD_SUBSCRIPTIONS (default: this subscription), SWA AGENT_OFFBOARDING=true. No Azure right: the Azure role
+#       assignments stay with the role assignment team (a leftover in every run, so no completion mail). Security change:
+#       dry run without --approved-by. "off": AGENT_OFFBOARDING=false at once; the permissions stay (removal needs approval).
+#
 #   tools/deploy_free.sh environment <subscriptionId> <pilot|dev|test|prod> [--redirect <mail>]
 #       Settings only (worker + SWA): APP_ENVIRONMENT, NOTIFY_REDIRECT_TO (test environments: every mail goes to that
 #       one address, naming the intended recipients), AGENT_TENANT_ID (tenant separation). prod refuses a redirect.
@@ -68,7 +77,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -444,6 +453,62 @@ agent_privileged() {
   echo "Agent privileged rows on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
 }
 
+# v1.1 F5 option 3, Entra steps only (Gokul, 30 Oct 2026). Graph application permissions the offboarding writes need (F71,
+# F74) and the ones it reuses (reads; group membership removal from v2.1 provisioning; TAP removal from the agent TAP).
+GRAPH_OFFBOARD_NEW=(User.RevokeSessions.All User.EnableDisableAccount.All)
+GRAPH_OFFBOARD_REUSED=(User.Read.All GroupMember.Read.All UserAuthenticationMethod.Read.All GroupMember.ReadWrite.All UserAuthMethod-TAP.ReadWrite.All)
+
+agent_offboarding() {
+  local mode="$1" subs="${2:-}" name mi swa graph perm role held s missing=()
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_OFFBOARDING=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=false -o none
+    echo "Agent offboarding switched off on $name and $swa: plans still show what would change; the teams do it by hand."
+    echo "Its Graph permissions stay; removing them is a permission change (approval)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "offboarding on|off"; return 1; }
+  # Explicit subscriptions: with none listed the agent could see no subscription and report nothing left in Azure.
+  subs="${subs:-$SUB}"
+  for s in ${subs//,/ }; do
+    [[ "$s" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || { echo "--subscriptions takes subscription ids, comma-separated."; return 1; }
+  done
+  [[ "$(worker_setting "$name" OFFBOARD_DELETE_USER)" != "true" ]] || { echo "OFFBOARD_DELETE_USER=true on $name is not approved: set it to false first."; return 1; }
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  held=$(list_graph_roles "$mi")
+  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  for perm in "${GRAPH_OFFBOARD_NEW[@]}" "${GRAPH_OFFBOARD_REUSED[@]}"; do
+    if grep -qx "$perm" <<<"$held"; then echo "  Graph application permission: $perm (already held)"
+    else echo "  Graph application permission: $perm (NEW, tenant-wide; the code uses it only for a confirmed leaver)"; missing+=("$perm"); fi
+  done
+  echo "  Worker settings: AGENT_OFFBOARDING=true OFFBOARD_SUBSCRIPTIONS=$subs OFFBOARD_DELETE_USER=false; SWA: AGENT_OFFBOARDING=true"
+  echo "  Azure: no right is granted (Entra only). The agent cannot read the role assignments in $subs, so every run lists"
+  echo "  them as a leftover for the role assignment team: Partially completed + escalation, no PMO completion mail."
+  echo "  What the agent does, only for a plan a PMO or Operator confirmed (a second person in a production tenant), only for"
+  echo "  the project's own people in a project that names this tenant: revoke sessions, remove the TAP, remove group"
+  echo "  memberships (never dynamic, role-assignable or synced groups), disable the account, mark the people inventory Leaver,"
+  echo "  close open requests, verify, audit, mail the PMO. Never deletes the account. A directory-role holder is left to people."
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  for perm in ${missing[@]+"${missing[@]}"}; do
+    role=$(graph_role_id "$perm")
+    [[ -n "$role" ]] || { echo "Could not find $perm on Microsoft Graph."; return 1; }
+    az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+      --headers "Content-Type=application/json" --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+    echo "Granted $perm (approved by $APPROVED_BY)"
+  done
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_OFFBOARDING=true "OFFBOARD_SUBSCRIPTIONS=$subs" OFFBOARD_DELETE_USER=false
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=true -o none
+  echo "Agent offboarding on (approved by $APPROVED_BY). A new Graph permission can take up to ~24 h to reach the worker's"
+  echo "token (F61): a step refused before then fails, and the run ends Partially completed naming it. Graph permissions now held:"
+  list_graph_roles "$mi"
+}
+
 # Per-environment settings (no resource or permission change). A test environment may send every mail to one address.
 set_environment() {
   local env="$1" redirect="${2:-}" name swa tenant
@@ -546,16 +611,17 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv
+  local env sender redirect tenant tap priv offb
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
+  offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -769,6 +835,17 @@ PY
     fi
     agent_privileged "$MODE"
     ;;
+  offboarding)
+    MODE="${3:?on|off}"; shift 3; OFF_SUBS=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --subscriptions) OFF_SUBS="${2:?subscription ids}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (offboarding $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    agent_offboarding "$MODE" "$OFF_SUBS"
+    ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
     [[ "${4:-}" == "--redirect" ]] && REDIRECT="${5:?mail address}"
@@ -802,5 +879,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email ..."; exit 1 ;;
 esac
