@@ -96,7 +96,8 @@ public partial class InfraConsistencyTests
 
         // Cosmos data roles: exactly the containers the agent uses; read-only on projects; never userAccess.
         var writable = Regex.Match(bicep, @"var writableContainers = \[(?<list>[^\]]*)\]").Groups["list"].Value;
-        Assert.Equal(["requests", "reviewRuns", "mappingSheet", "responseDocument", "notifications", "issues"],
+        Assert.Equal(["requests", "reviewRuns", "mappingSheet", "responseDocument", "notifications", "issues",
+                "peopleInventory", "escalations", "mappingQualityIssues", "groupResolutions", "offboardingRuns", "auditEvents"],
             Quoted().Matches(writable).Select(m => m.Groups[1].Value).ToArray());
         Assert.Contains("/colls/projects'", bicep);
         Assert.Contains("cosmosBuiltInDataReader", bicep);

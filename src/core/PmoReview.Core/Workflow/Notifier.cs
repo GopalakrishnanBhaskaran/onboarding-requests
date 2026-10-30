@@ -68,6 +68,24 @@ public sealed record WorkflowSettings
     /// </summary>
     public MailLimits MailLimits { get; init; } = MailLimits.AzureManagedDomain;
 
+    // v1.1 (Gokul, 30 Oct 2026). Every switch defaults to off.
+    /// <summary>
+    /// F5 (<c>AGENT_OFFBOARDING</c>, off until its permissions are approved): the worker executes confirmed offboarding
+    /// plans (revoke sessions, delete the TAP, remove memberships and Azure role assignments, disable the account).
+    /// Off: plans are still made and shown; execution is refused.
+    /// </summary>
+    public bool AgentOffboarding { get; init; }
+    /// <summary>F5 (<c>OFFBOARD_DELETE_USER</c>, default false): after disabling, soft-delete the account (restorable 30 days, F75).</summary>
+    public bool OffboardDeleteUser { get; init; }
+    /// <summary>F2 (<c>TAP_MAIL_SENDER</c>): the one shared mailbox the TAP mail is sent from (Graph sendMail, F81). Null = not configured.</summary>
+    public string? TapMailSender { get; init; }
+    /// <summary>F4 (<c>MAX_UPLOAD_BYTES</c>): largest accepted upload file. Default 5 MB, never above 25 MB (SWA request limit 30 MB, F88).</summary>
+    public int MaxUploadBytes { get; init; } = 5 * 1024 * 1024;
+    /// <summary>F4 (<c>EXTERNAL_UPLOAD_API_ENABLED</c>, default false): the app-only upload API answers; off it returns 404.</summary>
+    public bool ExternalUploadApiEnabled { get; init; }
+    /// <summary>F4 external API: the Entra application (client) id of this API (token audience) and the tenant it accepts.</summary>
+    public string? ExternalUploadAudience { get; init; }
+
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {
         WaitingOn.Owner => OwnerSla,

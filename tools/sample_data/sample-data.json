@@ -1,5 +1,5 @@
 {
-  "_comment": "SAMPLE data only. No real people, projects or groups. Used by tests, local dev and tools/seed_sample_data.py (v2 onboarding flow).",
+  "_comment": "SAMPLE data only. No real people, projects or groups. Used by tests, local dev and tools/seed_sample_data.py (v2 onboarding flow; v1.1 mapping columns and people inventory added 30 Oct 2026).",
   "projects": [
     {
       "id": "SAMPLE-ALPHA",
@@ -29,7 +29,8 @@
         "ownerManagerFallback": "sample.owner.manager.alpha@sample.invalid"
       },
       "isSample": true,
-      "schemaVersion": 2
+      "schemaVersion": 2,
+      "isProductionTenant": false
     },
     {
       "id": "SAMPLE-BETA",
@@ -59,7 +60,8 @@
         "ownerManagerFallback": "sample.owner.manager.beta@sample.invalid"
       },
       "isSample": true,
-      "schemaVersion": 2
+      "schemaVersion": 2,
+      "isProductionTenant": false
     },
     {
       "id": "SAMPLE-PEST",
@@ -96,7 +98,8 @@
         "ownerManagerFallback": "sample.owner.manager.pest@sample.invalid"
       },
       "isSample": true,
-      "schemaVersion": 2
+      "schemaVersion": 2,
+      "isProductionTenant": true
     },
     {
       "id": "SAMPLE-VESTACY",
@@ -134,7 +137,8 @@
         "ownerManagerFallback": "sample.owner.manager.vestacy@sample.invalid"
       },
       "isSample": true,
-      "schemaVersion": 2
+      "schemaVersion": 2,
+      "isProductionTenant": false
     }
   ],
   "mappingSheet": [
@@ -151,6 +155,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Engineering",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 2",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -171,6 +181,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Engineering",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 3",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -191,6 +207,12 @@
       "sensitiveResource": true,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Sales",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 4",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -211,6 +233,12 @@
       "sensitiveResource": true,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Sales",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 5",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -231,6 +259,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "ToBeCreated",
+      "tenantId": null,
+      "domain": "Finance",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 6",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -251,6 +285,12 @@
       "sensitiveResource": false,
       "deprecated": true,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Legacy",
+      "resourceGroupType": "ACQ",
+      "owner": "sample-user-otto@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": "2026-09-30",
       "sourceReference": "SAMPLE-PMO-SHEET row 7 (deprecated)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -271,6 +311,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Collaboration",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-otto@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 8",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -291,6 +337,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Collaboration",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-otto@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 9 (conflict)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -311,6 +363,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Collaboration",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-otto@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 10 (bad group name)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -331,6 +389,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Finance",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET row 11 (privileged, not flagged)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -351,6 +415,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Testing",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-bella@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE-PMO-SHEET-BETA row 2",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -384,6 +454,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "ToBeCreated",
+      "tenantId": null,
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Data Response document (PEST support reader/writer groups)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -424,6 +500,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "ToBeCreated",
+      "tenantId": null,
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Data Response document (PEST support reader/writer groups)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -478,6 +560,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Data Response document (PEST support reader/writer groups)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -518,6 +606,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Data Response document (PEST support reader/writer groups)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -558,6 +652,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "ToBeCreated",
+      "tenantId": null,
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Data Response document (PEST support reader/writer groups)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -583,6 +683,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": null,
+      "domain": "Finance reporting",
+      "resourceGroupType": "Domain",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Entra group classification (PEST - PreProd)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -623,6 +729,12 @@
       "sensitiveResource": false,
       "deprecated": false,
       "groupState": "Exists",
+      "tenantId": "00000000-0000-4000-8000-000000000001",
+      "domain": "Platform",
+      "resourceGroupType": "PH",
+      "owner": "sample-user-olivia@sample.invalid",
+      "effectiveFrom": "2026-10-01",
+      "effectiveTo": null,
       "sourceReference": "SAMPLE Entra group classification (Vestacy - Dev)",
       "version": 1,
       "updatedBy": "sample-user-paul",
@@ -967,6 +1079,106 @@
         "PMO"
       ],
       "isSample": true
+    },
+    {
+      "id": "sample-user-petra:SAMPLE-ALPHA",
+      "userId": "sample-user-petra",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "ProdApprover"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "sample-user-petra:SAMPLE-PEST",
+      "userId": "sample-user-petra",
+      "projectId": "SAMPLE-PEST",
+      "roles": [
+        "ProdApprover"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "sample-user-dana:SAMPLE-ALPHA",
+      "userId": "sample-user-dana",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "DataMaintainer"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "sample-user-dana:SAMPLE-PEST",
+      "userId": "sample-user-dana",
+      "projectId": "SAMPLE-PEST",
+      "roles": [
+        "DataMaintainer"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "sample-user-oscar:SAMPLE-PEST",
+      "userId": "sample-user-oscar",
+      "projectId": "SAMPLE-PEST",
+      "roles": [
+        "Operator"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
+    }
+  ],
+  "peopleInventory": [
+    {
+      "id": "person-4855eec35fa16f7eaf07712de81004d1",
+      "projectId": "SAMPLE-ALPHA",
+      "enterpriseId": "sample.e1001@sample.invalid",
+      "enterpriseEmail": "sample.e1001@sample.invalid",
+      "displayName": "SAMPLE Employee 1001",
+      "employeeId": "SAMPLE-E1001",
+      "domain": "Engineering",
+      "managerEnterpriseId": "sample-user-olivia@sample.invalid",
+      "status": "Active",
+      "alternateEmail": "sample.e1001.private@sample-personal.invalid",
+      "updatedBy": "seed",
+      "updatedAt": "2026-10-30T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "person-9b9cc2a963742de2bf98c6d006427b1b",
+      "projectId": "SAMPLE-ALPHA",
+      "enterpriseId": "sample.e1002@sample.invalid",
+      "enterpriseEmail": "",
+      "displayName": "SAMPLE Employee 1002",
+      "employeeId": "SAMPLE-E1002",
+      "domain": "Sales",
+      "managerEnterpriseId": "sample-user-olivia@sample.invalid",
+      "status": "Active",
+      "alternateEmail": null,
+      "updatedBy": "seed",
+      "updatedAt": "2026-10-30T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 1
+    },
+    {
+      "id": "person-82464254612baa2a5854e2bb06a35502",
+      "projectId": "SAMPLE-PEST",
+      "enterpriseId": "sample.p2001@sample.invalid",
+      "enterpriseEmail": "sample.p2001@sample.invalid",
+      "displayName": "SAMPLE PEST Engineer 2001",
+      "employeeId": "SAMPLE-P2001",
+      "domain": "Platform",
+      "managerEnterpriseId": "sample-user-olivia@sample.invalid",
+      "status": "Active",
+      "alternateEmail": null,
+      "updatedBy": "seed",
+      "updatedAt": "2026-10-30T00:00:00+00:00",
+      "isSample": true,
+      "schemaVersion": 1
     }
   ]
 }

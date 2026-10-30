@@ -56,6 +56,13 @@ public sealed record PilotSettings
         if (redirect is not null && !System.Text.RegularExpressions.Regex.IsMatch(redirect, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))
             throw new InvalidOperationException("NOTIFY_REDIRECT_TO must be one mail address.");
         var tenant = get("AGENT_TENANT_ID")?.Trim();
+        static string? Mailbox(string? value, string name)
+        {
+            var v = value?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(v)) return null;
+            return System.Text.RegularExpressions.Regex.IsMatch(v, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$") ? v
+                : throw new InvalidOperationException($"{name} must be one mail address.");
+        }
         return new PilotSettings
         {
             AllowPaidServices = On("ALLOW_PAID_SERVICES"),
@@ -96,6 +103,13 @@ public sealed record PilotSettings
                 MailLimits = new MailLimits(
                     Math.Clamp(int.TryParse(get("MAIL_MAX_PER_MINUTE"), out var mpm) ? mpm : MailLimits.AzureManagedDomain.PerMinute, 1, 100_000),
                     Math.Clamp(int.TryParse(get("MAIL_MAX_PER_HOUR"), out var mph) ? mph : MailLimits.AzureManagedDomain.PerHour, 1, 1_000_000)),
+                // v1.1 (30 Oct 2026): every switch off by default.
+                AgentOffboarding = On("AGENT_OFFBOARDING"),
+                OffboardDeleteUser = On("OFFBOARD_DELETE_USER"),
+                TapMailSender = Mailbox(get("TAP_MAIL_SENDER"), "TAP_MAIL_SENDER"),
+                MaxUploadBytes = Math.Clamp(int.TryParse(get("MAX_UPLOAD_BYTES"), out var mub) ? mub : 5 * 1024 * 1024, 1024, 25 * 1024 * 1024),
+                ExternalUploadApiEnabled = On("EXTERNAL_UPLOAD_API_ENABLED"),
+                ExternalUploadAudience = Guid.TryParse(get("EXTERNAL_UPLOAD_AUDIENCE"), out var aud) ? aud.ToString("D") : null,
             },
         };
     }

@@ -187,6 +187,14 @@ var containers = [
   { name: 'responseDocument', pk: '/projectId', uniqueKeys: [] } // v2: role assignment records (source of truth)
   { name: 'notifications', pk: '/projectId', uniqueKeys: [] } // v2: notification outbox
   { name: 'issues', pk: '/projectId', uniqueKeys: [] } // v2: issues list
+  { name: 'mappingVersions', pk: '/projectId', uniqueKeys: [] } // v1.1: mapping sheet upload versions (rollback)
+  { name: 'peopleInventory', pk: '/projectId', uniqueKeys: [] } // v1.1: people inventory (TAP recipient source)
+  { name: 'inventoryVersions', pk: '/projectId', uniqueKeys: [] } // v1.1: people inventory upload versions
+  { name: 'escalations', pk: '/projectId', uniqueKeys: [] } // v1.1: Prod writes, unresolved groups, TAP recipient, offboarding leftovers
+  { name: 'mappingQualityIssues', pk: '/projectId', uniqueKeys: [] } // v1.1: near-duplicate group names
+  { name: 'groupResolutions', pk: '/projectId', uniqueKeys: [] } // v1.1: worker's Entra read of mapping group names
+  { name: 'offboardingRuns', pk: '/projectId', uniqueKeys: [] } // v1.1: offboarding plan / execute / verify
+  { name: 'auditEvents', pk: '/projectId', uniqueKeys: [] } // v1.1: append-only audit trail
   { name: 'requirementRules', pk: '/projectId', uniqueKeys: [ { paths: [ '/ruleId', '/version' ] } ] } // legacy v1
   { name: 'roleMappings', pk: '/projectId', uniqueKeys: [ { paths: [ '/mappingId', '/version' ] } ] } // legacy v1
   { name: 'reviewDecisions', pk: '/projectId', uniqueKeys: [ { paths: [ '/reviewRunId', '/reviewer' ] } ] } // legacy v1

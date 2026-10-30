@@ -1,7 +1,25 @@
 # v1.1 feature pack — Phase 0 plan (30 Oct 2026)
 
 Binding instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md` (Section B). This file is the P0 output: what exists, what conflicts, the plan per phase, the data model changes, the questions that block P1, and the manual prerequisites.
-Status: **P0 done, waiting for Gokul's answers and approval. Nothing built, nothing deployed.**
+Status: **P0 approved 30 Oct 2026 (Gokul: "approved, use your proposals"; Q8: "add the fields to existing testing samples").** P1 and P2 in progress; P3 is the next stop. Nothing deployed.
+
+## 0. Decisions (30 Oct 2026, Gokul)
+Every proposal in sections 2 and 5 is the decision. In short:
+1. Offboarding update/delete/revoke calls are approved **in code**: worker only, `GraphOffboardingWriter` / `ArmRoleAssignmentRemover`, switch `AGENT_OFFBOARDING=false`. Granting their permissions is a separate approval (dry run → `--approved-by`), as for every switch.
+2. F2/F5 Entra and ARM calls run in the existing worker (no new Azure resource). Offboarding runs add the statuses `Planning` and `Executing` while the worker works; the four contract statuses are unchanged.
+3. TAP mail: Graph `sendMail` from one shared mailbox (`TAP_MAIL_SENDER`, set at deploy), `Mail.Send` scoped only through Exchange RBAC for Applications; other mail stays on ACS.
+4. The TAP mail is never redirected. In a test environment it goes out only to a test person of the people inventory whose mail matches Entra; otherwise an escalation for the ID team.
+5. Today's page becomes **Team contacts**; the I2 upload is the **People inventory**.
+6. Upload role: new **DataMaintainer** (legacy `Maintainer` keeps granting nothing).
+7. **ProdApprover** is a third, Prod-only approval after Owner and Security for anything above Read; never the requester, the Owner approver or the Security approver.
+8. The I1 columns are added to the existing SAMPLE test data (`tools/sample_data/sample-data.json`, test fixtures); an upload leaves Azure roles, red/amber and privileged flags of existing rows unchanged.
+9. Levels: I1 enum on upload; job-role rows count as Read only when every Azure role is read-only. Environments: Dev, Test, UAT, PreProd, Prod.
+10. One request per resolved group, linked by a `bundleId`.
+11. The worker resolves group names (`groupResolutions`) and raises the unresolved-group escalations.
+12. `IsProductionTenant` on the project (default false; set per tenant by PMO/import).
+13. Offboarding removes memberships of every group the worker can change and Azure role assignments in every subscription it can read and delete in; anything else is a leftover (PartiallyCompleted + escalation).
+14. PH / ACQ are hidden when the tenant has no such rows.
+15. Root cause of the TAP mail failure: from the code, written in `docs/ROOT_CAUSE.md` (P4).
 
 ## 1. What exists today (read on 30 Oct 2026)
 
@@ -57,7 +75,7 @@ Section B says: the rule wins and the conflict is reported. Several of these con
 
 ## 4. Data model changes (P1)
 
-All new containers are partitioned by `/projectId` (one project = one tenant), use ETag concurrency and carry `schemaVersion`. Count after P1: 8 existing + 8 new = 16 containers, within the 25 that share the free 1000 RU/s database (F90).
+All new containers are partitioned by `/projectId` (one project = one tenant), use ETag concurrency and carry `schemaVersion`. Count after P1: 13 existing (8 v2 + 5 legacy v1, still declared) + 8 new = 21 containers, within the 25 that share the free 1000 RU/s database (F90).
 
 | Container | Record | Key fields |
 |---|---|---|

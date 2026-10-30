@@ -25,6 +25,50 @@ public enum AppRole
     Reviewer,
     /// <summary>Legacy v1 role. Kept so old userAccess rows still load; grants nothing in v2.</summary>
     Maintainer,
+    /// <summary>
+    /// v1.1 (F3): decides Prod escalations — any level above Read in a Prod environment — after the Owner and Security
+    /// approvals. Never the requester, the Owner approver or the Security approver of the same request.
+    /// </summary>
+    ProdApprover,
+    /// <summary>v1.1 (F4): uploads the PMO mapping sheet and the people inventory, sees diffs, rolls back, sees mapping quality issues.</summary>
+    DataMaintainer,
+}
+
+/// <summary>I1 ResourceGroupType values and the F1 "All" option.</summary>
+public static class ResourceGroupTypes
+{
+    public const string Domain = "Domain";
+    public const string Ph = "PH";
+    public const string Acq = "ACQ";
+    public const string All = "All Domains + PH + ACQ";
+    public static readonly IReadOnlyList<string> Values = [Domain, Ph, Acq];
+
+    public static string? Canonical(string? value) => Values.FirstOrDefault(v => string.Equals(v, value?.Trim(), StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// I1 access levels, lowest first (F3: in Prod only <see cref="Read"/> is fulfilled automatically). Mapping rows imported
+/// before v1.1 carry job roles (Data Engineer, Support Reader …): they rank as Read only when every Azure role they carry
+/// is read-only (decision 9, 30 Oct 2026); otherwise above Read.
+/// </summary>
+public static class AccessLevels
+{
+    public const string Read = "Read";
+    public static readonly IReadOnlyList<string> Ordered = [Read, "Write", "Contributor", "Owner", "Admin"];
+
+    /// <summary>Built-in Azure roles that only read (Microsoft Learn built-in roles, F62).</summary>
+    public static readonly IReadOnlySet<string> ReadOnlyRoleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "acdd72a7-3385-48ef-bd42-f606fba81ae7", // Reader
+        "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1", // Storage Blob Data Reader
+        "21090545-7ca7-4776-b22c-e363652d74d2", // Key Vault Reader
+        "4633458b-17de-408a-b874-0445c86b69e6", // Key Vault Secrets User
+    };
+
+    public static string? Canonical(string? level) => Ordered.FirstOrDefault(l => string.Equals(l, level?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>0 = Read … 4 = Admin; a level outside the I1 enum = -1.</summary>
+    public static int Rank(string? level) => Canonical(level) is { } l ? Ordered.ToList().IndexOf(l) : -1;
 }
 
 public enum ProcessingStatus { Queued, Running, Completed, Failed, Superseded }

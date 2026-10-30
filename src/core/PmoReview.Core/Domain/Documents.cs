@@ -64,6 +64,11 @@ public sealed record Project : IDocument
     public ProjectContacts Contacts { get; init; } = new();
     /// <summary>Contact inventory version: 0 = never saved in the app (seeded or imported), +1 on every saved change.</summary>
     public int ContactsVersion { get; init; }
+    /// <summary>
+    /// v1.1: the tenant is production. Offboarding there needs a second person to confirm (requester ≠ confirmer).
+    /// Independent of a request's environment (Dev/Test/UAT/PreProd/Prod), which decides the Prod read-only rule.
+    /// </summary>
+    public bool IsProductionTenant { get; init; }
     /// <summary>Who saved the contact inventory last (sign-in name) and when.</summary>
     public string? ContactsUpdatedBy { get; init; }
     public DateTimeOffset? ContactsUpdatedAt { get; init; }
@@ -142,6 +147,23 @@ public sealed record MappingRow : IDocument
     public bool SensitiveResource { get; init; }
     public bool Deprecated { get; init; }
     public GroupState GroupState { get; init; } = GroupState.Exists;
+    // v1.1 mapping sheet columns (I1; uploaded by the DataMaintainer). Optional on rows imported before 30 Oct 2026.
+    /// <summary>I1 TenantId: must equal the project's tenant on upload.</summary>
+    public string? TenantId { get; init; }
+    /// <summary>I1 Domain (business domain, e.g. Finance). A Resource* option.</summary>
+    public string? Domain { get; init; }
+    /// <summary>I1 ResourceGroupType: Domain | PH | ACQ (<see cref="ResourceGroupTypes"/>).</summary>
+    public string? ResourceGroupType { get; init; }
+    /// <summary>I1 Owner of the mapping (sign-in name).</summary>
+    public string? Owner { get; init; }
+    public DateOnly? EffectiveFrom { get; init; }
+    public DateOnly? EffectiveTo { get; init; }
+    /// <summary>Retired by an upload with "Retire missing rows" (kept, never deleted; never offered or granted).</summary>
+    public bool Retired { get; init; }
+    /// <summary>The mapping version (upload) that last changed this row.</summary>
+    public int? MappingVersion { get; init; }
+    /// <summary>Row number in the uploaded file (for mapping quality messages).</summary>
+    public int? SheetRow { get; init; }
     public required string SourceReference { get; init; }
     public required int Version { get; init; }
     public required string UpdatedBy { get; init; }

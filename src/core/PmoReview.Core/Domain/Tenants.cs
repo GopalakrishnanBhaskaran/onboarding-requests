@@ -28,6 +28,7 @@ public static class Environments
         {
             "dev" or "development" or "dv" => "dev",
             "test" or "tst" or "sit" or "testing" => "test",
+            "uat" or "useracceptance" or "useracceptancetest" => "uat",
             "preprod" or "ppd" or "preproduction" or "pp" or "staging" => "preprod",
             "prod" or "prd" or "production" or "live" => "prod",
             _ => k,

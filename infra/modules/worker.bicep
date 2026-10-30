@@ -1,7 +1,8 @@
 // The AI agent's background worker (Phase 2 resources, paid from Azure credits, approved by Gokul 16 Oct 2026).
 // Flex Consumption Function App + its storage account. Managed identity only: no keys, no secrets.
 //   Worker -> Cosmos: data-plane RBAC scoped to the containers it uses (requests, reviewRuns, mappingSheet,
-//             responseDocument, notifications, issues) and read-only on projects.
+//             responseDocument, notifications, issues; v1.1: peopleInventory, escalations, mappingQualityIssues,
+//             groupResolutions, offboardingRuns, auditEvents) and read-only on projects. Never userAccess or the upload versions.
 //   Worker -> Storage: Storage Blob Data Owner (host locks + deployment package).
 //   Worker -> Microsoft Graph: READ ONLY (User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All,
 //             AuditLog.Read.All), granted by tools/deploy_free.sh grant-graph, not ARM. The AI agent never approves,
@@ -96,6 +97,13 @@ var writableContainers = [
   'responseDocument'
   'notifications'
   'issues'
+  // v1.1: TAP recipient and leavers, escalations, mapping quality, group resolutions, offboarding, audit.
+  'peopleInventory'
+  'escalations'
+  'mappingQualityIssues'
+  'groupResolutions'
+  'offboardingRuns'
+  'auditEvents'
 ]
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = {

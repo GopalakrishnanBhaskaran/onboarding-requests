@@ -12,7 +12,11 @@ public static class SampleDataLoader
         List<Project> Projects,
         List<MappingRow> MappingSheet,
         List<ResponseRecord> ResponseDocument,
-        List<UserAccess> UserAccess);
+        List<UserAccess> UserAccess)
+    {
+        /// <summary>v1.1: SAMPLE people inventory (TAP recipient tests). Optional in older sample files.</summary>
+        public List<Person> PeopleInventory { get; init; } = [];
+    }
 
     /// <summary>Written in the sample file where the Azure scope is the approved access resource group (seed --access-scope).</summary>
     public const string AccessScopePlaceholder = "{{ACCESS_SCOPE}}";
@@ -30,7 +34,8 @@ public static class SampleDataLoader
             }).ToList(),
         };
         var notSample = data.Projects.Any(p => !p.IsSample) || data.MappingSheet.Any(r => !r.IsSample)
-                        || data.ResponseDocument.Any(r => !r.IsSample) || data.UserAccess.Any(u => !u.IsSample);
+                        || data.ResponseDocument.Any(r => !r.IsSample) || data.UserAccess.Any(u => !u.IsSample)
+                        || data.PeopleInventory.Any(p => !p.IsSample);
         if (notSample) throw new InvalidOperationException("Sample data contains a record without isSample=true. Refusing to load.");
         return data;
     }
@@ -41,6 +46,7 @@ public static class SampleDataLoader
         foreach (var r in data.MappingSheet) await Upsert(stores.MappingSheet, r, ct);
         foreach (var r in data.ResponseDocument) await Upsert(stores.ResponseDocument, r, ct);
         foreach (var u in data.UserAccess) await Upsert(stores.UserAccess, u, ct);
+        foreach (var p in data.PeopleInventory) await Upsert(stores.PeopleInventory, p, ct);
     }
 
     private static async Task Upsert<T>(IDocumentStore<T> store, T doc, CancellationToken ct) where T : class, IDocument
