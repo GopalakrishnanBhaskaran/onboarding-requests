@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canConfirm, canPlan, changes, inProgress, planExpired } from './lib/offboarding';
+import { canConfirm, canPlan, changes, inProgress, planExpired, switchedOff } from './lib/offboarding';
 import type { OffboardingView } from './lib/types';
 
 const run = (status: OffboardingView['status'], results: OffboardingView['steps'][number]['result'][] = []): OffboardingView => ({
@@ -29,6 +29,10 @@ describe('F5 offboarding panel', () => {
     expect(planExpired(expired)).toBe(true);
     expect(planExpired({ status: 409, code: 'plan_not_ready' })).toBe(false);
     expect(planExpired(null)).toBe(false);
+    // Switched off (option 1): an expected refusal, shown as information; other refusals stay errors.
+    expect(switchedOff({ status: 409, code: 'offboarding_off' })).toBe(true);
+    expect(switchedOff({ status: 409, code: 'plan_expired' })).toBe(false);
+    expect(switchedOff(null)).toBe(false);
     expect(canPlan(run('Planned'), planExpired(expired))).toBe(true);
   });
 

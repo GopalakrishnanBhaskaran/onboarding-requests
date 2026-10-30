@@ -23,6 +23,11 @@ export function planExpired(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'plan_expired';
 }
 
+/** The confirm was refused because offboarding changes are switched off (AGENT_OFFBOARDING): expected, nothing changed. */
+export function switchedOff(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'offboarding_off';
+}
+
 /** What will change, in the plan's own words: the steps the run will do. */
 export function changes(v: OffboardingView): number {
   return v.steps.filter((s) => s.result === 'Planned').length;

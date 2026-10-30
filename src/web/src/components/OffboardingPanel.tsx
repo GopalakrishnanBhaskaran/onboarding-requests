@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Badge, Body1, Button, Caption1, Checkbox, MessageBar, MessageBarBody, Subtitle2,
+  Badge, Body1, Button, Caption1, Checkbox, MessageBar, MessageBarBody, MessageBarTitle, Subtitle2,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
 import { ApiError, api } from '../lib/api';
-import { canConfirm, canPlan, changes, inProgress, planExpired } from '../lib/offboarding';
+import { canConfirm, canPlan, changes, inProgress, planExpired, switchedOff } from '../lib/offboarding';
 import type { OffboardingView, ProjectSummary } from '../lib/types';
 import { ErrorBar, useStyles } from './common';
 
@@ -62,7 +62,14 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
         Removes this person&apos;s access in Entra and Azure: sessions, Temporary Access Pass, group memberships, Azure role assignments, then disables the
         account. You see the full plan first; nothing changes until it is confirmed.
       </Caption1>
-      <ErrorBar error={error} />
+      {switchedOff(error) ? (
+        <MessageBar intent="info" layout="multiline">
+          <MessageBarBody>
+            <MessageBarTitle>Offboarding changes are switched off</MessageBarTitle>
+            Nothing was changed. Use the plan below as the checklist: the ID team and the role assignment team remove this access by hand.
+          </MessageBarBody>
+        </MessageBar>
+      ) : <ErrorBar error={error} />}
       {canPlan(run, planExpired(error)) && (
         <div><Button appearance="primary" disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId))}>
           {planExpired(error) ? 'Make a new plan' : 'Offboard user'}
