@@ -255,6 +255,46 @@ public class F5OffboardingTests
     }
 
     /// <summary>
+    /// Live, 30 Oct 2026: the membership removal succeeded, but the verify in the same run still saw it (the direct member
+    /// check is an advanced query on a separate index store, F104). The agent looks again on the next run and completes.
+    /// </summary>
+    [Fact]
+    public async Task F5_A_removal_Entra_shows_late_is_checked_again_and_the_run_completes()
+    {
+        var (app, _) = await Leaver();
+        app.Offboarding.LagReads = 1;
+        var planned = await Planned(app);
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        Assert.Equal("Executing", Status(await Get(app))); // not a leftover yet: looked again on the next run
+        Assert.Empty(await app.Stores.Escalations.ListAsync(TestApp.Alpha));
+        await app.RunWorker();
+        var done = await Get(app);
+        Assert.Equal(("Completed", true), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Equal(6, app.Offboarding.Calls.Count); // nothing was written twice
+        Assert.Single(await OffboardingMails(app));
+    }
+
+    /// <summary>Still shown after three looks (about 10 minutes): a leftover like any other, with its escalation and no mail.</summary>
+    [Fact]
+    public async Task F5_A_removal_still_shown_after_three_looks_is_a_leftover()
+    {
+        var (app, _) = await Leaver();
+        app.Offboarding.LagReads = 100;
+        var planned = await Planned(app);
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        await app.RunWorker();
+        Assert.Equal("Executing", Status(await Get(app)));
+        await app.RunWorker();
+        var done = await Get(app);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString() == $"still in {GroupA}");
+        Assert.Empty(await OffboardingMails(app));
+        Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), e => e.Value.Kind == EscalationKind.OffboardingLeftover);
+    }
+
+    /// <summary>
     /// Option 3 "Entra only" (Gokul, 30 Oct 2026): the worker has no Azure right and OFFBOARD_SUBSCRIPTIONS is empty, so it
     /// lists no subscription. It cannot say no Azure role is left: a leftover, never Completed, no PMO mail.
     /// </summary>

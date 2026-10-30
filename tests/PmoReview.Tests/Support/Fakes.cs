@@ -331,6 +331,9 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
     /// <summary>The next write whose call text starts with this fails once with GraphUnavailable.</summary>
     public string? FailOnce { get; set; }
     public string? ForbidAll { get; set; }
+    /// <summary>Entra replication (F104): a removed membership still shows in this many membership reads after the removal.</summary>
+    public int LagReads { get; set; }
+    private readonly Dictionary<(string Upn, string Group), int> lag = [];
 
     private string Upn(string objectId) => directory.UpnOf(objectId) ?? throw new DirectoryReadException("GraphNotFound");
 
@@ -351,6 +354,11 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
             : RoleAssignable.Contains(g) ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null, RoleAssignable.Contains(g))).ToList();
         list.AddRange(Nested.GetValueOrDefault(upn, []).Select(g => new GroupMembership(directory.GroupId(g), g, false)));
         list.AddRange(Roles.GetValueOrDefault(upn, []).Select(r => new GroupMembership(r, r, true, "not a group (for example an Entra directory role): left to people", true)));
+        foreach (var key in lag.Keys.Where(k => k.Upn == upn && lag[k] > 0).ToList())
+        {
+            list.Add(new GroupMembership(directory.GroupId(key.Group), key.Group, true));
+            lag[key]--;
+        }
         return Task.FromResult<IReadOnlyList<GroupMembership>>(list);
     }
 
@@ -378,6 +386,7 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
         var (group, upn) = (directory.GroupNameOf(groupObjectId)!, Upn(userObjectId));
         Write($"remove-member {upn} {group}");
         directory.RemoveMember(group, upn);
+        if (LagReads > 0) lag[(upn, group)] = LagReads;
         return Task.CompletedTask;
     }
 

@@ -25,6 +25,13 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         ReadRbac = "Read Azure role assignments", Rbac = "Remove Azure role assignment", Disable = "Disable account", Delete = "Delete account",
         Leaver = "Mark leaver in people inventory", Close = "Close open request";
     private const int MaxAttempts = 3;
+
+    /// <summary>
+    /// Attempts key: verify saw a membership, TAP or enabled account that this run's own step already removed. The direct
+    /// member check is an advanced query served from a separate index store (ConsistencyLevel: eventual, F94/F104), so it
+    /// can show a removal late: the next worker runs look again before it counts as a leftover.
+    /// </summary>
+    private const string VerifyLag = "verify-lag";
     private const string ByPeople = "left to people: the account holds an Entra directory role, so the AI agent changes nothing in Entra or Azure for it";
 
     public async Task<int> RunOnceAsync(CancellationToken ct)
@@ -252,7 +259,9 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             }
             catch (DirectoryReadException e)
             {
-                steps[i] = s with { Result = OffboardingStepResult.Failed, Detail = $"{s.Detail}: refused ({e.Category})" };
+                // A 403 right after a permission was granted is usually the worker's cached token (up to ~24 h, F61).
+                steps[i] = s with { Result = OffboardingStepResult.Failed, Detail = $"{s.Detail}: refused ({e.Category})"
+                    + (e is DirectoryWriteException { Forbidden: true } ? ". A permission granted in the last 24 hours may not have reached the AI agent yet (F61): do it by hand, or plan again tomorrow" : "") };
             }
             catch (ConcurrencyException)
             {
@@ -325,18 +334,32 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     {
         var run = v.Value;
         var leftovers = new List<string>();
+        var lagging = 0; // leftovers that one of this run's own steps already removed (Entra can show a removal late)
+        bool DoneHere(string name, string? target = null) =>
+            run.Steps.Any(s => s.Name == name && s.Result == OffboardingStepResult.Done && (target is null || string.Equals(s.Target, target, StringComparison.OrdinalIgnoreCase)));
         try
         {
             var user = await directory.FindUserAsync(run.EnterpriseId, ct);
-            var deleteDone = run.Steps.Any(s => s.Name == Delete && s.Result == OffboardingStepResult.Done);
+            var deleteDone = DoneHere(Delete);
             if (user is not null && user.ObjectId == run.ObjectId)
             {
-                if (deleteDone) leftovers.Add("the account still exists although it was deleted (replication can lag; look again)");
-                if (user.AccountEnabled) leftovers.Add("the account is still enabled");
+                if (deleteDone) { leftovers.Add("the account still exists although it was deleted (replication can lag; look again)"); lagging++; }
+                if (user.AccountEnabled)
+                {
+                    leftovers.Add("the account is still enabled");
+                    if (DoneHere(Disable)) lagging++;
+                }
                 foreach (var m in await reader.MembershipsAsync(run.ObjectId!, ct))
                     if (m.Direct || m.NotChangeable is not null)
+                    {
                         leftovers.Add($"still in {m.DisplayName}{(m.NotChangeable is null ? "" : $" ({m.NotChangeable})")}");
-                if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0) leftovers.Add("a Temporary Access Pass is still registered");
+                        if (m.NotChangeable is null && DoneHere(Membership, m.GroupObjectId)) lagging++;
+                    }
+                if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0)
+                {
+                    leftovers.Add("a Temporary Access Pass is still registered");
+                    if (DoneHere(Tap)) lagging++;
+                }
             }
             var (assignments, unreadable) = await AssignmentsAsync(run.ObjectId!, ct);
             leftovers.AddRange(unreadable.Select(s => s == NoSubscription
@@ -363,6 +386,14 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             leftovers.Add($"{s.Name} {s.Target}: {s.Detail}");
 
         var now = clock.UtcNow;
+        if (lagging > 0 && run.Attempts.GetValueOrDefault(VerifyLag) < MaxAttempts - 1)
+        {
+            // Look again on the next worker run (about 5 minutes); after that it is a leftover like any other.
+            var attempts = new Dictionary<string, int>(run.Attempts) { [VerifyLag] = run.Attempts.GetValueOrDefault(VerifyLag) + 1 };
+            await SaveAsync(project, v, run with { Attempts = attempts, UpdatedAt = now }, "offboarding-verify-again",
+                $"{lagging} removal(s) of this run not visible yet (Entra replication); verify again on the next run", ct);
+            return;
+        }
         if (leftovers.Count > 0)
         {
             var e = new Escalation

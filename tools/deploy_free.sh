@@ -484,8 +484,9 @@ agent_offboarding() {
     else echo "  Graph application permission: $perm (NEW, tenant-wide; the code uses it only for a confirmed leaver)"; missing+=("$perm"); fi
   done
   echo "  Worker settings: AGENT_OFFBOARDING=true OFFBOARD_SUBSCRIPTIONS=$subs OFFBOARD_DELETE_USER=false; SWA: AGENT_OFFBOARDING=true"
-  echo "  Azure: no right is granted (Entra only). The agent cannot read the role assignments in $subs, so every run lists"
-  echo "  them as a leftover for the role assignment team: Partially completed + escalation, no PMO completion mail."
+  echo "  Azure: no new right (Entra only). The agent removes the leaver's own role assignments in $subs only where a right it"
+  echo "  already holds allows it (provisioning: allow-listed roles on its resource group); any other is a leftover for the"
+  echo "  role assignment team (Partially completed + escalation, no PMO completion mail)."
   echo "  What the agent does, only for a plan a PMO or Operator confirmed (a second person in a production tenant), only for"
   echo "  the project's own people in a project that names this tenant: revoke sessions, remove the TAP, remove group"
   echo "  memberships (never dynamic, role-assignable or synced groups), disable the account, mark the people inventory Leaver,"
