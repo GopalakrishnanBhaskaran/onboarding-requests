@@ -1,6 +1,6 @@
 # v1.1 deploy — P7 option 1: data and code, every new switch off
 
-Chosen by Gokul on 30 Oct 2026 (P6 approved; decisions 12a and 13a kept). This file is the runbook. **Nothing here has run yet.** CLAUDE.md rule 4 still applies: the what-if output is shown first, and nothing is applied before an explicit "approved".
+Chosen by Gokul on 30 Oct 2026 (P6 approved; decisions 12a and 13a kept). This file is the runbook. **Steps 1–4 ran on 30 Oct 2026** (what-if clean, "approved", `apply` of `9105ddd` with the app and the worker; `docs/DEPLOYMENT_LOG.md`). Steps 5–8 are next. CLAUDE.md rule 4 still applies to any further Azure change.
 
 Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>` (`docs/MAC_DEPLOY.md`). Use the branch with v1.1 (`claude/elegant-darwin-nfot4p`, or `main` once it is merged), and run `git pull` first. Log every step in `docs/DEPLOYMENT_LOG.md`.
 

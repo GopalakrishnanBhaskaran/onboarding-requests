@@ -162,7 +162,8 @@ grant_graph() {
       echo "Already granted: $perm -> $name"
     fi
   done
-  echo "Graph permissions now held by $name (expected read-only: ${GRAPH_READ_ROLES[*]}):"
+  echo "Graph permissions now held by $name (read: ${GRAPH_READ_ROLES[*]}; only where approved and switched on:" \
+    "provisioning ${GRAPH_PROVISION_ROLES[*]}, agent TAP $GRAPH_TAP_ROLE):"
   local held; held=$(list_graph_roles "$mi"); echo "$held"
   if echo "$held" | grep -qxE "$(IFS='|'; echo "${GRAPH_RETIRED_ROLES[*]}")"; then
     echo "WARNING: the worker still holds retired Phase 2b/2c permissions. After approval run:"
