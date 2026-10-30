@@ -212,3 +212,24 @@ All other findings keep their earlier status.
 | Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 24 |
 
 Deployment gate (spec P6): **met**. Critical = 0 and High = 0. The 5 Medium and 5 Low findings still open include no Prod write path and no cross-project authorization breach.
+
+## Re-check 4 (commit 35e7a62, 2026-10-30)
+Scope: `git diff 291438a..35e7a62`, which changes only these files: `REVIEW.md`, `docs/DEPLOYMENT_LOG.md`, `docs/V1_1_PHASES.md`, `docs/V1_1_TEST_RESULTS.md`, `docs/VERIFIED_FACTS.md`. No code or test file changed, so the re-check 3 test results (.NET 495 / 494 passed / 0 failed / 1 opt-in skip; SPA 24/24) still apply. The results file now records the .NET count as 495 / 494. Nothing was deployed; there was no Graph, ARM, Entra or mail call; the only network use was one read-only fetch of a Learn page; no repo file other than this one changed.
+
+What was checked:
+- **Fact rows:** `docs/VERIFIED_FACTS.md` still has 103 fact rows (F1–F103, no gaps or duplicates), and every one cites `https://learn.microsoft.com/`.
+- **F38 against the live page:** https://learn.microsoft.com/graph/api/user-get?view=graph-rest-1.0 was fetched again (`updated_at` 2025-07-23, the date cited). Its permissions table gives Application least privileged `User.Read.All`; `User.ReadBasic.All` appears only among the higher-privileged delegated permissions.
+
+| # | status | evidence (file:line) | remaining risk |
+|---|---|---|---|
+| 24 | Closed | `docs/VERIFIED_FACTS.md:48`. The F38 citation now reads "the application least privileged permission is **`User.Read.All`**; `User.ReadBasic.All` is listed only for delegated access", which matches the live page. It marks F38 as a retired Phase 2 fact and points to F44 (which names `User.Read.All`) for the permission the v2 worker holds. | None. The Fact column still describes what was used historically (application `User.ReadBasic.All`), and the source column now says what the page says. |
+
+### Summary of OPEN findings after re-check 4
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 5 | 7, 8, 9 (partly), 11, 12 |
+| Low | 4 | 5 (near-duplicate remainder), 15, 18, 19 |
+
+Deployment gate (spec P6): **met**. Critical = 0 and High = 0. The 5 Medium and 4 Low findings still open include no Prod write path and no cross-project authorization breach.

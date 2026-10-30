@@ -313,8 +313,10 @@ public partial class InfraConsistencyTests
         Assert.All(facts, f => Assert.True(f.Value.Contains("https://learn.microsoft.com/", StringComparison.Ordinal), $"{f.Key} cites no learn.microsoft.com page"));
         foreach (var doc in new[] { "PERMISSIONS.md", "HOSTING.md", "EXTERNAL_UPLOAD_API.md" })
         {
-            var cited = Regex.Matches(Read("docs", doc), @"\bF(\d{1,3})\b").Select(m => $"F{m.Groups[1].Value}").Distinct().ToList();
-            Assert.NotEmpty(cited);
+            // F1–F5 in these documents name the v1.1 features, not facts: only F6 and above count as fact citations.
+            var cited = Regex.Matches(Read("docs", doc), @"\bF(\d{1,3})\b").Select(m => int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture))
+                .Where(n => n > 5).Distinct().Select(n => $"F{n}").ToList();
+            Assert.True(cited.Count >= 5, $"{doc} cites only {cited.Count} facts");
             Assert.All(cited, id => Assert.True(facts.ContainsKey(id), $"{doc} cites {id}, which VERIFIED_FACTS.md does not have"));
         }
     }
