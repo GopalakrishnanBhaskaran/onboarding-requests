@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-/** Minimal hash router: #/requests, #/requests/new, #/requests/:id, #/requests/:id/edit, #/queue, #/sheet, #/contacts, #/escalations, #/operator. */
+/** Minimal hash router: #/requests, #/requests/new, #/requests/:id, #/requests/:id/edit, #/queue, #/sheet, #/contacts, #/escalations, #/uploads, #/operator. */
 export type Route =
   | { page: 'requests' }
   | { page: 'new' }
@@ -10,6 +10,7 @@ export type Route =
   | { page: 'sheet' }
   | { page: 'contacts' }
   | { page: 'escalations' }
+  | { page: 'uploads' }
   | { page: 'operator' };
 
 export function parse(hash: string): Route {
@@ -23,6 +24,8 @@ export function parse(hash: string): Route {
       return { page: 'contacts' };
     case 'escalations':
       return { page: 'escalations' };
+    case 'uploads':
+      return { page: 'uploads' };
     case 'operator':
       return { page: 'operator' };
     case 'requests':

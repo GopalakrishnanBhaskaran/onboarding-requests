@@ -27,7 +27,7 @@ Who holds what: only the **AI agent worker's managed identity** (Flex Consumptio
 |---|---|---|---|---|
 | `GroupMember.Read.All` | Graph application | worker resolves mapping group names (`GET /groups?$filter=displayName eq …`) | held | **No** |
 | Cosmos data roles on `peopleInventory`, `escalations`, `mappingQualityIssues`, `groupResolutions`, `offboardingRuns`, `auditEvents` | Cosmos data plane | worker writes escalations, resolutions, quality issues, offboarding runs, audit; reads the people inventory | container scope (Bicep `writableContainers`), never `userAccess` or the upload versions | **Yes** (Bicep, approval with the what-if) |
-| App role **`Uploads.Write`** on a new Entra app registration "PMO uploads API" (application type) | Entra app role | F4 external API: a client app gets it by admin consent; the token's `roles` claim carries it, `tid` must be the tenant, `aud` the API (F91) | one app role, assigned per client app; no Graph permission at all | **Yes** — only when the external API is switched on (`EXTERNAL_UPLOAD_API_ENABLED=false` until then; reachability: `HOSTING.md`) |
+| App role **`Uploads.Write`** on a new Entra app registration "PMO uploads API" (application type; manifest `requestedAccessTokenVersion: 2`, F99) | Entra app role | F4 external API: a client app gets it by admin consent; the token's `roles` claim carries it, `tid` must be the tenant, `aud` the API (F91, F99; `docs/EXTERNAL_UPLOAD_API.md`) | one app role, assigned per client app; no Graph permission at all | **Yes** — only when the external API is switched on (`EXTERNAL_UPLOAD_API_ENABLED=false` until then; reachability: `HOSTING.md`) |
 
 ### F2 TAP mail to the enterprise mail only
 | Permission | Type | Why | Narrowest option | New? |

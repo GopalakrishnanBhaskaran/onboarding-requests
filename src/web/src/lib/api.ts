@@ -1,6 +1,7 @@
 import type {
   AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
   ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation,
+  UploadKind, UploadView, UploadsOverview, DataVersionView,
 } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
@@ -35,6 +36,10 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
     throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
   }
 
+  return read<T>(res);
+}
+
+async function read<T>(res: Response, alsoOk: number[] = []): Promise<T> {
   if (res.status === 401) {
     window.location.assign('/login');
     throw new ApiError(401, 'unauthenticated', 'Sign-in required.');
@@ -42,11 +47,27 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
 
   const text = await res.text();
   const json = text ? JSON.parse(text) : null;
-  if (!res.ok) {
+  if (!res.ok && !alsoOk.includes(res.status)) {
     const e = json?.error;
     throw new ApiError(res.status, e?.code ?? 'error', e?.message ?? `Request failed (${res.status}).`, e?.correlationId, e?.details ?? undefined);
   }
   return json as T;
+}
+
+/**
+ * F4: sends one file as multipart/form-data (field "file"). A file that does not validate comes back as a result with
+ * status Invalid (HTTP 422 on apply), not as an error.
+ */
+async function sendFile<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  let res: Response;
+  try {
+    res = await fetch(`/api/${path}`, { method: 'POST', headers: { Accept: 'application/json' }, credentials: 'same-origin', body: form });
+  } catch {
+    throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
+  }
+  return read<T>(res, [422]);
 }
 
 const p = (projectId: string) => `projects/${encodeURIComponent(projectId)}`;
@@ -125,6 +146,15 @@ export const api = {
     call<ResolveResult>('GET', `resources/resolve?projectId=${id(projectId)}&environment=${id(environment)}${resources.map((r) => `&resource=${id(r)}`).join('')}`),
   submitBundle: (projectId: string, input: BundleInput) => call<BundleResult>('POST', `${p(projectId)}/requests/bundle`, input),
   escalations: (projectId: string) => call<{ items: Item<Escalation>[] }>('GET', `${p(projectId)}/escalations`),
+  uploads: (projectId: string) => call<UploadsOverview>('GET', `${p(projectId)}/uploads`),
+  upload: (projectId: string, kind: UploadKind, file: File, o: { mode: 'validate' | 'apply'; retireMissing: boolean; sheet?: string; baseVersion?: number }) => {
+    const q = new URLSearchParams({ mode: o.mode, retireMissing: String(o.retireMissing) });
+    if (o.sheet) q.set('sheet', o.sheet);
+    if (o.baseVersion !== undefined) q.set('baseVersion', String(o.baseVersion));
+    return sendFile<UploadView>(`${p(projectId)}/uploads/${kind}?${q.toString()}`, file);
+  },
+  rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>
+    call<DataVersionView>('POST', `${p(projectId)}/uploads/${kind}/rollback`, { version }),
   decideEscalation: (projectId: string, escalationId: string, decision: 'Approved' | 'Rejected', remarks: string, requestRevision: number) =>
     call<{ escalation: Item<Escalation> }>('POST', `${p(projectId)}/escalations/${id(escalationId)}/decision`, { decision, remarks: remarks || null, requestRevision }),
 };

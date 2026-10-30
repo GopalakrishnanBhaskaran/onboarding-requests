@@ -510,3 +510,81 @@ export interface Escalation {
   decidedAt?: string | null;
   remarks?: string | null;
 }
+
+// ---- v1.1 F4: Data uploads --------------------------------------------------------------------------------------------
+
+export type DataKind = 'Mapping' | 'Inventory';
+/** Route segment of an upload kind. */
+export type UploadKind = 'mapping' | 'inventory';
+
+/** One validation finding (row 0 = the file as a whole). */
+export interface UploadError {
+  row: number;
+  column: string;
+  code: string;
+  message: string;
+}
+
+export interface UploadCounts {
+  added: number;
+  updated: number;
+  unchanged: number;
+  retired: number;
+}
+
+/** F4 output contract (same as the external upload API). */
+export interface UploadResult {
+  uploadId: string;
+  mode: 'validate' | 'apply';
+  status: 'Valid' | 'Invalid' | 'Applied';
+  version: string | null;
+  counts: UploadCounts;
+  errors: UploadError[];
+}
+
+export interface UploadDiffRow {
+  row: number;
+  change: 'Added' | 'Updated' | 'Unchanged' | 'Missing' | 'Retired';
+  label: string;
+  fields: string[];
+}
+
+/** What the Data uploads page gets back: the contract, the version it was checked against and the diff. */
+export interface UploadView {
+  upload: UploadResult;
+  baseVersion: number;
+  missing: number;
+  diff: UploadDiffRow[];
+  fileName?: string | null;
+}
+
+export interface DataVersionView {
+  version: string;
+  number: number;
+  state: 'Applied' | 'RolledBack';
+  uploadedBy?: string | null;
+  uploadedAt: string;
+  fileName?: string | null;
+  fileHash?: string | null;
+  counts: UploadCounts & { missing: number };
+  diffSummary?: string | null;
+  retireMissing: boolean;
+  channel: string;
+  rollbackOf?: number | null;
+  rolledBackBy?: string | null;
+  rolledBackAt?: string | null;
+}
+
+export interface UploadHistory {
+  kind: DataKind;
+  current: number;
+  columns: string[];
+  versions: DataVersionView[];
+}
+
+export interface UploadsOverview {
+  mapping: UploadHistory;
+  inventory: UploadHistory;
+  maxUploadBytes: number;
+  externalApiEnabled: boolean;
+}

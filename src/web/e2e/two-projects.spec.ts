@@ -317,3 +317,45 @@ test('unregistered user sees their id and no data', async ({ browser }) => {
   await expect(page.locator('code', { hasText: 'sample-user-nobody@sample.invalid' })).toBeVisible();
   await ctx.close();
 });
+
+test('Data uploads: the DataMaintainer checks a mapping file, sees the diff, applies it and rolls it back', async ({ browser }) => {
+  const tenant = '00000000-0000-4000-8000-0000000000a1'; // tools/run_local.sh AGENT_TENANT_ID
+  const group = `SAMPLE-E2E-UPLOAD-${Date.now().toString(36).toUpperCase()}`; // the local store outlives a run
+  const header = 'TenantId,Domain,ResourceGroupType,Environment,AccessLevel,EntraGroupName,EntraGroupObjectId,Owner,EffectiveFrom,EffectiveTo';
+  const csv = `${header}\r\n${tenant},Finance,Domain,Dev,Read,${group},,sample-user-olivia@sample.invalid,2026-01-01,\r\n`;
+  const dana = await as(browser, 'sample-user-dana');
+  await dana.page.goto('/#/uploads');
+  await expect(dana.page.getByRole('heading', { name: 'Data uploads' })).toBeVisible();
+  const mapping = dana.page.getByRole('region', { name: 'PMO mapping sheet' });
+
+  // A macro-enabled workbook never leaves the browser.
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.xlsm', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12', buffer: Buffer.from('PK') });
+  await expect(mapping.getByText(/macro-enabled or binary Excel files are refused/)).toBeVisible();
+
+  // A wrong column is named and nothing can be applied.
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.csv', mimeType: 'text/csv', buffer: Buffer.from(csv.replace('EntraGroupName', 'Entra Group Name')) });
+  await expect(mapping.getByText('Invalid', { exact: true })).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'Validation errors' })).toContainText('Rename it to "EntraGroupName"');
+  await expect(mapping.getByRole('button', { name: /^Apply as v/ })).toHaveCount(0);
+
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await expect(mapping.getByText('Valid', { exact: true })).toBeVisible();
+  await expect(mapping.getByText(/1 added, 0 updated/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'Changes against the current version' })).toContainText(group);
+  await mapping.getByRole('button', { name: /^Apply as v\d+$/ }).click();
+  await expect(mapping.getByText(/^Applied: v\d+\.$/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'PMO mapping sheet versions' })).toContainText('mapping.csv');
+
+  await mapping.getByRole('button', { name: /^Roll back v\d+…$/ }).click();
+  await mapping.getByRole('button', { name: /^Roll back v\d+$/ }).click();
+  await expect(mapping.getByText(/^Applied: v\d+ \(rollback of v\d+\)\.$/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'PMO mapping sheet versions' })).toContainText('rolled back');
+  await dana.ctx.close();
+
+  // PMO reads the page; only the DataMaintainer uploads.
+  const paul = await as(browser, 'sample-user-paul');
+  await paul.page.goto('/#/uploads');
+  await expect(paul.page.getByText('Read only: uploads are made by the DataMaintainer.')).toBeVisible();
+  await expect(paul.page.getByRole('button', { name: 'Upload PMO mapping sheet' })).toHaveCount(0);
+  await paul.ctx.close();
+});

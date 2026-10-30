@@ -74,3 +74,28 @@ Risks:
 3. Which subscriptions the worker can list (F84) and the member filter (F94) are to be proven live before F5 relies on them; the code falls back safely (leftover → PartiallyCompleted + escalation).
 4. SWA Standard price is not on Learn (F87): check the pricing calculator before choosing B.
 Next step: Gokul approves P3 (answers 1–4) → P4 (F2 + F4).
+
+## Phase 4 result
+Status: Done
+Changed files:
+- `docs/ROOT_CAUSE.md` — why the TAP mail did not go only to the enterprise ID (typed Enterprise ID, other domain, test redirect, guest forms; code at `2e512fe`)
+- `src/core/PmoReview.Core/Workflow/TapRecipient.cs` — F2: people inventory EnterpriseEmail = Entra mail or UPN; refuses empty, #EXT#/guest, personal domain, manager, AlternateEmail, leaver, mismatch
+- `src/core/PmoReview.Core/Workflow/WorkflowAgent.Provisioning.cs`, `WorkflowAgent.cs`, `WorkflowState.cs`, `Outbound.cs` — check before the pass exists, TapRecipientMismatch escalation, one recipient, never redirected, no stored copy, audit event (user id, masked recipient, time, expiry, correlation id); ACS budget no longer gates the TAP mail
+- `src/core/PmoReview.Core/Directory/DirectoryContracts.cs`, `src/adapters/.../Entra/GraphDirectoryReader.cs`, `GraphDirectoryWriter.cs`, `Outbound/GraphMailSender.cs`, `src/worker/.../Program.cs` — Entra `mail`; TAP mail through Graph from `TAP_MAIL_SENDER` only
+- `src/core/PmoReview.Core/Uploads/*` — F4: `TabularFile` (CSV/XLSX, macro and zip-bomb checks), `UploadSchema` (I1/I2), `UploadService` (diff, upsert, versions, rollback, head claim, undo, idempotency), `UploadToken` (Entra v2.0 app token), `Multipart`
+- `src/core/PmoReview.Core/Http/ApiHost.cs`, `UploadEndpoints.cs`, `Security/Access.cs`, `Domain/Governance.cs`, `src/api/.../ApiFunction.cs`, `tools/local-api/Program.cs`, `src/adapters/.../PilotApp.cs`, `Uploads/OpenIdSigningKeys.cs` — upload routes, per-route body limit, raw bodies, app-token route (404 while off), signing keys from Entra's public metadata
+- `src/web/src/pages/DataUploadsPage.tsx`, `lib/uploads.ts`, `lib/api.ts`, `lib/types.ts`, `lib/router.ts`, `App.tsx`, `uploads.test.ts`, `e2e/two-projects.spec.ts` — Data uploads page (two buttons, validation errors, diff, apply, versions, rollback), nav for DataMaintainer and PMO
+- `docs/EXTERNAL_UPLOAD_API.md` — contract, auth, curl and PowerShell examples (placeholders), how to switch on
+- `tools/deploy_free.sh` (`tap … --sender`, Exchange scope commands), `tools/verify_features.py`, `tools/run_local.sh` (SAMPLE agent tenant id), `CLAUDE.md`, `SCOPE.md`, `workflows/09-onboarding-flow-v2.md`, `docs/ARCHITECTURE.md`, `docs/PERMISSIONS.md`, `docs/HOSTING.md`, `docs/V1_1_PLAN.md` (decisions 16–19)
+- Tests: `F2TapRecipientTests.cs` (12), `F4UploadTests.cs` (19), `F3UploadPathTests.cs` (2), `AgentTapTests.cs` (updated), `InfraConsistencyTests.cs`, `Support/UploadFiles.cs`, `Support/CapturingLogger.cs`
+Tests: .NET 458/459 (1 opt-in Cosmos emulator skip); SPA 20/20; Playwright 10/10 (local SWA emulator); Python tool tests pass; seed dry-run OK. Mutation checks: the old recipient (typed Enterprise ID) → 3 F2 tests fail; the tenant check removed → `F4_Wrong_tenant_rows_block_the_whole_file` fails; the idempotency replay removed → `F4_Replayed_idempotency_key…` fails.
+Verified facts added: 7 (F95–F101, see VERIFIED_FACTS.md)
+Open questions: None
+Risks:
+1. F2: a new cloud-only account has no Entra `mail`, so the check passes only when the inventory's EnterpriseEmail is the account's own UPN. A person whose working mailbox is elsewhere gets the *TAP recipient mismatch* escalation and the ID team hands over the pass (safe default).
+2. Live change after the next `worker` redeploy: the agent TAP mail moves from ACS to Graph. Until `TAP_MAIL_SENDER`, the Exchange scope (F81) and people inventory entries exist, the agent creates no pass and the ID team issues every one.
+3. Rollback retires the rows a version added (the store has no delete); a later upload with them makes them active again (Updated).
+4. The near-duplicate check of an upload runs inside the file, per environment; near-duplicates against rows already on the sheet are caught by F1 at read time and by the worker's mapping quality issues.
+5. The external API stays off: whether a bearer token reaches SWA managed Functions is not on Learn (open item); it needs option B or C to be reachable.
+6. `bicep build` still not run here (no Bicep change in P4).
+Next step: P5 F5 offboarding (plan → confirm → execute → verify → audit, mocked Graph/ARM).

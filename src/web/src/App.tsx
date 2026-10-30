@@ -15,6 +15,7 @@ import { MappingSheetPage } from './pages/MappingSheetPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { OperatorPage } from './pages/OperatorPage';
 import { EscalationsPage } from './pages/EscalationsPage';
+import { DataUploadsPage } from './pages/DataUploadsPage';
 
 /** Roles that handle escalations (v1.1): ProdApprovers decide the Prod ones; the others read them. */
 const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataMaintainer'];
@@ -143,6 +144,9 @@ function Shell() {
           {ESCALATION_ROLES.some((r) => project.roles.includes(r)) && (
             <Link href={href({ page: 'escalations' })}>Escalations</Link>
           )}
+          {(project.roles.includes('DataMaintainer') || project.roles.includes('PMO')) && (
+            <Link href={href({ page: 'uploads' })}>Data uploads</Link>
+          )}
           {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (
             <Link href={href({ page: 'operator' })}>Issues and reports</Link>
           )}
@@ -184,6 +188,8 @@ function Page({ route, project, projects, onOpenProject, agent, tap, privileged 
       return <ContactsPage key={project.projectId} project={project} />;
     case 'escalations':
       return <EscalationsPage key={project.projectId} project={project} />;
+    case 'uploads':
+      return <DataUploadsPage key={project.projectId} project={project} />;
     case 'operator':
       return <OperatorPage project={project} />;
     default:

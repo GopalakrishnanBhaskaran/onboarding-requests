@@ -13,7 +13,9 @@ if [[ "${SKIP_BUILD:-}" != "1" ]]; then
   npm --prefix "$ROOT/src/web" run build
 fi
 
-PILOT_LOCAL_DEV=true ALLOW_UNVERIFIED_ENTRA=true dotnet run --project "$ROOT/tools/local-api" --no-build &
+# AGENT_TENANT_ID: a SAMPLE tenant id, so the SAMPLE projects (no tenant id of their own) accept mapping uploads (F4 TenantId).
+PILOT_LOCAL_DEV=true ALLOW_UNVERIFIED_ENTRA=true AGENT_TENANT_ID="${AGENT_TENANT_ID:-00000000-0000-4000-8000-0000000000a1}" \
+  dotnet run --project "$ROOT/tools/local-api" --no-build &
 API_PID=$!
 trap 'kill $API_PID 2>/dev/null || true' EXIT
 for _ in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:7071/api/me && break; sleep 1; done
