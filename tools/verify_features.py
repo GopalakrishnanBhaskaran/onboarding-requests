@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
@@ -115,12 +116,17 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       "" if prov_ok and not retired else "tools/deploy_free.sh revoke-graph-writes <sub> --approved-by …" if retired
                       else f"tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(TEST_ROLES.values())} (dry run → approval)"))
 
-    # 5b. Agent TAP (sign-in details mailed by the agent)
-    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and s.get("NOTIFY_SENDER") in ("AcsEmail", "GraphMail")
+    # 5b. Agent TAP (sign-in details mailed by the agent). v1.1 F2: only through Graph sendMail from TAP_MAIL_SENDER (scoped
+    # by Exchange RBAC for Applications, F81; not visible from here), never through the notification sender. Without the
+    # sender mailbox the worker mails no pass and the ID team hands it over.
+    sender = bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", s.get("TAP_MAIL_SENDER") or ""))
+    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and sender and "Mail.Send" not in roles
     out.append(Result("5b. Agent issues the one-time TAP and mails it with the initial password and MFA steps", PASS if tap_ok else WAIT,
                       f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
+                      f"TAP_MAIL_SENDER {'set' if sender else 'not set (v1.1: no pass is mailed; the ID team hands it over)'}; "
+                      f"{'Graph Mail.Send held in Entra (remove it: it overrides the Exchange scope, F81); ' if 'Mail.Send' in roles else ''}"
                       f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
-                      "" if tap_ok else "tools/deploy_free.sh tap <sub> on (dry run → approval), then tools/deploy_free.sh app <sub>"))
+                      "" if tap_ok else "P7 option 2: tools/deploy_free.sh tap <sub> on --sender <mailbox> (dry run → approval) and the Exchange scope it prints (F81)"))
 
     # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
     prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
@@ -306,7 +312,7 @@ def self_test() -> None:
            "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE}), "rbac_admin_scopes": [allowed],
            "worker_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "AGENT_TENANT_ID": "T1", "NOTIFY_SENDER": "AcsEmail",
                                "ACS_ENDPOINT": "https://a", "NOTIFY_FROM": "DoNotReply@d", "AGENT_PROVISIONING": "true", "AGENT_ROLE_ASSIGNMENT": "true",
-                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "AGENT_PRIVILEGED": "true",
+                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "TAP_MAIL_SENDER": "tap-sender@company.example", "AGENT_PRIVILEGED": "true",
                                "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
                                "ROLE_ASSIGN_SCOPES": allowed},
            "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"},
@@ -330,6 +336,14 @@ def self_test() -> None:
     f2 = [dict(requests[0], flow=dict(requests[0]["flow"], idTeamTask={"agent": {"signInDetailsSentAt": "2026-10-30T10:00:00Z", "signInDetailsSentTo": "j***@company.example"}}))]
     tap = next(r for r in evaluate(ctx, projects, rows, f2, notes[:1], []) if r.feature.startswith("10d."))
     assert tap.status == PASS and "j***@company.example" in tap.detail, (tap.status, tap.detail)
+    # v1.1 F2: AGENT_TAP on but no TAP sender mailbox (or Graph Mail.Send in Entra) = no pass mailed: WAIT, naming option 2.
+    for change in ({"TAP_MAIL_SENDER": ""}, {"TAP_MAIL_SENDER": "not-a-mailbox"}):
+        nosender = json.loads(json.dumps(ctx)); nosender["worker_settings"].update(change)
+        got5b = next(r for r in evaluate(nosender, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
+        assert got5b.status == WAIT and "not set" in got5b.detail and "--sender" in got5b.next, (change, got5b.detail, got5b.next)
+    entra = {**ctx, "graph_roles": [*ctx["graph_roles"], "Mail.Send"]}
+    got5b = next(r for r in evaluate(entra, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
+    assert got5b.status == WAIT and "F81" in got5b.detail, got5b.detail
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
     assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
     go = next(r for r in res if r.feature.startswith("15."))
