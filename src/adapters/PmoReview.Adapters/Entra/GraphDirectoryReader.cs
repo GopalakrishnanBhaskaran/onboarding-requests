@@ -21,10 +21,10 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
 
     public async Task<DirectoryUser?> FindUserAsync(string userPrincipalName, CancellationToken ct)
     {
-        using var doc = await GetAsync($"{V1}users?$filter={Q($"userPrincipalName eq '{Literal(userPrincipalName)}'")}&$select=id,userPrincipalName,userType,accountEnabled", ct);
+        using var doc = await GetAsync($"{V1}users?$filter={Q($"userPrincipalName eq '{Literal(userPrincipalName)}'")}&$select=id,userPrincipalName,userType,accountEnabled,mail", ct);
         var u = Values(doc).FirstOrDefault();
         return u.ValueKind == JsonValueKind.Undefined ? null
-            : new DirectoryUser(Str(u, "id") ?? "", Str(u, "userPrincipalName") ?? userPrincipalName, Str(u, "userType"), Bool(u, "accountEnabled") ?? true);
+            : new DirectoryUser(Str(u, "id") ?? "", Str(u, "userPrincipalName") ?? userPrincipalName, Str(u, "userType"), Bool(u, "accountEnabled") ?? true, Str(u, "mail"));
     }
 
     public async Task<IReadOnlyList<DirectoryGroup>> FindGroupsAsync(string displayName, CancellationToken ct)

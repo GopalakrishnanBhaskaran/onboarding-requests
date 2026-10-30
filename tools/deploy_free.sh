@@ -331,7 +331,7 @@ tap_policy() {
 }
 
 agent_tap() {
-  local mode="$1" lifetime="${2:-480}" name mi swa graph role assignment policy max sender prov
+  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" name mi swa graph role assignment policy max prov appid mailsend
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -349,11 +349,18 @@ agent_tap() {
   fi
 
   [[ "$lifetime" =~ ^[0-9]+$ ]] || { echo "--lifetime must be minutes"; return 1; }
-  prov=$(worker_setting "$name" AGENT_PROVISIONING); sender=$(worker_setting "$name" NOTIFY_SENDER)
+  # v1.1 F2 (decision 19): the pass goes only through Graph sendMail from one mailbox (TAP_MAIL_SENDER), Application Mail.Send
+  # scoped to it by Exchange RBAC for Applications (F81), to the people inventory's verified address; never redirected.
+  tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
+  [[ "$tap_sender" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "--sender <mailbox> is required: the shared mailbox the TAP mail is sent from (TAP_MAIL_SENDER)."; return 1; }
+  prov=$(worker_setting "$name" AGENT_PROVISIONING)
+  appid=$(az ad sp show --id "$mi" --query appId -o tsv)
+  mailsend=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[?appRoleId=='$(graph_role_id Mail.Send)'].id | [0]" -o tsv)
   echo "Checks:"
   echo "  Agent provisioning: ${prov:-false} (must be true: the agent mails passes only for accounts it creates)"
-  echo "  Mail sender: ${sender:-Outbox} (must be AcsEmail or GraphMail: with Outbox the agent never issues a pass)"
-  echo "  Test redirect: $(worker_setting "$name" NOTIFY_REDIRECT_TO || true) (empty = mail goes to the joiner's Enterprise ID mail)"
+  echo "  TAP sender mailbox: $tap_sender (Graph sendMail; the TAP mail is never redirected, also not in test)"
+  echo "  Recipient: the people inventory's EnterpriseEmail of the new account, equal to its Entra mail or UPN; otherwise an escalation"
+  [[ -z "$mailsend" ]] || echo "  WARNING: the worker holds Graph Mail.Send in Entra: it adds up with the Exchange scope and makes it useless (F81). Remove it."
   policy=$(tap_policy)
   if [[ -n "$policy" ]]; then
     echo "  Tenant TAP policy: $(tr -d '\n ' <<<"$policy")"
@@ -365,17 +372,22 @@ agent_tap() {
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
   [[ "$lifetime" -ge 60 ]] || { echo "Lifetime must be at least 60 minutes (the joiner reads it from mail)."; return 1; }
-  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
-  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime; SWA: AGENT_TAP=true"
-  echo "  Risk: the permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
-  echo "  request after both approvals, mails it once to that request's Enterprise ID mail and keeps no copy."
+  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAIL_SENDER=$tap_sender; SWA: AGENT_TAP=true"
+  echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
+  echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
+  echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
+  echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
+  echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
+  echo "  Risk: the TAP permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
+  echo "  request after both approvals, mails it once to the verified enterprise mail and keeps no copy (audit: masked recipient only)."
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
   fi
   [[ "$prov" == "true" ]] || { echo "Switch agent provisioning on first (tools/deploy_free.sh provisioning ...)."; return 1; }
-  [[ "$sender" == "AcsEmail" || "$sender" == "GraphMail" ]] || { echo "Switch mail on first (tools/deploy_free.sh email ...)."; return 1; }
+  [[ -z "$mailsend" ]] || { echo "Remove the Entra Mail.Send grant first (F81)."; return 1; }
   graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
   if [[ -z "$assignment" ]]; then
     az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
@@ -384,10 +396,11 @@ agent_tap() {
   else
     echo "Already granted: $GRAPH_TAP_ROLE"
   fi
-  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime"
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender"
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true -o none
   echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
+  echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
 }
 
 # Agent privileged rows (requested by Gokul 22 Oct 2026, approval-gated): a setting only. What the agent may assign stays
@@ -707,15 +720,16 @@ PY
     provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
     ;;
   tap)
-    MODE="${3:?on|off}"; shift 3; LIFETIME=480
+    MODE="${3:?on|off}"; shift 3; LIFETIME=480; TAP_SENDER=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --lifetime) LIFETIME="${2:?minutes}"; shift 2 ;;
+        --sender) TAP_SENDER="${2:?sender mailbox}"; shift 2 ;;
         --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (tap $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
         *) echo "unknown argument $1"; exit 1 ;;
       esac
     done
-    agent_tap "$MODE" "$LIFETIME"
+    agent_tap "$MODE" "$LIFETIME" "$TAP_SENDER"
     ;;
   privileged)
     MODE="${3:?on|off}"

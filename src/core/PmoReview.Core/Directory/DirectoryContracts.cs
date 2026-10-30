@@ -3,7 +3,8 @@ using PmoReview.Core.Domain;
 
 namespace PmoReview.Core.Directory;
 
-public sealed record DirectoryUser(string ObjectId, string UserPrincipalName, string? UserType, bool AccountEnabled)
+/// <param name="Mail">The user's SMTP address in Entra (<c>mail</c>), if any; the F2 TAP recipient check compares it (F95).</param>
+public sealed record DirectoryUser(string ObjectId, string UserPrincipalName, string? UserType, bool AccountEnabled, string? Mail = null)
 {
     public bool IsGuest => string.Equals(UserType, "Guest", StringComparison.OrdinalIgnoreCase);
 }

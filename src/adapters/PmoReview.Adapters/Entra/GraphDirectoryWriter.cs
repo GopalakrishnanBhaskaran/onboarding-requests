@@ -38,7 +38,9 @@ public sealed class GraphDirectoryWriter(HttpClient http, TokenCredential creden
             ["passwordProfile"] = new Dictionary<string, object> { ["forceChangePasswordNextSignIn"] = true, ["password"] = initialPassword.Reveal() },
         });
         using var doc = await PostAsync($"{V1}users", body, ct) ?? throw new DirectoryWriteException("GraphError");
-        return new DirectoryUser(Str(doc.RootElement, "id") ?? throw new DirectoryWriteException("GraphError"), user.UserPrincipalName, "Member", true);
+        // The 201 response is the user object as Entra stored it: its UPN and mail feed the F2 TAP recipient check.
+        return new DirectoryUser(Str(doc.RootElement, "id") ?? throw new DirectoryWriteException("GraphError"),
+            Str(doc.RootElement, "userPrincipalName") ?? user.UserPrincipalName, "Member", true, Str(doc.RootElement, "mail"));
     }
 
     public async Task<bool> CanIssueTapAsync(CancellationToken ct)

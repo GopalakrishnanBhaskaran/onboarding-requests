@@ -1,5 +1,7 @@
 # PERMISSIONS — v1.1 (P3 checkpoint, 30 Oct 2026)
 
+**Approved as proposed, 30 Oct 2026 (Gokul; decisions 16–19 in `docs/V1_1_PLAN.md`):** app role assignments stay "Not covered" (no `Directory.Read.All`); RBAC reach = `OFFBOARD_SUBSCRIPTIONS` (the pilot subscription at first); TAP mail through Graph with `Application Mail.Send` scoped by Exchange RBAC for Applications. Approving the design is not a grant: each row below still needs its dry run and `--approved-by`.
+
 Every Microsoft Graph and Azure (ARM) permission v1.1 needs, why, the narrowest option, and whether the worker already holds it. Facts: `docs/VERIFIED_FACTS.md` (F-numbers, each read on learn.microsoft.com). **Nothing here is granted yet.** Each grant is an Azure/Entra permission change: dry run → Gokul's "approved" → `--approved-by` (CLAUDE.md rule 4).
 
 Who holds what: only the **AI agent worker's managed identity** (Flex Consumption Function App, `func-pmo-worker-*`). The Static Web Apps API has no managed identity (F85) and never calls Graph or ARM. People use their own rights in their own tools.

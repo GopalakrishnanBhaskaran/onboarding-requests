@@ -1,7 +1,7 @@
 # v1.1 feature pack — Phase 0 plan (30 Oct 2026)
 
 Binding instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md` (Section B). This file is the P0 output: what exists, what conflicts, the plan per phase, the data model changes, the questions that block P1, and the manual prerequisites.
-Status: **P0 approved 30 Oct 2026 (Gokul: "approved, use your proposals"; Q8: "add the fields to existing testing samples").** P1 and P2 done; P3 checkpoint written and waiting for approval (`docs/V1_1_PHASES.md`). Nothing deployed.
+Status: **P0 approved 30 Oct 2026 (Gokul: "approved, use your proposals"; Q8: "add the fields to existing testing samples").** P1 and P2 done; **P3 approved 30 Oct 2026 (Gokul: "approved, use your proposals", decisions 16–19)**; P4 in progress (`docs/V1_1_PHASES.md`). Nothing deployed.
 
 ## 0. Decisions (30 Oct 2026, Gokul)
 Every proposal in sections 2 and 5 is the decision. In short:
@@ -20,6 +20,12 @@ Every proposal in sections 2 and 5 is the decision. In short:
 13. Offboarding removes memberships of every group the worker can change and Azure role assignments in every subscription it can read and delete in; anything else is a leftover (PartiallyCompleted + escalation).
 14. PH / ACQ are hidden when the tenant has no such rows.
 15. Root cause of the TAP mail failure: from the code, written in `docs/ROOT_CAUSE.md` (P4).
+
+P3 checkpoint (Gokul, 30 Oct 2026: "approved, use your proposals"; `docs/PERMISSIONS.md`, `docs/HOSTING.md`):
+16. Hosting **option A**: F2 and F5 run in the existing worker, asynchronously (no new Azure resource, ≈ ₹0). B and C stay options for later, each with its own written approval.
+17. Offboarding **app role assignments stay under "Not covered"** (no `Directory.Read.All`); disabling the account stops sign-in to those apps.
+18. Offboarding **RBAC reach**: the subscriptions in `OFFBOARD_SUBSCRIPTIONS` (comma-separated ids; empty = every subscription the worker identity can list, F84). At deploy time Reader + the users-only constrained RBAC Administrator (delete) are proposed for the pilot subscription only; each further subscription is a separate approval. An assignment the worker cannot read or delete is a leftover (decision 13).
+19. **TAP mail via Graph `sendMail`** from the one mailbox in `TAP_MAIL_SENDER`, `Application Mail.Send` scoped to that mailbox through Exchange RBAC for Applications (never also in Entra, F81). Mailbox name and Exchange admin are deploy-time prerequisites; until set, the agent TAP stays with the ID team (no mail, no pass).
 
 ## 1. What exists today (read on 30 Oct 2026)
 

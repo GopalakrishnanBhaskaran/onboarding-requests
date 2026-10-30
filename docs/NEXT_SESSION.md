@@ -1,6 +1,6 @@
 # Next session — handoff (updated 22 Oct 2026, evening: go-live release)
 
-> **30 Oct 2026 — v1.1 feature pack (branch `claude/elegant-darwin-nfot4p`).** P0 approved; P1 (data model) and P2 (F1 Resource* selector, F3 Prod read-only) built and tested; **P3 checkpoint written (`docs/PERMISSIONS.md`, `docs/HOSTING.md`); waiting for Gokul's approval and the 4 P3 questions (`docs/V1_1_PHASES.md`)** before F2/F4/F5. Instructions `PMO_Access_Portal_v1.1_Feature_Prompt.md`, decisions `docs/V1_1_PLAN.md`, phase results `docs/V1_1_PHASES.md`. Nothing deployed; the go-live steps below are unchanged.
+> **30 Oct 2026 — v1.1 feature pack (branch `claude/elegant-darwin-nfot4p`).** P0 approved; P1 (data model) and P2 (F1 Resource* selector, F3 Prod read-only) built and tested; P3 approved (option A, decisions 16–19); **P4 (F2 TAP recipient, F4 uploads) in progress**, then P5 (F5 offboarding) and P6 (review, STOP). Instructions `PMO_Access_Portal_v1.1_Feature_Prompt.md`, decisions `docs/V1_1_PLAN.md`, phase results `docs/V1_1_PHASES.md`. Nothing deployed; the go-live steps below are unchanged.
 
 Read first: `docs/GO_LIVE.md` (steps for 23 Oct), `CLAUDE.md`, `SCOPE.md` (22 Oct go-live additions), `workflows/09-onboarding-flow-v2.md` (section *Notifications and the contact inventory*), last rows of `docs/DEPLOYMENT_LOG.md`.
 Branch **`claude/eager-ride-lx6he8`** (on top of `13ca4b9` from `claude/great-goodall-j4ozev`), pushed. No PR.

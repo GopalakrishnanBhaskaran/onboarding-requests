@@ -37,9 +37,9 @@ public sealed class FakeDirectory : IDirectoryReader
         return d;
     }
 
-    public DirectoryUser AddUser(string upn, bool guest = false)
+    public DirectoryUser AddUser(string upn, bool guest = false, string? mail = null)
     {
-        var u = new DirectoryUser(Guid.NewGuid().ToString("D"), upn, guest ? "Guest" : "Member", true);
+        var u = new DirectoryUser(Guid.NewGuid().ToString("D"), upn, guest ? "Guest" : "Member", true, mail);
         _users[upn] = u;
         _methods[upn] = (["password"], null);
         return u;
@@ -201,13 +201,15 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory, Func<DateTimeOf
     public string? TapFailOnce { get; set; }
     /// <summary>The passes handed out, in order (each replaces the previous one on the account).</summary>
     public List<string> Passes { get; } = [];
+    /// <summary>The Entra <c>mail</c> a created account comes back with (F2 cross-check), by UPN; none by default.</summary>
+    public Dictionary<string, string> MailOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<DirectoryUser> CreateUserAsync(NewUser user, Secret initialPassword, CancellationToken ct)
     {
         Write($"create-user {user.UserPrincipalName}");
         Users.Add(user);
         Passwords.Add(initialPassword.Reveal());
-        return Task.FromResult(directory.AddUser(user.UserPrincipalName));
+        return Task.FromResult(directory.AddUser(user.UserPrincipalName, mail: MailOf.GetValueOrDefault(user.UserPrincipalName)));
     }
 
     public Task<bool> CanIssueTapAsync(CancellationToken ct) => Task.FromResult(TapPermission);
@@ -272,18 +274,26 @@ public sealed class FakeRoleWriter(FakeRoles roles) : IRoleAssignmentWriter
     }
 }
 
-/// <summary>Mail stand-in for the agent's sign-in details: keeps what was "sent" (tests only), or fails on demand.</summary>
-public sealed class FakeDirectMail(string? redirectTo = null) : IDirectMail
+/// <summary>
+/// Mail stand-in for the agent's sign-in details: the real <see cref="DirectMail"/> rules (one plain recipient, no redirect)
+/// over a sender that keeps what was "sent" (tests only), or fails on demand.
+/// </summary>
+public sealed class FakeDirectMail : IDirectMail, INotificationSender
 {
+    private readonly DirectMail inner;
+    public FakeDirectMail() => inner = new DirectMail(this);
+
+    public string Name => "FakeTapMail";
     public bool Delivers { get; set; } = true;
     public string? FailWith { get; set; }
     public List<Notification> Sent { get; } = [];
 
-    public Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct)
+    public Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct) => inner.SendNowAsync(notification, ct);
+
+    public Task SendAsync(Notification notification, CancellationToken ct)
     {
         if (FailWith is { } f) throw new OutboundException(f);
-        var outgoing = NotificationDispatcher.Redirect(notification, redirectTo, "test");
-        Sent.Add(outgoing);
-        return Task.FromResult(outgoing.To);
+        Sent.Add(notification);
+        return Task.CompletedTask;
     }
 }

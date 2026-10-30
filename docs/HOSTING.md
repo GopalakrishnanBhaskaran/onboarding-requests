@@ -26,6 +26,8 @@ What a bring-your-own (BYO) backend would add is **synchronous** Graph/ARM calls
 | Rollback | Switch `AGENT_OFFBOARDING` off; nothing to undo in Azure | Unlink the backend in SWA → *APIs*, redeploy managed API, plan back to Free (F86: the Linked identity provider stays on the Function App until removed) | per enterprise runbook |
 
 ## Recommendation
+**Decided 30 Oct 2026 (Gokul, "approved, use your proposals"): option A.**
+
 **A for the pilot and for building/testing v1.1** (P4–P6 are code-only and mocked anyway). Move to **B** only if PMO needs the offboarding plan inside the same click or the external upload API must go live before the actual-tenant target; move to **C** with the actual-tenant rollout.
 
 ## What A means in code (P4/P5)

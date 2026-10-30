@@ -56,7 +56,7 @@ Risks:
 Next step: P3 checkpoint (PERMISSIONS.md, HOSTING.md) — STOP
 
 ## Phase 3 result
-Status: Needs approval
+Status: Done (approved by Gokul on 30 Oct 2026: "approved, use your proposals" — answers to 1–4 are decisions 16–19 in `docs/V1_1_PLAN.md`)
 Changed files:
 - `docs/PERMISSIONS.md` — every Graph / ARM / Exchange / Entra app-role permission for F1–F5, why, narrowest option, held or new, what to approve at deploy time
 - `docs/HOSTING.md` — no new Function App needed: F2/F5 run in the existing worker (managed identity), asynchronously; options A (recommended, ≈ ₹0), B (SWA Standard + worker linked as API backend), C (actual-tenant App Service); cost and rollback per option

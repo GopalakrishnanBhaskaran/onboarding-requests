@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PmoReview.Adapters;
 using PmoReview.Adapters.Dispatch;
@@ -65,19 +66,22 @@ public sealed class TestApp
     public FakeTracker Tracker { get; } = new();
     public PilotSettings Settings { get; }
 
-    private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null)
+    private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
+        ILoggerFactory? loggers = null)
     {
+        loggers ??= NullLoggerFactory.Instance;
         Stores = stores ?? InMemoryDataStores.Create();
         SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
         Settings = settings;
         Directory = FakeDirectory.SeededFromSample();
         Roles = new FakeRoles();
-        Api = PilotApp.BuildWorkflow(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
-        Host = PilotApp.Build(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
+        Api = PilotApp.BuildWorkflow(Stores, settings, Clock, loggers, model, queue, apiDirectory);
+        Host = PilotApp.Build(Stores, settings, Clock, loggers, model, queue, apiDirectory);
         Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
-        Mail = new FakeDirectMail(settings.Workflow.MailRedirectTo);
-        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles,
+        Mail = new FakeDirectMail();
+        Loggers = loggers;
+        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, loggers, model, directory: Directory, roles: Roles,
             writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
             directMail: settings.Workflow.AgentTap ? Mail : null);
     }
@@ -93,8 +97,12 @@ public sealed class TestApp
     public static TestApp On(DataStores stores, PilotSettings? settings = null) => new(settings ?? new PilotSettings(), null, null, null, stores);
 
     /// <summary>Real wiring with an optional scripted reviewer, settings, queue, or a directory reader in the API process.</summary>
-    public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null) =>
-        new(settings ?? new PilotSettings(), model, queue, apiDirectory);
+    public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null,
+        ILoggerFactory? loggers = null) =>
+        new(settings ?? new PilotSettings(), model, queue, apiDirectory, loggers: loggers);
+
+    /// <summary>The loggers of the API and the worker (a capturing factory in the F2 "never in the logs" test).</summary>
+    public ILoggerFactory Loggers { get; }
 
     /// <summary>v1.1: the worker also resolves mapping group names in (fake) Entra. Off by default so older tests keep their Entra call counts.</summary>
     public bool ResolveGroups { get; set; }
@@ -103,10 +111,10 @@ public sealed class TestApp
     public async Task<WorkerSummary> RunWorker()
     {
         var worker = new WorkflowWorker(Worker.Agent,
-            new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, NullLogger<NotificationDispatcher>.Instance),
-            new AdoSync(Stores, Tracker, Worker.Issues, Clock, NullLogger<AdoSync>.Instance),
+            new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, Loggers.CreateLogger<NotificationDispatcher>()),
+            new AdoSync(Stores, Tracker, Worker.Issues, Clock, Loggers.CreateLogger<AdoSync>()),
             new DailySummaryJob(Stores, Worker.Notifier, Clock),
-            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, NullLogger<GroupResolutionJob>.Instance, Settings.Workflow.AgentTenantId) : null);
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null);
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 

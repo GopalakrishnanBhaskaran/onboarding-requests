@@ -186,11 +186,15 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     evidence("9. Security approval given in the app", "security-approved", "a Security member (not the Owner approver) approves")
     evidence("10. Agent created user / group / membership", "agent-provisioned",
              "after both approvals wait 5–10 min; 'agent-waiting-permission' = new permission not in the token yet (up to 24 h)")
-    signin = [n for n in notes if n.get("kind") == "SignInDetails"]
-    sent = [n for n in signin if n.get("status") == "Sent"]
-    out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if sent else WAIT,
-                      f"{len(sent)} sent, delivered to {sorted({a for n in sent for a in n.get('deliveredTo') or []}) or 'nobody yet'}",
-                      "" if sent else "needs step 5b; then a new request (the agent mails it in the run that creates the account)"))
+    # v1.1 F2: no copy of the mail is stored any more; the request records when and to whom (masked) it went. Older
+    # deployments kept a masked notification (kind SignInDetails): still counted.
+    agent_of = lambda r: ((r.get("flow") or {}).get("idTeamTask") or {}).get("agent") or {}  # noqa: E731
+    mailed = [r for r in v2 if agent_of(r).get("signInDetailsSentAt")]
+    sent = [n for n in notes if n.get("kind") == "SignInDetails" and n.get("status") == "Sent"]
+    to = sorted({agent_of(r).get("signInDetailsSentTo") or "?" for r in mailed} | {a for n in sent for a in n.get("deliveredTo") or []})
+    out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if mailed or sent else WAIT,
+                      f"{len(mailed) + len(sent)} sent, to {to or 'nobody yet'}",
+                      "" if mailed or sent else "needs step 5b, TAP_MAIL_SENDER and a people inventory entry; then a new request (the agent mails it in the run that creates the account)"))
     evidence("11. Agent assigned the Azure role(s)", "agent-role-assigned", "after the agent's own ID step is verified, wait 5–10 min")
     waiting = [r["id"][:8] for r in v2 if "agent-waiting-permission" in steps(r) and status(r) in ("WithIdTeam", "WithRoleTeam")]
     if waiting:
@@ -302,6 +306,10 @@ def self_test() -> None:
     requests = [{"id": "bbbbbbbbbbbb", "projectId": "PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
     notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}, {"status": "Sent", "kind": "SignInDetails", "deliveredTo": ["x@y.z"]}]
     res = evaluate(ctx, projects, rows, requests, notes, [])
+    # v1.1 F2: the sign-in details are recorded on the request (masked recipient), not as a stored mail.
+    f2 = [dict(requests[0], flow=dict(requests[0]["flow"], idTeamTask={"agent": {"signInDetailsSentAt": "2026-10-30T10:00:00Z", "signInDetailsSentTo": "j***@company.example"}}))]
+    tap = next(r for r in evaluate(ctx, projects, rows, f2, notes[:1], []) if r.feature.startswith("10d."))
+    assert tap.status == PASS and "j***@company.example" in tap.detail, (tap.status, tap.detail)
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
     assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
     go = next(r for r in res if r.feature.startswith("15."))
