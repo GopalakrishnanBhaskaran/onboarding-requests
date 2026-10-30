@@ -1,6 +1,6 @@
 import type {
   AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
-  ResponseRecord, ReviewRun, StatusLine,
+  ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation,
 } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
@@ -117,6 +117,16 @@ export const api = {
   daily: (projectId: string, date: string) => call<DailySummary>('GET', `${p(projectId)}/reports/daily/${id(date)}`),
   developer: (projectId: string) => call<DeveloperReport>('GET', `${p(projectId)}/reports/developer`),
   recoverStuck: (projectId: string) => call<{ recovered: string[] }>('POST', `${p(projectId)}/operator/recover`),
+
+  // v1.1 (F1, F3)
+  resourceOptions: (projectId: string, environment: string) =>
+    call<ResourceOptions>('GET', `resources/options?projectId=${id(projectId)}&environment=${id(environment)}`),
+  resolve: (projectId: string, environment: string, resources: string[]) =>
+    call<ResolveResult>('GET', `resources/resolve?projectId=${id(projectId)}&environment=${id(environment)}${resources.map((r) => `&resource=${id(r)}`).join('')}`),
+  submitBundle: (projectId: string, input: BundleInput) => call<BundleResult>('POST', `${p(projectId)}/requests/bundle`, input),
+  escalations: (projectId: string) => call<{ items: Item<Escalation>[] }>('GET', `${p(projectId)}/escalations`),
+  decideEscalation: (projectId: string, escalationId: string, decision: 'Approved' | 'Rejected', remarks: string, requestRevision: number) =>
+    call<{ escalation: Item<Escalation> }>('POST', `${p(projectId)}/escalations/${id(escalationId)}/decision`, { decision, remarks: remarks || null, requestRevision }),
 };
 
 export type { AccessRequest };

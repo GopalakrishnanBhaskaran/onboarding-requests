@@ -138,8 +138,10 @@ public sealed partial class WorkflowAgent(
             RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault()?.Step ?? "submit", cid, ct),
             RequestStatus.AiReview => await AfterReviewAsync(r, cid, ct),
             RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
-            RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await IdTeamAsync(r, ct),
-            RequestStatus.WithRoleTeam => await MappingChangedAsync(r, ct) ?? await RoleTeamAsync(r, ct),
+            RequestStatus.AwaitingProdApproval => await MappingChangedAsync(r, ct) ?? await ProdApprovalAsync(r, ct),
+            // F3: the Prod guard runs before anything at the granting stages.
+            RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await IdTeamAsync(r, ct),
+            RequestStatus.WithRoleTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await RoleTeamAsync(r, ct),
             RequestStatus.Verifying => await FinalAsync(r, ct),
             _ => null,
         };
@@ -298,6 +300,7 @@ public sealed partial class WorkflowAgent(
     {
         RequestStatus.AwaitingOwner => WaitingOn.Owner,
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
+        RequestStatus.AwaitingProdApproval => WaitingOn.ProdApprover,
         RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.IdTeam,
         RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
         _ => WaitingOn.Agent, // Verifying included: the agent checks the access itself, nobody else is waited on

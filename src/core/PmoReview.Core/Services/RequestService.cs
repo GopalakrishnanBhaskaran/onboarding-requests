@@ -76,7 +76,8 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
     }
 
     /// <summary>Submits a new request (status Submitted). The caller then starts the AI review.</summary>
-    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct)
+    /// <param name="bundleId">Set by the server for requests submitted together from one Resource* selection (F1); never from the body.</param>
+    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct, string? bundleId = null)
     {
         caller.Require(projectId, Permission.SubmitRequests);
         var (clean, fixes) = Validate(input);
@@ -99,6 +100,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Justification = clean.Justification,
             Owner = clean.Owner,
             Guest = clean.Guest ?? false,
+            BundleId = bundleId,
             CreatedBy = caller.UserId,
             CreatedByName = caller.DisplayName,
             CreatedAt = now,

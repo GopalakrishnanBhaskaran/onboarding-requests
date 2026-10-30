@@ -3,9 +3,9 @@
 export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'PMO' | 'Operator' | 'Reviewer' | 'Maintainer'
   | 'ProdApprover' | 'DataMaintainer';
 export type RequestStatus =
-  | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'Rejected'
+  | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'AwaitingProdApproval' | 'Rejected'
   | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev';
-export type WaitingOn = 'None' | 'Agent' | 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'User' | 'Developer';
+export type WaitingOn = 'None' | 'Agent' | 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'User' | 'Developer' | 'ProdApprover';
 export type ProcessingStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Superseded';
 export type ReviewOutcome = 'Pass' | 'Fail' | 'Pending';
 export type CheckStatus = 'Pass' | 'Fail' | 'Pending' | 'NotApplicable' | 'Flagged';
@@ -79,7 +79,7 @@ export interface CheckResult {
 }
 
 export interface Approval {
-  stage: 'Owner' | 'Security';
+  stage: 'Owner' | 'Security' | 'Prod';
   decision: 'Approved' | 'Rejected';
   by: string;
   byName: string;
@@ -255,6 +255,8 @@ export interface ProjectContacts {
   idTeam: string[];
   roleTeam: string[];
   operators: string[];
+  /** v1.1 (F3): where Prod escalation requests go. */
+  prodApprovers?: string[];
   securityManager?: string | null;
   idTeamManager?: string | null;
   roleTeamManager?: string | null;
@@ -281,6 +283,7 @@ export interface ContactInventoryInput {
   roleTeam: string;
   pmo: string;
   operators: string;
+  prodApprovers: string;
   securityManager: string;
   idTeamManager: string;
   roleTeamManager: string;
@@ -376,6 +379,14 @@ export interface MappingRow {
   sensitiveResource: boolean;
   deprecated: boolean;
   groupState: GroupState;
+  // v1.1 mapping sheet columns (I1).
+  tenantId?: string | null;
+  domain?: string | null;
+  resourceGroupType?: 'Domain' | 'PH' | 'ACQ' | null;
+  owner?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  retired?: boolean;
   sourceReference: string;
   version: number;
   updatedBy: string;
@@ -420,4 +431,82 @@ export interface DeveloperReport {
   requests: { requestId: string; reason: string | null; report: string }[];
   openIssues: Issue[];
   text: string;
+}
+
+// ---- v1.1 (30 Oct 2026) ----------------------------------------------------------------------------------------
+
+/** F1: the Resource* options of one tenant. */
+export interface ResourceOptions {
+  tenantId: string;
+  environment: string;
+  options: string[];
+  allOption: string;
+}
+
+/** F1 output contract item. */
+export interface ResolvedAccess {
+  groupObjectId: string;
+  groupName: string;
+  accessLevel: string;
+  sources: string[];
+  status: 'Auto' | 'NeedsHumanApproval' | 'Unresolved';
+}
+
+export interface MappingQualityNote {
+  variantName: string;
+  canonicalName: string;
+  sheetRow: number;
+  reason: string;
+}
+
+/** F1 output contract (GET /api/resources/resolve). */
+export interface ResolveResult {
+  tenantId: string;
+  environment: string;
+  selectedResources: string[];
+  resolvedAccess: ResolvedAccess[];
+  mappingQualityIssues: MappingQualityNote[];
+  mappingVersion: string;
+}
+
+export interface BundleInput {
+  enterpriseId: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  environment: string | null;
+  justification: string | null;
+  owner: string | null;
+  guest: boolean;
+  selectedResources: string[];
+  groups: string[];
+}
+
+export interface BundleResult {
+  bundleId: string;
+  requests: { requestId: string; groupName: string; accessLevel: string; resolveStatus: string; status: StatusLine }[];
+  skipped: { groupName: string; reason: string }[];
+}
+
+export type EscalationKind = 'ProdWrite' | 'UnresolvedGroup' | 'TapRecipientMismatch' | 'OffboardingLeftover';
+export type EscalationStatus = 'Open' | 'Approved' | 'Rejected';
+
+/** F1/F2/F3/F5: a decision a person must take. */
+export interface Escalation {
+  id: string;
+  projectId: string;
+  kind: EscalationKind;
+  requestId?: string | null;
+  requestRevision?: number | null;
+  user?: string | null;
+  group?: string | null;
+  level?: string | null;
+  environment?: string | null;
+  reason: string;
+  requestedBy: string;
+  createdAt: string;
+  status: EscalationStatus;
+  decidedBy?: string | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  remarks?: string | null;
 }

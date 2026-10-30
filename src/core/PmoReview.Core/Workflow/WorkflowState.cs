@@ -10,6 +10,8 @@ public enum RequestStatus
     Returned,
     AwaitingOwner,
     AwaitingSecurity,
+    /// <summary>v1.1 (F3): Prod above Read after both approvals: waits for a ProdApprover's decision on the ProdWrite escalation.</summary>
+    AwaitingProdApproval,
     Rejected,
     WithIdTeam,
     WithRoleTeam,
@@ -19,9 +21,10 @@ public enum RequestStatus
 }
 
 /// <summary>Who the request is waiting on right now.</summary>
-public enum WaitingOn { None, Agent, Requester, Owner, Security, IdTeam, RoleTeam, User, Developer }
+public enum WaitingOn { None, Agent, Requester, Owner, Security, IdTeam, RoleTeam, User, Developer, ProdApprover }
 
-public enum ApprovalStage { Owner, Security }
+/// <summary>Owner, then Security; Prod (v1.1, F3) only for Prod above Read, after both, from a ProdApprover.</summary>
+public enum ApprovalStage { Owner, Security, Prod }
 
 public enum ApprovalDecision { Approved, Rejected }
 
@@ -287,6 +290,7 @@ public static class StatusText
         RequestStatus.Returned => "Returned",
         RequestStatus.AwaitingOwner => "Awaiting Owner",
         RequestStatus.AwaitingSecurity => "Awaiting Security",
+        RequestStatus.AwaitingProdApproval => "Awaiting Prod approval",
         RequestStatus.Rejected => "Rejected",
         RequestStatus.WithIdTeam => "With ID Team",
         RequestStatus.WithRoleTeam => "With Role Team",
@@ -303,6 +307,7 @@ public static class StatusText
         WaitingOn.IdTeam => "ID team",
         WaitingOn.RoleTeam => "Role team",
         WaitingOn.User => "New user",
+        WaitingOn.ProdApprover => "ProdApprover",
         _ => w.ToString(),
     };
 
@@ -312,7 +317,7 @@ public static class StatusText
         "1. Requester submits the request",
         "2. AI review (mapping sheet + response document)",
         "3. Owner approval",
-        "4. Security approval",
+        "4. Security approval (Prod above Read: then a ProdApprover)",
         "5. ID team creates user/group (+ TAP)",
         "6. Role assignment team assigns roles",
         "7. AI verifies the access, notifies the requester (Completed), audit",

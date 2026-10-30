@@ -25,7 +25,7 @@ async function as(browser: Browser, userId: string): Promise<{ ctx: BrowserConte
 const enterpriseId = (tag: string) => `sample.e2e.${tag}.${Date.now().toString(36)}@company.example`;
 
 async function submit(page: Page, fields: {
-  enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string; environment?: string; tenant?: string;
+  enterpriseId: string; resource: string; group: string; accessLevel: string; owner: string; justification: string; environment?: string; tenant?: string;
 }) {
   await page.goto('/#/requests/new');
   // The tenant is chosen on the form itself (one project per tenant).
@@ -38,10 +38,13 @@ async function submit(page: Page, fields: {
   await page.getByLabel('Enterprise ID').fill(fields.enterpriseId);
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
-  // Environment, resource and access level are picked from the mapping sheet of this tenant.
+  // v1.1 F1: environment and Resource* come from the mapping sheet of this tenant; the resolved groups are ticked.
   if (fields.environment) await page.getByLabel('Environment').selectOption(fields.environment);
-  await page.getByLabel('Resource').selectOption(fields.resource);
-  await page.getByLabel('Access level').selectOption(fields.accessLevel);
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no resource chosen yet
+  await page.getByRole('combobox', { name: /^Resource/ }).selectOption(fields.resource);
+  const table = page.getByRole('table', { name: 'Resolved access' });
+  await expect(table).toBeVisible();
+  await table.getByRole('checkbox', { name: fields.group, exact: true }).check();
   // A ready template, prefilled with the choices; submitting it unfilled is refused.
   await page.getByRole('button', { name: 'Insert into justification' }).click();
   await expect(page.getByRole('textbox', { name: 'Justification' })).toHaveValue(new RegExp(`Access needed: ${fields.accessLevel} on `));
@@ -91,7 +94,8 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
   const alice = await as(browser, 'sample-user-alice');
   const id = await submit(alice.page, {
     enterpriseId: enterpriseId('ok'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
@@ -157,7 +161,8 @@ test('a request the AI review finds gaps in is returned with the reason and can 
   const alice = await as(browser, 'sample-user-alice');
   await submit(alice.page, {
     enterpriseId: enterpriseId('ret'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: views dashboards.',
@@ -172,7 +177,8 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
   const alice = await as(browser, 'sample-user-alice');
   const id = await submit(alice.page, {
     enterpriseId: enterpriseId('rej'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-otto@sample.invalid',
     justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
@@ -190,7 +196,7 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
   await otto.ctx.close();
 });
 
-test('tenant project: environment, the Azure roles and risk flags are on the decision page; Prod is returned', async ({ browser }) => {
+test('tenant project: environment, the Azure roles and risk flags are on the decision page; red Prod rows are not offered', async ({ browser }) => {
   const alice = await as(browser, 'sample-user-alice');
   await alice.page.goto('/');
   await expect(alice.page.getByText('Tenant:').first()).toBeVisible();
@@ -198,7 +204,8 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
     tenant: 'SAMPLE-PEST',
     enterpriseId: enterpriseId('pest'),
     environment: 'Dev',
-    resource: 'SAMPLE PEST Platform (ph)',
+    resource: 'PH',
+    group: 'sample-azr-pes-rg-data-dev-ph-weu-support-reader',
     accessLevel: 'Support Reader',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
@@ -218,18 +225,39 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
   await decide(olivia.page, 'Approve business need');
   await expectStage(olivia.page, 'Awaiting Security');
 
-  const prod = await submit(alice.page, {
-    enterpriseId: enterpriseId('prd'),
-    environment: 'Prod',
-    resource: 'SAMPLE PEST Platform (ph)',
-    accessLevel: 'Support Reader',
-    owner: 'sample-user-olivia@sample.invalid',
-    justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
-  });
-  expect(prod).toBeTruthy();
-  await expectStage(alice.page, 'Returned');
-  await expect(alice.page.getByText(/flagged red/).first()).toBeVisible();
+  // v1.1 F1: the only Prod row is flagged red (never acted on), so Prod offers nothing to request.
+  await alice.page.goto('/#/requests/new');
+  await alice.page.getByLabel('Environment').selectOption('Prod');
+  await expect(alice.page.getByText(/has no resources for Prod that can be requested/)).toBeVisible();
+  await expect(alice.page.getByRole('button', { name: 'Submit request' })).toBeDisabled();
   for (const u of [alice, olivia]) await u.ctx.close();
+});
+
+test('Resource* checkboxes: All ticks every resource, unticking one clears All, two groups become two requests', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const page = alice.page;
+  await page.goto('/#/requests/new');
+  await page.getByRole('switch', { name: 'Choose several resources' }).check();
+  const group = page.getByRole('group', { name: 'Resources' });
+  await group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' }).check();
+  for (const name of ['Engineering', 'Finance', 'Sales']) await expect(group.getByRole('checkbox', { name, exact: true })).toBeChecked();
+  await group.getByRole('checkbox', { name: 'Sales', exact: true }).uncheck();
+  await expect(group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' })).not.toBeChecked();
+  const table = page.getByRole('table', { name: 'Resolved access' });
+  await expect(table.getByText('SAMPLE-GRP-ALPHA-SALES-READ')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no group ticked yet
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-FIN-VIEW', exact: true }).check();
+  await page.getByLabel('Enterprise ID').fill(enterpriseId('bundle'));
+  await page.getByLabel('First name').fill('Sample');
+  await page.getByLabel('Last name').fill('Joiner');
+  await page.getByRole('textbox', { name: 'Justification' }).fill('SAMPLE: joins the data engineering team and builds the finance reports from the curated data.');
+  await page.getByLabel('Owner (sign-in name)').fill('sample-user-olivia@sample.invalid');
+  await page.getByRole('button', { name: 'Submit request' }).click();
+  await expect(page).toHaveURL(/#\/requests$/);
+  await expect(page.getByText('SAMPLE Finance Reports').first()).toBeVisible();
+  await expect(page.getByText('SAMPLE Databricks Engineering').first()).toBeVisible();
+  await alice.ctx.close();
 });
 
 test('PMO sees the mapping sheet and the response document', async ({ browser }) => {
@@ -258,7 +286,7 @@ test('PMO sees the mapping sheet and the response document', async ({ browser })
 test('contact inventory: PMO edits the team mail lists (semicolon-separated); others read them', async ({ browser }) => {
   const paul = await as(browser, 'sample-user-paul');
   await paul.page.goto('/#/contacts');
-  await expect(paul.page.getByRole('heading', { name: 'Contact inventory' })).toBeVisible();
+  await expect(paul.page.getByRole('heading', { name: 'Team contacts' })).toBeVisible();
   const security = paul.page.getByRole('textbox', { name: 'Security', exact: true });
   await expect(security).toHaveValue(/@/);
   const team = `sec.${Date.now().toString(36)}@company.example`; // unique per run: the local store outlives a run

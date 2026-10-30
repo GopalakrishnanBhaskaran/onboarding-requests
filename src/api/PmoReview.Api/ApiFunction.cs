@@ -22,7 +22,7 @@ public sealed partial class ApiFunction(ApiHost api)
         var body = await ReadBodyAsync(req.Body, ct);
         var cid = headers.TryGetValue("x-correlation-id", out var c) && SafeCid().IsMatch(c) ? c : Guid.NewGuid().ToString("n");
 
-        var result = await api.HandleAsync(new ApiRequest(req.Method, path ?? "", headers, body, cid), ct);
+        var result = await api.HandleAsync(new ApiRequest(req.Method, (path ?? "") + req.Url.Query, headers, body, cid), ct);
 
         var res = req.CreateResponse((HttpStatusCode)result.Status);
         res.Headers.Add("x-correlation-id", cid);

@@ -333,10 +333,12 @@ public sealed class DailySummaryJob(DataStores stores, Notifier notifier, IClock
 public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary);
 
 /// <summary>One worker cycle: agent steps for open requests, notifications, Azure DevOps, daily summary.</summary>
-public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily)
+public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null)
 {
     public async Task<WorkerSummary> RunOnceAsync(string correlationId, CancellationToken ct)
     {
+        // v1.1 (F1): group names resolved in Entra first, so the selector and the escalations are fresh.
+        if (groups is not null) await groups.RunOnceAsync(ct);
         var advanced = await agent.RunOnceAsync(correlationId, ct);
         var sent = await notifications.RunOnceAsync(ct);
         var items = await ado.RunOnceAsync(ct);

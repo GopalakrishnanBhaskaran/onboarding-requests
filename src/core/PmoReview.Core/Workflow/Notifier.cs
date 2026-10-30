@@ -11,6 +11,8 @@ public sealed record WorkflowSettings
     public TimeSpan SecuritySla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan IdTeamSla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan RoleTeamSla { get; init; } = TimeSpan.FromHours(24);
+    /// <summary>v1.1 (F3): a Prod escalation waiting for a ProdApprover.</summary>
+    public TimeSpan ProdApproverSla { get; init; } = TimeSpan.FromHours(24);
     /// <summary>
     /// Stage 7: how long the final access check may stay pending before the Operators are reminded. The worker checks within
     /// minutes; the user's first sign-in is not waited for (22 Oct 2026).
@@ -92,6 +94,7 @@ public sealed record WorkflowSettings
         WaitingOn.Security => SecuritySla,
         WaitingOn.IdTeam => IdTeamSla,
         WaitingOn.RoleTeam => RoleTeamSla,
+        WaitingOn.ProdApprover => ProdApproverSla,
         _ => VerifySla,
     };
 }

@@ -48,6 +48,13 @@ public sealed record RouteContext(
     }
 
     public string? IfMatch => Request.Header("If-Match")?.Trim();
+
+    /// <summary>Query string values by name (case-insensitive name; repeated names keep every value, in order).</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Query { get; init; } = new Dictionary<string, IReadOnlyList<string>>();
+
+    public string? QueryValue(string name) => Query.TryGetValue(name, out var v) && v.Count > 0 ? v[0] : null;
+
+    public IReadOnlyList<string> QueryValues(string name) => Query.TryGetValue(name, out var v) ? v : [];
 }
 
 public delegate Task<ApiResponse> RouteHandler(RouteContext ctx);
@@ -80,7 +87,8 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
             var principal = ClientPrincipalParser.Parse(request.Header(ClientPrincipalParser.HeaderName), allowedProviders);
             var caller = await access.ResolveAsync(principal, ct);
 
-            var path = request.Path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var (pathOnly, query) = SplitQuery(request.Path);
+            var path = pathOnly.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
             var pathMatched = false;
             foreach (var (method, segments, handler) in _routes)
             {
@@ -88,7 +96,7 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
                 pathMatched = true;
                 if (method != request.Method.ToUpperInvariant()) continue;
 
-                var response = await handler(new RouteContext(request, caller, values, ct));
+                var response = await handler(new RouteContext(request, caller, values, ct) { Query = query });
                 logger.LogInformation("api {Method} {Template} -> {Status} cid={CorrelationId}",
                     method, string.Join('/', segments), response.Status, request.CorrelationId);
                 return response;
@@ -124,6 +132,26 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
 
     private static ApiResponse Error(int status, string code, string message, string cid, IReadOnlyList<string>? details = null) =>
         new(status, new { error = new ApiError(code, message, cid, details) });
+
+    /// <summary>"path?a=1&b=2&b=3" → the path and the decoded query values (at most 64 parameters, 2,000 characters each).</summary>
+    public static (string Path, IReadOnlyDictionary<string, IReadOnlyList<string>> Query) SplitQuery(string pathAndQuery)
+    {
+        var at = pathAndQuery.IndexOf('?');
+        var query = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        if (at < 0) return (pathAndQuery, query);
+        var lists = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in pathAndQuery[(at + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries).Take(64))
+        {
+            var eq = part.IndexOf('=');
+            var name = Uri.UnescapeDataString((eq < 0 ? part : part[..eq]).Replace('+', ' '));
+            var value = eq < 0 ? "" : Uri.UnescapeDataString(part[(eq + 1)..].Replace('+', ' '));
+            if (name.Length == 0 || value.Length > 2000) continue;
+            if (!lists.TryGetValue(name, out var list)) lists[name] = list = [];
+            list.Add(value);
+        }
+        foreach (var (k, v) in lists) query[k] = v;
+        return (pathAndQuery[..at], query);
+    }
 
     private static bool TryMatch(string[] template, string[] path, out Dictionary<string, string> values)
     {

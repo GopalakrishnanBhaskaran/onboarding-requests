@@ -125,6 +125,28 @@ public static class Endpoints
         return host;
     }
 
+    /// <summary>v1.1 (30 Oct 2026): F1 Resource* selector and bundle submit, F3 escalations.</summary>
+    public static ApiHost MapV11(this ApiHost host, WorkflowService workflow, ResourceService resources, RequestBundleService bundles)
+    {
+        // F1. The tenant is the project (one project = one tenant) the caller holds a role in; another tenant is a 404.
+        host.Map("GET", "resources/options", async c =>
+            Ok(await resources.OptionsAsync(c.Caller, c.QueryValue("projectId") ?? c.QueryValue("tenant"), c.QueryValue("environment"), c.Ct)));
+        host.Map("GET", "resources/resolve", async c =>
+        {
+            var selected = c.QueryValues("resource").Concat(c.QueryValues("resources")).ToList();
+            var (result, _) = await resources.ResolveAsync(c.Caller, c.QueryValue("projectId") ?? c.QueryValue("tenant"), c.QueryValue("environment"), selected, c.Ct);
+            return Ok(result); // exactly the F1 output contract
+        });
+        host.Map("POST", "projects/{projectId}/requests/bundle", async c =>
+            new ApiResponse(201, await bundles.SubmitAsync(c.Caller, c["projectId"], c.Body<BundleInput>(), c.Request.CorrelationId, c.Ct)));
+        // F3. Escalations: listed for the roles that handle them; a ProdApprover decides the ProdWrite ones.
+        host.Map("GET", "projects/{projectId}/escalations", async c =>
+            Ok(new { items = await workflow.EscalationsAsync(c.Caller, c["projectId"], c.Ct) }));
+        host.Map("POST", "projects/{projectId}/escalations/{escalationId}/decision", async c =>
+            Ok(await workflow.DecideProdEscalationAsync(c.Caller, c["projectId"], c["escalationId"], c.Body<EscalationDecisionInput>(), c.Request.CorrelationId, c.Ct)));
+        return host;
+    }
+
     public static ApiHost MapRuns(this ApiHost host, RunService runs)
     {
         host.Map("GET", "projects/{projectId}/requests/{requestId}/runs", async c =>

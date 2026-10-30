@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Body1, Button, Caption1, Checkbox, Field, Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Subtitle2, Textarea,
+  Badge, Body1, Button, Caption1, Checkbox, Field, Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Subtitle2, Switch, Table, TableBody,
+  TableCell, TableHeader, TableHeaderCell, TableRow, Textarea,
 } from '@fluentui/react-components';
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
-import type { IntakeFields, MappingRow, ProjectSummary } from '../lib/types';
+import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess } from '../lib/types';
+import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
 import { FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, justificationTemplate, whoDoesWhat } from '../lib/flow';
 import { ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
@@ -13,6 +15,13 @@ type FormFields = { [K in keyof IntakeFields]-?: NonNullable<IntakeFields[K]> };
 const empty: FormFields = {
   enterpriseId: '', firstName: '', lastName: '', resource: '', accessLevel: '', environment: '', justification: '', owner: '', guest: false,
 };
+const STATUS: Record<ResolvedAccess['status'], { label: string; color: 'success' | 'warning' | 'danger' }> = {
+  Auto: { label: 'Auto', color: 'success' },
+  NeedsHumanApproval: { label: 'Needs human approval', color: 'warning' },
+  Unresolved: { label: 'Unresolved — escalated', color: 'danger' },
+};
+/** A resolved line as the bundle submit names it: the object id, else the group name. */
+const groupKey = (a: ResolvedAccess) => a.groupObjectId || a.groupName;
 const SIGN_IN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 /** Same rule as the API: the Enterprise ID is the joiner's enterprise mail address. */
 const ENTERPRISE_MAIL = /^[A-Za-z0-9][A-Za-z0-9._'+-]{0,63}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
@@ -40,6 +49,14 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const [sheet, setSheet] = useState<MappingRow[] | null>(null);
   const [sheetError, setSheetError] = useState(false);
   const [copied, setCopied] = useState(false);
+  // v1.1 F1 (new requests): Resource* options of this tenant, dropdown or checkboxes, the resolved list and the ticked groups.
+  const isNew = !requestId;
+  const [mode, setMode] = useState<SelectionMode>('dropdown');
+  const [options, setOptions] = useState<string[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [resolved, setResolved] = useState<ResolveResult | null>(null);
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [resolveError, setResolveError] = useState<unknown>(null);
   const environments = project.environments ?? [];
   const tenants = projects.filter((p) => p.roles.includes('Requester') || p.projectId === project.projectId);
 
@@ -58,6 +75,33 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const inEnv = (row: MappingRow) => !row.environment || !fields.environment || same(row.environment, fields.environment);
   const resources = sheet ? [...new Set(sheet.filter(inEnv).map((x) => x.resource))].sort() : [];
   const levels = sheet ? [...new Set(sheet.filter((x) => inEnv(x) && same(x.resource, fields.resource)).map((x) => x.accessLevel))].sort() : [];
+  const envChosen = environments.length === 0 || Boolean(fields.environment);
+
+  // F1: options come only from this tenant's mapping sheet (filtered by the server); a new environment or tenant starts again.
+  useEffect(() => {
+    if (!isNew) return;
+    setSelected([]);
+    setResolved(null);
+    setTicked([]);
+    if (!envChosen) { setOptions(null); return; }
+    api.resourceOptions(project.projectId, fields.environment).then((r) => setOptions(r.options)).catch((e) => { setOptions([]); setResolveError(e); });
+  }, [isNew, project.projectId, fields.environment, envChosen]);
+  const chosen = options ? forApi(selected, options) : [];
+  useEffect(() => {
+    if (!isNew || chosen.length === 0) { setResolved(null); setTicked([]); return; }
+    setResolveError(null);
+    api.resolve(project.projectId, fields.environment, chosen)
+      .then((r) => {
+        setResolved(r);
+        // One requestable group: ticked for the requester; several: they choose (never more access than asked for).
+        const requestable = r.resolvedAccess.filter((a) => a.status !== 'Unresolved');
+        setTicked(requestable.length === 1 ? [groupKey(requestable[0])] : []);
+      })
+      .catch(setResolveError);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, project.projectId, fields.environment, chosen.join('|')]);
+  const tickedAccess = resolved?.resolvedAccess.filter((a) => ticked.includes(groupKey(a))) ?? [];
+
   const derived = fields.enterpriseId
     ? `${fields.enterpriseId.split('@')[0].toLowerCase().replace(/[^a-z0-9._'-]/g, '')}${project.domainIdSuffix ?? (fields.enterpriseId.includes('@') ? '@' + fields.enterpriseId.split('@')[1] : '')}`
     : '';
@@ -83,10 +127,12 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const ownerError = fields.owner && !SIGN_IN.test(fields.owner) ? 'Use the Owner’s sign-in name, e.g. owner.name@contoso.com.' : undefined;
   const mailError = fields.enterpriseId && !ENTERPRISE_MAIL.test(fields.enterpriseId.trim())
     ? 'Use the joiner’s enterprise mail address, e.g. jane.doe@company.com.' : undefined;
-  const template = justificationTemplate(fields.accessLevel, fields.resource, fields.environment);
+  const template = isNew
+    ? justificationTemplate([...new Set(tickedAccess.map((a) => a.accessLevel))].join(', '), chosen.join(', '), fields.environment)
+    : justificationTemplate(fields.accessLevel, fields.resource, fields.environment);
   const templateLeft = TEMPLATE_PLACEHOLDER.test(fields.justification)
     ? 'Replace every [ … ] of the template with your own details.' : undefined;
-  const invalid = Boolean(ownerError || mailError || templateLeft);
+  const invalid = Boolean(ownerError || mailError || templateLeft) || (isNew && !canSubmit(selected, ticked));
 
   async function copyTemplate() {
     try {
@@ -104,6 +150,15 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     setMissing([]);
     const body: IntakeFields = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v === '' ? null : v]));
     try {
+      if (isNew) {
+        // F1: one request per ticked group, each through the whole flow.
+        const result = await api.submitBundle(project.projectId, {
+          enterpriseId: body.enterpriseId ?? null, firstName: body.firstName ?? null, lastName: body.lastName ?? null, environment: body.environment ?? null,
+          justification: body.justification ?? null, owner: body.owner ?? null, guest: fields.guest, selectedResources: chosen, groups: ticked,
+        });
+        navigate(result.requests.length === 1 ? { page: 'request', requestId: result.requests[0].requestId } : { page: 'requests' });
+        return;
+      }
       const view = requestId && etag
         ? await api.resubmit(project.projectId, requestId, body, etag)
         : await api.submit(project.projectId, body);
@@ -190,7 +245,82 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             </Select>
           </Field>
         )}
-        {sheet !== null && resources.length === 0 && (
+        {isNew && (
+          <>
+            <Switch checked={mode === 'checkbox'} label="Choose several resources"
+              onChange={(_, d) => {
+                const next: SelectionMode = d.checked ? 'checkbox' : 'dropdown';
+                if (next === 'dropdown') setSelected((cur) => fromDropdown(toDropdown(cur), options ?? []));
+                setMode(next);
+              }} />
+            {mode === 'dropdown' ? (
+              <Field label="Resource" required validationMessage={envChosen && options !== null && options.length > 0 && selected.length === 0 ? 'Choose at least one resource.' : undefined}
+                hint="From the PMO mapping sheet of this tenant: its domains, PH, ACQ, or all of them.">
+                <Select value={toDropdown(selected)} disabled={!envChosen || !options || options.length === 0}
+                  onChange={(_, d) => setSelected(fromDropdown(d.value, options ?? []))}>
+                  <option value="">{envChosen ? 'Choose…' : 'Choose the environment first'}</option>
+                  {(options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                </Select>
+              </Field>
+            ) : (
+              // Checkboxes outside a Field: inside one, each checkbox would take the field's label instead of its own.
+              <fieldset role="group" aria-label="Resources" style={{ border: 'none', margin: 0, padding: 0 }}>
+                <legend><Body1><b>Resource</b> <span aria-hidden="true">*</span></Body1></legend>
+                <div className={s.row}>
+                  {(options ?? []).map((o) => (
+                    <Checkbox key={o} label={o} checked={selected.includes(o)}
+                      onChange={(_, d) => setSelected((cur) => toggle(cur, o, d.checked === true, options ?? []))} />
+                  ))}
+                </div>
+                <Caption1>{envChosen ? 'Tick one or more; All ticks every one.' : 'Choose the environment first.'}</Caption1>
+              </fieldset>
+            )}
+            {envChosen && options !== null && options.length === 0 && (
+              <MessageBar intent="warning" layout="multiline">
+                <MessageBarBody>{`The mapping sheet of ${project.tenantName || project.name} has no resources${fields.environment ? ` for ${fields.environment}` : ''} that can be requested.`}</MessageBarBody>
+              </MessageBar>
+            )}
+            <ErrorBar error={resolveError} />
+            {resolved && (
+              <section className={s.section} aria-labelledby="resolved-h">
+                <Subtitle2 as="h2" id="resolved-h">Access this resolves to</Subtitle2>
+                <Caption1>Tick the groups to request: one request each, every one through the whole flow. Unresolved groups are never granted.</Caption1>
+                <div className={s.tableWrap}>
+                  <Table aria-label="Resolved access" size="small">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHeaderCell>Request</TableHeaderCell>
+                        <TableHeaderCell>Entra group</TableHeaderCell>
+                        <TableHeaderCell>Access level</TableHeaderCell>
+                        <TableHeaderCell>From</TableHeaderCell>
+                        <TableHeaderCell>Status</TableHeaderCell>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {resolved.resolvedAccess.map((a) => (
+                        <TableRow key={groupKey(a)}>
+                          <TableCell>
+                            <Checkbox aria-label={a.groupName} disabled={a.status === 'Unresolved'} checked={ticked.includes(groupKey(a))}
+                              onChange={(_, d) => setTicked((cur) => d.checked === true ? [...cur, groupKey(a)] : cur.filter((x) => x !== groupKey(a)))} />
+                          </TableCell>
+                          <TableCell><span className={s.wrap}>{a.groupName}</span></TableCell>
+                          <TableCell>{a.accessLevel}</TableCell>
+                          <TableCell>{a.sources.join(', ')}</TableCell>
+                          <TableCell><Badge color={STATUS[a.status].color}>{STATUS[a.status].label}</Badge></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                {resolved.mappingQualityIssues.length > 0 && (
+                  <Caption1>Mapping sheet notes for PMO: {resolved.mappingQualityIssues.map((n) => n.reason).join(' ')}</Caption1>
+                )}
+                <Caption1 className={s.muted}>Mapping version {resolved.mappingVersion}. Production above Read waits for a ProdApprover after Owner and Security.</Caption1>
+              </section>
+            )}
+          </>
+        )}
+        {!isNew && sheet !== null && resources.length === 0 && (
           <MessageBar intent="warning" layout="multiline">
             <MessageBarBody>
               {sheetError ? 'The mapping sheet could not be read; reload the page.'
@@ -198,6 +328,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             </MessageBarBody>
           </MessageBar>
         )}
+        {!isNew && (
         <Field label="Resource" required hint="From the PMO mapping sheet of this tenant.">
           <Select value={fields.resource} disabled={resources.length === 0 || (environments.length > 0 && !fields.environment)}
             onChange={(_, d) => setFields((f) => ({ ...f, resource: d.value, accessLevel: '' }))}>
@@ -206,6 +337,8 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             {resources.map((x) => <option key={x} value={x}>{x}</option>)}
           </Select>
         </Field>
+        )}
+        {!isNew && (
         <Field label="Access level" required hint="The levels the mapping sheet has for that resource and environment.">
           <Select value={fields.accessLevel} disabled={!fields.resource} onChange={(_, d) => set('accessLevel')(d.value)}>
             <option value="">{fields.resource ? 'Choose…' : 'Choose the resource first'}</option>
@@ -213,6 +346,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             {levels.map((x) => <option key={x} value={x}>{x}</option>)}
           </Select>
         </Field>
+        )}
         <section className={s.section} aria-labelledby="template-h">
           <Subtitle2 as="h2" id="template-h">Justification template</Subtitle2>
           <Caption1>Copy or insert it, then replace every [ … ] with the joiner’s details. Never paste passwords or passes.</Caption1>

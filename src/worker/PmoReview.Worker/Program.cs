@@ -90,7 +90,9 @@ var host = new HostBuilder()
                     // Within the sender's limits (F70); with the agent TAP, 2 mails an hour stay free for the sign-in details.
                     limits: settings.Workflow.MailLimits, reserve: settings.Workflow.AgentTap ? 2 : 0),
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
-                new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant));
+                new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
+                // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.
+                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId));
         });
     })
     .Build();

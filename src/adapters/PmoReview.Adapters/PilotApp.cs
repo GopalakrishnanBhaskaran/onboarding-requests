@@ -126,7 +126,9 @@ public sealed record WorkflowParts(
     MappingSheetService MappingSheet,
     Notifier Notifier,
     IssueLog Issues,
-    ContactInventoryService Contacts);
+    ContactInventoryService Contacts,
+    ResourceService Resources,
+    RequestBundleService Bundles);
 
 /// <summary>Composition root shared by the Functions hosts and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
@@ -142,6 +144,7 @@ public static class PilotApp
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
         host.MapCore(stores, parts.Service, parts.MappingSheet, parts.Contacts);
         host.MapRuns(parts.Runs);
+        host.MapV11(parts.Service, parts.Resources, parts.Bundles);
         return host;
     }
 
@@ -167,7 +170,8 @@ public static class PilotApp
             loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
+        var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
-            new ContactInventoryService(stores, notifier, clock));
+            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service));
     }
 }

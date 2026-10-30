@@ -30,6 +30,8 @@ public sealed record ProjectContacts
     public IReadOnlyList<string> IdTeam { get; init; } = [];
     public IReadOnlyList<string> RoleTeam { get; init; } = [];
     public IReadOnlyList<string> Operators { get; init; } = [];
+    /// <summary>v1.1 (F3): ProdApprovers' mail (Prod escalation requests). Who may decide stays the ProdApprover role in userAccess.</summary>
+    public IReadOnlyList<string> ProdApprovers { get; init; } = [];
     /// <summary>Escalation past SLA (the approver's or team's manager).</summary>
     public string? SecurityManager { get; init; }
     public string? IdTeamManager { get; init; }
@@ -289,6 +291,8 @@ public sealed record AccessRequest : IDocument
     public string? Owner { get; init; }
     /// <summary>External (guest) user. A risk flag for approvers.</summary>
     public bool Guest { get; init; }
+    /// <summary>v1.1 (F1): requests submitted together from one Resource* selection share this id (one request per resolved group).</summary>
+    public string? BundleId { get; init; }
     public required string CreatedBy { get; init; }
     /// <summary>Requester's sign-in name (notifications).</summary>
     public string? CreatedByName { get; init; }

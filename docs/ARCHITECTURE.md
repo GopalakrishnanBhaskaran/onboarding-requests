@@ -297,6 +297,14 @@ Identity comes only from `x-ms-client-principal`. A project the caller has no ro
 - **`az deployment sub what-if` before every resource change:** the resource group is created by the deployment, so it passes the approval gate too.
 
 
+## 12a. v1.1 feature pack (30 Oct 2026, in build; not deployed)
+
+Instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions: `docs/V1_1_PLAN.md`; phase results: `docs/V1_1_PHASES.md`.
+- **Data (P1):** eight more containers (`mappingVersions`, `peopleInventory`, `inventoryVersions`, `escalations`, `mappingQualityIssues`, `groupResolutions`, `offboardingRuns`, `auditEvents`), all partitioned by project; 21 containers in the shared free-tier database (limit 25, F90). Roles `ProdApprover` and `DataMaintainer`; the legacy `Maintainer` still grants nothing.
+- **F1 Resource\* selector (P2):** `ResourceResolver` (pure) and `ResourceService`; `GET resources/options`, `GET resources/resolve` (the contract), `POST projects/{p}/requests/bundle` (one request per ticked group, `BundleId`). The worker's `GroupResolutionJob` reads each mapping group name in Entra (read-only, agent tenant only), raises one UnresolvedGroup escalation per group that does not resolve and records near-duplicate names as mapping quality issues. Near-duplicates: normalised name, edit distance ≤ 2 (banded, prefix/suffix skipped); an unresolved variant is hidden, two groups that both resolve stay visible with a note.
+- **F3 Prod read-only (P2):** `ProdGuard` decides "above Read in Prod" from the level, every Azure role (a Read label never outranks a writing role) and the privileged flag. Security approval → `AwaitingProdApproval` + a ProdWrite escalation; `POST projects/{p}/escalations/{id}/decision` (ProdApprover only; four eyes; bound to revision + scope fingerprint); the agent re-checks before every grant (`ProdBlockAsync`) and team reports are refused without the approval.
+- **Next:** P3 checkpoint (`docs/PERMISSIONS.md`, `docs/HOSTING.md`), then F2 (TAP recipient), F4 (uploads), F5 (offboarding).
+
 ## 12. Target architecture in the actual tenant (private endpoint only, design)
 
 Status: a design agreed on 23 Oct 2026; not built or deployed. Build tasks A10–A12 are in `docs/ENTERPRISE_CLAUDE_PROMPTS.md`; settings and *(verify)* items are in `docs/SECURE_HOSTING_AND_MAIL.md`.

@@ -8,7 +8,7 @@ import { MAX_PER_LIST, joinList, normalizeMail, parseList } from '../lib/contact
 import { dateTime } from '../lib/format';
 import { ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
-type ListKey = 'security' | 'idTeam' | 'roleTeam' | 'pmo' | 'operators';
+type ListKey = 'security' | 'idTeam' | 'roleTeam' | 'pmo' | 'operators' | 'prodApprovers';
 type OneKey = 'securityManager' | 'idTeamManager' | 'roleTeamManager' | 'ownerManagerFallback';
 
 /** Each team list: what it is called, whether a request needs it, and which mails it gets. */
@@ -18,6 +18,7 @@ const LISTS: { key: ListKey; label: string; required: boolean; gets: string }[] 
   { key: 'roleTeam', label: 'Role assignment team', required: true, gets: 'Role assignment tasks, returned tasks, the completion mail.' },
   { key: 'pmo', label: 'PMO', required: false, gets: 'Returned requests, the completion mail, the daily summary, contact inventory changes.' },
   { key: 'operators', label: 'Operators', required: false, gets: 'Developer reports, stuck-request reminders, the daily summary.' },
+  { key: 'prodApprovers', label: 'ProdApprovers', required: false, gets: 'Production escalations: Prod access above Read waits for a ProdApprover decision (the role in the app decides who may decide).' },
 ];
 
 const ONES: { key: OneKey; label: string }[] = [
@@ -31,6 +32,7 @@ function formOf(v: ContactInventory): ContactInventoryInput {
   const c = v.contacts;
   return {
     security: joinList(c.security), idTeam: joinList(c.idTeam), roleTeam: joinList(c.roleTeam), pmo: joinList(c.pmo), operators: joinList(c.operators),
+    prodApprovers: joinList(c.prodApprovers ?? []),
     securityManager: c.securityManager ?? '', idTeamManager: c.idTeamManager ?? '', roleTeamManager: c.roleTeamManager ?? '',
     ownerManagerFallback: c.ownerManagerFallback ?? '',
   };
@@ -48,7 +50,7 @@ function listError(text: string, required: boolean): string | undefined {
 const oneError = (text: string) => (text.trim() && !normalizeMail(text) ? 'One mail address.' : undefined);
 
 /**
- * Contact inventory: where every team mail of this tenant goes. One box per team, addresses separated by semicolons.
+ * Team contacts (called Contact inventory before v1.1): where every team mail of this tenant goes. One box per team, addresses separated by semicolons.
  * PMO and Operators change it; everyone in the project reads it. It never decides who may approve.
  */
 export function ContactsPage({ project }: { project: ProjectSummary }) {
@@ -71,7 +73,7 @@ export function ContactsPage({ project }: { project: ProjectSummary }) {
   }, [project.projectId]);
   useEffect(() => void load(), [load]);
 
-  if (!item || !form) return <div className={s.stack}><PageTitle>Contact inventory</PageTitle><ErrorBar error={error} />{!error && <Loading />}</div>;
+  if (!item || !form) return <div className={s.stack}><PageTitle>Team contacts</PageTitle><ErrorBar error={error} />{!error && <Loading />}</div>;
 
   const v = item.value;
   const edit = v.canEdit;
@@ -101,7 +103,7 @@ export function ContactsPage({ project }: { project: ProjectSummary }) {
 
   return (
     <div className={s.stack}>
-      <PageTitle>Contact inventory</PageTitle>
+      <PageTitle>Team contacts</PageTitle>
       <Caption1 className={s.muted}>
         Tenant {project.tenantName || project.name}: where every team mail goes. Separate addresses with a semicolon (;); a paste from Outlook
         (Name &lt;address&gt;; …) works. The requester is mailed at their sign-in name and the joiner at the Enterprise ID, so neither is set here.

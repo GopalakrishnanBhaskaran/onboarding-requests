@@ -27,7 +27,7 @@ app.Map("/api/{**path}", async (HttpContext ctx, string? path) =>
     var headers = ctx.Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase);
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
-    var result = await api.HandleAsync(new ApiRequest(ctx.Request.Method, path ?? "", headers, body.Length == 0 ? null : body, Guid.NewGuid().ToString("n")), ctx.RequestAborted);
+    var result = await api.HandleAsync(new ApiRequest(ctx.Request.Method, (path ?? "") + ctx.Request.QueryString, headers, body.Length == 0 ? null : body, Guid.NewGuid().ToString("n")), ctx.RequestAborted);
 
     ctx.Response.StatusCode = result.Status;
     ctx.Response.Headers.CacheControl = "no-store";

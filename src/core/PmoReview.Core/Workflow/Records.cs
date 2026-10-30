@@ -100,6 +100,8 @@ public enum IssueKind
     DependencyFailure,
     AutoFixApplied,
     NeedsDeveloper,
+    /// <summary>v1.1 (F3): a step would have granted Prod above Read without an approved ProdWrite escalation; stopped.</summary>
+    ProdWriteBlocked,
 }
 
 public enum IssueSeverity { Info, Warning, High }

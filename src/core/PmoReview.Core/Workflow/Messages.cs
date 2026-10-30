@@ -21,6 +21,7 @@ public static class Recipients
     public static IEnumerable<string?> RoleTeam(Project? p) => p?.Contacts.RoleTeam ?? [];
     public static IEnumerable<string?> Pmo(Project? p) => p?.Contacts.Pmo ?? [];
     public static IEnumerable<string?> Operators(Project? p) => p?.Contacts.Operators ?? [];
+    public static IEnumerable<string?> ProdApprovers(Project? p) => p?.Contacts.ProdApprovers ?? [];
 
     /// <summary>
     /// The one completion mail: the requester first, then Security, PMO, the ID team and the role assignment team (one mail
@@ -37,6 +38,7 @@ public static class Recipients
         WaitingOn.RoleTeam => RoleTeam(p),
         WaitingOn.User => User(r),
         WaitingOn.Requester => Requester(r),
+        WaitingOn.ProdApprover => ProdApprovers(p),
         _ => Operators(p),
     };
 }
@@ -92,6 +94,14 @@ public static class Messages
         AzureRoleLine(scope, s) +
         (owner is null ? "" : $"\nOwner approval: {owner.ByName} on {Time(owner.At)}{(owner.Remarks is null ? "" : $" — {owner.Remarks}")}\n") +
         $"\nRespond in the app (the only channel that counts): {Link(s, r)}");
+
+    /// <summary>v1.1 (F3): a ProdApprover decides a production request above Read, after Owner and Security.</summary>
+    public static (string, string) ProdApprovalRequested(AccessRequest r, ReviewedScope scope, Escalation e, WorkflowSettings s) => (
+        $"Prod approval needed: request {Short(r)}",
+        $"Production is read-only by default. This request is above Read in {e.Environment}: {e.Reason}. " +
+        $"Owner and Security approved; nothing is granted until a ProdApprover approves escalation {e.Id} (request revision {e.RequestRevision}).\n\n" +
+        $"Group: {scope.EntraGroup}; level: {r.AccessLevel}; Azure roles: {(scope.Grants().Count == 0 ? "none" : string.Join(", ", scope.Grants().Select(g => $"{g.RoleName} at {g.Where}")))}.\n\n" +
+        $"AI review summary:\n{scope.Summary}\n\nThe requester, the Owner approver and the Security approver cannot decide this. Respond in the app: {Link(s, r)}");
 
     /// <summary>What the approvers approve when the row names an Azure role (and who assigns it).</summary>
     public static string AzureRoleLine(ReviewedScope scope, WorkflowSettings s) => scope.AzureRoleDefinitionId is null ? "" :

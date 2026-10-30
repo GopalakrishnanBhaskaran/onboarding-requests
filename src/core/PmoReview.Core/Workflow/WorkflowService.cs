@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using PmoReview.Core.Common;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Http;
+using PmoReview.Core.Resources;
 using PmoReview.Core.Security;
 using PmoReview.Core.Services;
 using PmoReview.Core.Sources;
@@ -78,9 +79,9 @@ public sealed partial class WorkflowService(
 
     // ---- Stage 1 ------------------------------------------------------------------------------------------------
 
-    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct)
+    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct, string? bundleId = null)
     {
-        var created = await requests.CreateAsync(caller, projectId, input, ct);
+        var created = await requests.CreateAsync(caller, projectId, input, ct, bundleId);
         await AdvanceSavedAsync(created.Value, cid, ct);
         return await ViewAsync(caller, projectId, created.Value.Id, ct);
     }
@@ -188,17 +189,23 @@ public sealed partial class WorkflowService(
         }
         else
         {
-            var task = agent.NewIdTeamTask(r, next);
-            var byAgent = settings.AgentProvisioning;
-            next = (next with { IdTeamTask = task })
-                .Log(now, WorkflowState.AgentActor, "id-team-task", byAgent ? "ID team task created; the AI agent creates the user, group and membership first." : "ID team task created.")
-                .To(RequestStatus.WithIdTeam, byAgent ? WaitingOn.Agent : WaitingOn.IdTeam, now, caller.UserId, "security-approved",
-                    byAgent ? "Security approved risk and access level. The AI agent provisions the user, group and membership." : "Security approved risk and access level. Sent to the ID team.");
-            record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now, State = ResponseState.Approved };
-            if (!byAgent)
+            // F3: Prod above Read waits for a ProdApprover; nothing is granted before that decision.
+            var row = sheet.FirstOrDefault(x => x.RowId == flow.Scope.MappingRowId);
+            if (ProdGuard.AboveReadInProd(r, flow.Scope, ProdGuard.Privileged(flow.Scope, row)) is { } prodReason)
             {
-                var (subject, body) = Messages.TeamTask(r, task, settings);
-                effects.Add(c => notifier.EnqueueAsync(projectId, requestId, task.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), subject, body, c));
+                var escalation = agent.NewProdEscalation(r, flow.Scope, prodReason, cid);
+                next = next.To(RequestStatus.AwaitingProdApproval, WaitingOn.ProdApprover, now, caller.UserId, "security-approved",
+                    $"Security approved risk and access level. Production above Read ({prodReason}): nothing is granted until a ProdApprover approves escalation {escalation.Id}.");
+                record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now };
+                var scope = flow.Scope;
+                effects.Add(c => agent.RaiseProdEscalationAsync(r, scope, escalation, project, c));
+            }
+            else
+            {
+                var (fulfil, fx) = agent.ToIdTeam(r, next, project, caller.UserId, "security-approved", "Security approved risk and access level.");
+                next = fulfil;
+                effects.AddRange(fx);
+                record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now, State = ResponseState.Approved };
             }
         }
 
@@ -265,6 +272,7 @@ public sealed partial class WorkflowService(
         caller.Require(projectId, Permission.WorkIdTeamTasks);
         var current = await requests.LoadAsync(projectId, requestId, ct);
         var (flow, task) = OpenTask(current.Value, AppRole.IdTeam);
+        await RequireProdApprovedAsync(current.Value, ct);
         var now = clock.UtcNow;
 
         // v2.1: when the AI agent created the user, group and membership, those facts come from the task, not the form.
@@ -325,6 +333,7 @@ public sealed partial class WorkflowService(
         caller.Require(projectId, Permission.WorkRoleTeamTasks);
         var current = await requests.LoadAsync(projectId, requestId, ct);
         var (flow, task) = OpenTask(current.Value, AppRole.RoleTeam);
+        await RequireProdApprovedAsync(current.Value, ct);
         var roles = (input.AssignedRoles ?? [])
             .Select(a => new AssignedRole(
                 RequestService.Text(a.Role, "role", 200) ?? throw AppException.Invalid("Each assigned role needs a role name."),

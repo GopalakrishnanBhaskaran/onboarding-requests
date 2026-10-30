@@ -96,13 +96,17 @@ public sealed class TestApp
     public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null) =>
         new(settings ?? new PilotSettings(), model, queue, apiDirectory);
 
+    /// <summary>v1.1: the worker also resolves mapping group names in (fake) Entra. Off by default so older tests keep their Entra call counts.</summary>
+    public bool ResolveGroups { get; set; }
+
     /// <summary>One worker cycle: agent steps for open requests (with the Entra reader), then notifications.</summary>
     public async Task<WorkerSummary> RunWorker()
     {
         var worker = new WorkflowWorker(Worker.Agent,
             new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, NullLogger<NotificationDispatcher>.Instance),
             new AdoSync(Stores, Tracker, Worker.Issues, Clock, NullLogger<AdoSync>.Instance),
-            new DailySummaryJob(Stores, Worker.Notifier, Clock));
+            new DailySummaryJob(Stores, Worker.Notifier, Clock),
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, NullLogger<GroupResolutionJob>.Instance, Settings.Workflow.AgentTenantId) : null);
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 
