@@ -18,11 +18,11 @@ Identity comes only from the validated access token (R7); the body never names a
 | Permission | app role **`Uploads.Write`** in `roles` (granted per client app by admin consent) |
 | Lifetime | `exp` / `nbf` with 5 minutes clock skew |
 
-Failures: `401 invalid_token` (any token problem, without detail), `403 missing_app_role`, `403 tenant_not_registered`.
+Failures: `401 invalid_token` (any token problem, without detail — also a token whose tenant no project names: that is checked before any signing key is fetched, P6 review finding 13), `403 missing_app_role`, `403 tenant_not_registered` (more than one project names the token's tenant: PMO fixes the project list).
 
 ## Request
 - Query: `mode=validate` (check and diff only, nothing is written) or `mode=apply`; optional `retireMissing=true` (rows missing from the upload are retired; default `false`: they stay); optional `sheet=<name>` for a workbook.
-- Header **`Idempotency-Key`** (required; 1–128 characters `A–Z a–z 0–9 - _ . :`). The same key with the same body returns the first answer again and never applies twice; the same key with another body → `409 idempotency_key_reused`. Use a new key per new content.
+- Header **`Idempotency-Key`** (required; 1–128 characters `A–Z a–z 0–9 - _ . :`). The same key with the same body returns the first answer again and never applies twice; the same key with another body → `409 idempotency_key_reused`. Use a new key per new content. Keys are per calling application (`azp`): two client apps of one tenant never share or block each other's keys (P6 review finding 16).
 - Body, either:
   - `multipart/form-data` with the file in the field `file` (`.xlsx` or `.csv`; macro-enabled `.xlsm` / `.xlsb` / `.xltm` / `.xlam` and `.xls` are refused), or
   - `application/json`: `{ "rows": [ { "<Column>": "<value>", … } ], "retireMissing": false }` — one object per row, values as text (numbers and true/false are taken as written).

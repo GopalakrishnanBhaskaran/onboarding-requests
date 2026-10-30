@@ -241,19 +241,27 @@ public class F3ProdGuardTests
     {
         var app = await App();
         await Grant(app, Petra, AppRole.Requester);
-        // Alice submits with a justification too short for the level; the review returns it; Petra corrects and resubmits.
+        // Alice submits with a justification too short for the level; the review returns it; Petra changes and resubmits it.
         var id = await app.SubmitId(TestApp.Intake(enterpriseId: Joiner, resource: Platform, accessLevel: "Support Writer", environment: "Prod",
             justification: "SAMPLE: support work.", first: "Jane", last: "Doe"), TestApp.Alice, TestApp.Pest);
         await app.RunWorker();
         Assert.Equal(RequestStatus.Returned, (await app.Request(id, TestApp.Pest)).Flow!.Status);
         var view = await app.View(id, TestApp.Alice, TestApp.Pest);
-        var put = await app.Call(Petra, "PUT", $"projects/{TestApp.Pest}/requests/{id}", Prod(), view.Json.GetProperty("request").GetProperty("etag").GetString());
+        var put = await app.Call(Petra, "PUT", $"projects/{TestApp.Pest}/requests/{id}", TestApp.Intake(enterpriseId: Joiner, resource: Platform,
+            accessLevel: "Support Writer", environment: "Prod", justification: "SAMPLE: support work again.", first: "Jane", last: "Doe"),
+            view.Json.GetProperty("request").GetProperty("etag").GetString());
+        Assert.True(put.Status == 200, put.Body);
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.Returned, (await app.Request(id, TestApp.Pest)).Flow!.Status); // still too short: returned again
+        // Alice resubmits the third revision: Petra changed revision 2, which the trail keeps.
+        view = await app.View(id, TestApp.Alice, TestApp.Pest);
+        put = await app.Call(TestApp.Alice, "PUT", $"projects/{TestApp.Pest}/requests/{id}", Prod(), view.Json.GetProperty("request").GetProperty("etag").GetString());
         Assert.True(put.Status == 200, put.Body);
         await app.RunWorker();
         Assert.Equal(200, (await app.Approve(id, TestApp.Olivia, project: TestApp.Pest)).Status);
         Assert.Equal(200, (await app.Approve(id, TestApp.Sam, project: TestApp.Pest)).Status);
         var e = await TheEscalation(app, id);
-        var d = await Decide(app, Petra, e.Id, revision: 2);
+        var d = await Decide(app, Petra, e.Id, revision: 3);
         Assert.Equal((403, "requester_cannot_approve"), (d.Status, d.ErrorCode));
         Assert.Equal(EscalationStatus.Open, (await TheEscalation(app, id)).Status);
     }

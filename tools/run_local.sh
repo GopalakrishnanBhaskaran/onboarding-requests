@@ -13,7 +13,8 @@ if [[ "${SKIP_BUILD:-}" != "1" ]]; then
   npm --prefix "$ROOT/src/web" run build
 fi
 
-# AGENT_TENANT_ID: a SAMPLE tenant id, so the SAMPLE projects (no tenant id of their own) accept mapping uploads (F4 TenantId).
+# AGENT_TENANT_ID: a SAMPLE tenant id; the local API gives it to the SAMPLE projects with no tenant id of their own, so they
+# accept mapping uploads (F4 TenantId) and offboarding plans (F5 needs a project that names the agent's tenant).
 PILOT_LOCAL_DEV=true ALLOW_UNVERIFIED_ENTRA=true AGENT_TENANT_ID="${AGENT_TENANT_ID:-00000000-0000-4000-8000-0000000000a1}" \
   dotnet run --project "$ROOT/tools/local-api" --no-build &
 API_PID=$!

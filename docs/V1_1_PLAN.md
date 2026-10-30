@@ -16,7 +16,7 @@ Every proposal in sections 2 and 5 is the decision. In short:
 9. Levels: I1 enum on upload; job-role rows count as Read only when every Azure role is read-only. Environments: Dev, Test, UAT, PreProd, Prod.
 10. One request per resolved group, linked by a `bundleId`.
 11. The worker resolves group names (`groupResolutions`) and raises the unresolved-group escalations.
-12. `IsProductionTenant` on the project (default false; set per tenant by PMO/import).
+12. `IsProductionTenant` on the project (default false; set per tenant by PMO/import). Tightened in P6 (12a below): unset counts as production.
 13. Offboarding removes memberships of every group the worker can change and Azure role assignments in every subscription it can read and delete in; anything else is a leftover (PartiallyCompleted + escalation).
 14. PH / ACQ are hidden when the tenant has no such rows.
 15. Root cause of the TAP mail failure: from the code, written in `docs/ROOT_CAUSE.md` (P4).
@@ -26,6 +26,14 @@ P3 checkpoint (Gokul, 30 Oct 2026: "approved, use your proposals"; `docs/PERMISS
 17. Offboarding **app role assignments stay under "Not covered"** (no `Directory.Read.All`); disabling the account stops sign-in to those apps.
 18. Offboarding **RBAC reach**: the subscriptions in `OFFBOARD_SUBSCRIPTIONS` (comma-separated ids; empty = every subscription the worker identity can list, F84). At deploy time Reader + the users-only constrained RBAC Administrator (delete) are proposed for the pilot subscription only; each further subscription is a separate approval. An assignment the worker cannot read or delete is a leftover (decision 13).
 19. **TAP mail via Graph `sendMail`** from the one mailbox in `TAP_MAIL_SENDER`, `Application Mail.Send` scoped to that mailbox through Exchange RBAC for Applications (never also in Entra, F81). Mailbox name and Exchange admin are deploy-time prerequisites; until set, the agent TAP stays with the ID team (no mail, no pass).
+
+P6 independent review fixes (30 Oct 2026, `REVIEW.md`). They tighten decisions already approved; listed for confirmation at the P6 checkpoint:
+- **12a.** `IsProductionTenant` unset counts as production (fails closed): a second person confirms offboarding unless the tenant is marked `false` (`tools/import_workbook.py --production-tenant no`). The SAMPLE tenants state it explicitly (PEST true, the others false).
+- **13a.** Offboarding only for the project's own people: the project names the agent's own tenant (`TenantId` = `AGENT_TENANT_ID`; a project with no tenant id cannot offboard), the UPN ends with the project's Domain ID suffix, and it is a non-retired person of the project's people inventory or the Domain ID of one of its requests (404 otherwise; the worker checks again). An account holding an Entra directory role (directly or through a role-assignable group) is left to people: no Entra or Azure write is planned; verify lists it as a leftover.
+- **13b.** A plan not confirmed within 24 h is closed (`Failed`, "plan expired", audited) when a new plan is asked for; there is no `Cancelled` status.
+- **13c.** A person marked Leaver gets no new or corrected request (`409 person_is_leaver`) until the DataMaintainer marks them Active again; verify lists the person's requests opened after the plan as leftovers.
+- **F3a.** The ProdApprover is never the creator, anyone who submitted or resubmitted a revision, or the person who gets the access. A mapping row with no environment is guarded as Prod whenever the request names an environment. Any environment whose name starts with prod/prd is Prod.
+- **F4a.** Retired rows and rows outside their I1 effective dates fail the review (`MAP_NOT_DEPRECATED` with the reason; a usable row wins over a retired one, so a rename with "Retire missing rows" is one match) and are re-checked at every grant point (approvals, Prod decision, agent).
 
 ## 1. What exists today (read on 30 Oct 2026)
 
@@ -124,3 +132,4 @@ All new containers are partitioned by `/projectId` (one project = one tenant), u
 4. Someone who can grant admin consent for the permissions in PERMISSIONS.md (P3).
 5. Hosting decision at P3.
 6. Written approvals for C2 (and each switch later: dry run → `--approved-by`).
+7. (P6) Per tenant: its Entra tenant id on the project (`import_workbook.py --tenant-id`, needed for offboarding) and whether it is a production tenant (`--production-tenant yes|no`; not set = production, a second person confirms offboarding).

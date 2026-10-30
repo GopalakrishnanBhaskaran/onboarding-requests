@@ -145,6 +145,9 @@ public class DataModelV11Tests
         Assert.True(Environments.Same("UAT", "uat"));
         Assert.False(Environments.IsProduction("UAT"));
         Assert.True(Environments.IsProduction("PRD"));
+        // Any spelling that starts with prod / prd is Prod (review finding 14: fail closed); pre-production is not.
+        Assert.All(["Prod-EU", "Prod2", "prd-weu", "Production", "LIVE"], e => Assert.True(Environments.IsProduction(e), e));
+        Assert.All(["PreProd", "ppd", "Dev", "Test", "", null], e => Assert.False(Environments.IsProduction(e), e));
     }
 
     [Fact]

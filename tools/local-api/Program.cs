@@ -20,6 +20,11 @@ var stores = InMemoryDataStores.Create();
 var accessScope = Environment.GetEnvironmentVariable("SAMPLE_ACCESS_SCOPE") ?? "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-pmo-sample-access";
 await SampleDataLoader.SeedAsync(stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), accessScope));
 var settings = PilotSettings.FromEnvironment(Environment.GetEnvironmentVariable);
+// Locally the SAMPLE projects that name no tenant are the agent's own SAMPLE tenant (AGENT_TENANT_ID from run_local.sh), as a
+// live project imported with --tenant-id is: v1.1 offboarding only runs for a project that names the agent's tenant.
+if (settings.Workflow.AgentTenantId is { Length: > 0 } agentTenant)
+    foreach (var p in (await stores.Projects.ListAllAsync(CancellationToken.None)).Where(p => p.Value.IsSample && string.IsNullOrWhiteSpace(p.Value.TenantId)))
+        await stores.Projects.ReplaceAsync(p.Value with { TenantId = agentTenant }, p.ETag, CancellationToken.None);
 var api = PilotApp.Build(stores, settings, new SystemClock(), app.Services.GetRequiredService<ILoggerFactory>());
 
 app.Map("/api/{**path}", async (HttpContext ctx, string? path) =>
