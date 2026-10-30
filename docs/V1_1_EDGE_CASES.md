@@ -89,5 +89,7 @@ Every edge case the feature pack lists is one named, automated test (xUnit unles
 | 16 Low: idempotency per app | `F4_Replayed_idempotency_key_returns_the_first_answer_and_never_applies_twice` |
 | 20 Medium (new, re-check): a half-executed run closed as "nothing was changed" | `F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile` |
 | 21 Low (new, re-check): directory role given after the plan | `F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write` |
+| 22 Medium (new, re-check 2): blocked for good when two projects granted access | `F5_A_person_another_project_granted_access_to_is_released_by_its_people_inventory_never_blocked_for_good` |
+| 23 Low (new, re-check 2): switched off half-way closed as "nothing was changed" | `F5_Switched_off_half_way_the_rest_is_left_to_people_and_verified_with_an_escalation` |
 | 9 (re-check remainder): a person known only from requests requests again after offboarding | `F5_Only_the_projects_own_people_are_offboarded` (`409 person_is_leaver`) |
 | 17 Low: `Cancelled` status | removed (enum, SPA types); SPA `src/offboarding.test.ts` "offers a new plan when the confirm says the shown plan expired" |

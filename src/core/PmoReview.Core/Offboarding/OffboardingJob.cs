@@ -162,8 +162,19 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         var now = clock.UtcNow;
         if (writer is null || remover is null || !settings.AgentOffboarding)
         {
-            await SaveAsync(project, v, run with { Status = OffboardingStatus.Failed, FinishedAt = now, UpdatedAt = now, Leftovers = ["offboarding was switched off (AGENT_OFFBOARDING) before the plan ran: nothing was changed"] },
-                "offboarding-failed", "switched off", ct);
+            var done = run.Steps.Count(s => s.Result == OffboardingStepResult.Done && s.Name != Resolve);
+            if (done == 0)
+            {
+                await SaveAsync(project, v, run with { Status = OffboardingStatus.Failed, FinishedAt = now, UpdatedAt = now, Leftovers = ["offboarding was switched off (AGENT_OFFBOARDING) before the plan ran: nothing was changed"] },
+                    "offboarding-failed", "switched off", ct);
+                return;
+            }
+            // Switched off half-way: what is done stays done; the rest is left to people, and verify reports it (escalation, no mail).
+            var rest = run.Steps.Select(s => s.Result == OffboardingStepResult.Planned
+                ? s with { Result = OffboardingStepResult.Skipped, Detail = $"{s.Detail}: left to people (AGENT_OFFBOARDING was switched off after {done} change(s))" } : s).ToList();
+            v = await stores.OffboardingRuns.ReplaceAsync(run with { Steps = rest, UpdatedAt = now }, v.ETag, ct);
+            await AuditAsync(project, "offboarding-switched-off", run.EnterpriseId, $"run {run.Id}: switched off after {done} change(s); the rest is left to people", run.CorrelationId, ct);
+            await VerifyAsync(project, v, ct);
             return;
         }
         if (run.PlanHash != OffboardingService.PlanHash(run.Steps))

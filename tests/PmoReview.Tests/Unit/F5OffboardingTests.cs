@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using PmoReview.Adapters;
 using PmoReview.Core.Directory;
@@ -390,6 +391,50 @@ public class F5OffboardingTests
         Assert.Equal(202, (await Execute(app, IdOf(planned))).Status);
         await app.RunWorker();
         Assert.Equal("Completed", Status(await Get(app)));
+    }
+
+    [Fact]
+    public async Task F5_A_person_another_project_granted_access_to_is_released_by_its_people_inventory_never_blocked_for_good()
+    {
+        // ALPHA granted the person access (a Completed request, no people inventory entry); BETA lists the person and offboards.
+        var app = TestApp.With(settings: Settings());
+        await OwnTenant(app);
+        await OwnTenant(app, TestApp.Beta);
+        var completed = await app.To(RequestStatus.Completed);
+        var upn = (await app.Request(completed)).DomainId!;
+        var listed = (await app.Stores.PeopleInventory.GetAsync(TestApp.Alpha, Person.MakeId(upn)))!; // the SAMPLE joiner: retired, so only the request holds
+        listed = await app.Stores.PeopleInventory.ReplaceAsync(listed.Value with { Retired = true }, listed.ETag);
+        await AddPerson(app, upn, TestApp.Beta);
+        var held = await Plan(app, upn, TestApp.Bella, TestApp.Beta);
+        Assert.Equal((409, "person_in_other_project"), (held.Status, held.ErrorCode));
+        Assert.Contains("Leaver", held.Json.GetProperty("error").GetProperty("message").GetString());
+        // ALPHA's DataMaintainer lists the person as Leaver: released, although the Completed request stays as it is.
+        await app.Stores.PeopleInventory.ReplaceAsync(listed.Value with { Retired = false, Status = PersonStatus.Leaver }, listed.ETag);
+        Assert.Equal(RequestStatus.Completed, (await app.Request(completed)).Flow!.Status);
+        Assert.Equal(202, (await Plan(app, upn, TestApp.Bella, TestApp.Beta)).Status);
+    }
+
+    [Fact]
+    public async Task F5_Switched_off_half_way_the_rest_is_left_to_people_and_verified_with_an_escalation()
+    {
+        var (app, _) = await Leaver();
+        var planned = await Planned(app);
+        app.Offboarding.FailOnce = $"remove-member {Upn} {GroupA}"; // pauses after the sessions were revoked
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+        Assert.Contains(Steps(await Get(app)), s => s.Name == OffboardingJob.Revoke && s.Result == "Done");
+        // AGENT_OFFBOARDING switched off (always allowed): the worker runs without the writers.
+        var off = new OffboardingJob(app.Stores, app.Directory, app.Offboarding, app.Offboarding, null, null, app.Worker.Notifier, app.Worker.Issues, app.Clock,
+            app.Settings.Workflow with { AgentOffboarding = false }, app.Loggers.CreateLogger<OffboardingJob>());
+        var calls = app.Offboarding.Calls.Count;
+        await off.RunOnceAsync(CancellationToken.None);
+        var done = await Get(app);
+        Assert.Equal("PartiallyCompleted", Status(done));
+        Assert.DoesNotContain(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("nothing was changed"));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("still enabled"));
+        Assert.Equal(calls, app.Offboarding.Calls.Count); // no write after the switch
+        Assert.Single(await app.Stores.Escalations.ListAsync(TestApp.Alpha), x => x.Value.Kind == EscalationKind.OffboardingLeftover);
+        Assert.Empty(await OffboardingMails(app));
     }
 
     [Fact]

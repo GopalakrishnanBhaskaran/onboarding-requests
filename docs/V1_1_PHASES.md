@@ -122,3 +122,43 @@ Risks:
 5. In a test environment the PMO completion mail is redirected like every other mail (`NOTIFY_REDIRECT_TO`); only the TAP mail is never redirected.
 6. `bicep build` not run here (Bicep parameters added; checked by `InfraConsistencyTests` only).
 Next step: P6 — edge-case suite complete, independent review agent → REVIEW.md (STOP).
+
+## Phase 6 result
+Status: Done — waiting for Gokul's approval at the P6 checkpoint (STOP). Independent review: Critical 0, High 0 (deployment gate met, `REVIEW.md` re-check 2).
+Changed files:
+- `docs/V1_1_EDGE_CASES.md` — every B.8 edge case and every review finding mapped to a named test; `docs/V1_1_TEST_RESULTS.md` — per-test results and 22 mutation checks
+- `REVIEW.md` — independent review of `c817105` (1 Critical, 5 High, 6 Medium, 7 Low), re-check of `5db8b72` (High 1 left, findings 20–21 new), re-check 2 of `47d66fe` (Critical 0, High 0, findings 22–23 new); written by the review agent only
+- `src/core/PmoReview.Core/Offboarding/OffboardingService.cs`, `OffboardingJob.cs` — offboarding only for the project's own people in a project that names the agent's tenant (inventory, or a request its Owner and Security approved); refused while another project of the tenant holds the person; directory-role holders left to people (at plan and at execute); unset production flag = production; expired plans closed and replaced; confirmed runs always verified (also when switched off half-way)
+- `src/core/PmoReview.Core/Workflow/WorkflowService.Prod.cs` — the ProdApprover is never the creator, a (re)submitter or the beneficiary; `Resources/ProdGuard.cs`, `Domain/Tenants.cs` — environment-less rows guarded as Prod, every prod*/prd* spelling is Prod
+- `src/core/PmoReview.Core/Sources/SourcesOfTruth.cs`, `Review/ReviewChecks.cs`, `Workflow/WorkflowAgent.cs`, `WorkflowService.cs` — retired and expired rows fail the review and are re-checked at every grant point (`MappingSheet.AsReviewed`)
+- `src/core/PmoReview.Core/Services/RequestService.cs` — no new request for a leaver or for a person offboarded in the project
+- `src/adapters/.../Rbac/ArmRoleAssignmentReader.cs` (ARM `nextLink`, F103), `Entra/GraphDirectoryReader.cs` + `Directory/OffboardingContracts.cs` (`DirectoryRole`), `Uploads/UploadToken.cs` + `PilotApp.cs` (tenant checked before keys), `Uploads/UploadService.cs` (idempotency per app), `Domain/Documents.cs` (`bool? IsProductionTenant`), `Domain/Governance.cs` (no `Cancelled`)
+- `src/web/src/components/OffboardingPanel.tsx`, `lib/offboarding.ts`, `lib/types.ts`, `offboarding.test.ts`, `e2e/two-projects.spec.ts` — "Make a new plan" after an expired plan; the e2e offboards after the approvals
+- `tools/import_workbook.py` (`--production-tenant yes|no`) + test; `tools/local-api/Program.cs`, `tools/run_local.sh` (local SAMPLE projects get the local agent tenant)
+- Tests: `F3ProdGuardTests` (+3), `F5OffboardingTests` (+8), `RetiredRowTests` (new, 5), `OffboardingAdapterTests` (+1), `F4UploadTests`, `DataModelV11Tests`, `Support/Fakes.cs`, `Support/UploadFiles.cs`
+- `docs/VERIFIED_FACTS.md` (F103), `docs/PERMISSIONS.md` (row C built), `docs/EXTERNAL_UPLOAD_API.md`, `docs/V1_1_PLAN.md` (P6 fixes 12a, 13a–13c, F3a, F4a; prerequisite 7), `workflows/09-onboarding-flow-v2.md`, `CLAUDE.md`
+Tests: .NET 493/494 (1 opt-in Cosmos emulator skip); SPA 24/24; Playwright 11/11 (local SWA emulator); Python tool tests 5/5; `tsc`, SPA build and `az bicep build infra/main.bicep` clean. 22 mutation checks, all caught (`docs/V1_1_TEST_RESULTS.md`).
+Verified facts added: 1 (F103, see VERIFIED_FACTS.md)
+Open questions:
+1. Decision 12 is tightened (12a): a tenant whose production flag is not set counts as production, so offboarding there needs a second person to confirm. Confirm, or say which tenants are not production (`import_workbook.py --production-tenant no`).
+2. Offboarding a person that two projects of one tenant hold now needs the other project to list them as Leaver first (13a). Confirm this is the wanted rule.
+Risks:
+1. Findings 22 and 23 were fixed after re-check 2 (tests + mutations M20–M22); the review agent has not re-checked them, so `REVIEW.md` still lists them open.
+2. Open by decision (not fixed in P6): Medium 7 (Prod "Read" rows with no Azure roles are trusted), 8 (no list of mapping quality issues for the DataMaintainer), 9 (part: another project of the tenant can still take a new request for an offboarded person; the agent does not refuse a disabled account), 11 (an upload apply cut by the 45 s SWA limit can stay half-applied), 12 (apply is not bound to the validated plan); Low 5 (near-duplicate variants through the single-request route), 15, 18, 19. Each has a proposed fix in `REVIEW.md`.
+3. Graph and ARM are mocked only (R9): subscription listing (F84), the direct-member query (F94), TAP delete and `nextLink` behaviour are proven only by the first approved live dry run.
+4. A project with environments but no Prod now sends environment-less rows above Read to a ProdApprover (fails closed, F3a).
+Next step: STOP — Gokul approves P6 and picks a P7 deployment option (below). Nothing is deployed.
+
+### P7 deployment options (offered because Critical = 0 and High = 0)
+| | 1. Data and code, every new switch off (recommended first) | 2. Option 1 + agent TAP mail (F2) | 3. Option 2 + offboarding writes (F5), pilot subscription only |
+|---|---|---|---|
+| Steps | `deploy_free.sh whatif` → "approved" → `apply` (8 Cosmos containers, worker data roles, new settings all off) → `app` + `worker` redeploy → import each tenant with `--tenant-id` and `--production-tenant` → register ProdApprover and DataMaintainer users | `tap <sub> on --sender <mailbox>` dry run (shows the tenant TAP policy) → `--approved-by`; Exchange admin scopes `Mail.Send` to that one mailbox (RBAC for Applications, F81) | Admin consent for `User.RevokeSessions.All` and `User.EnableDisableAccount.All`; Reader + users-only RBAC Administrator (delete) on the pilot subscription; `OFFBOARD_SUBSCRIPTIONS`, `AGENT_OFFBOARDING=true`. P7 adds an `offboarding <sub> on\|off` command (dry run → `--approved-by`), like `provisioning` |
+| Live after it | F1 selector, F3 Prod guard and escalations, F4 Data uploads page, F5 plans (dry runs, read only); TAP passes stay with the ID team | + the joiner gets the one-time TAP mail at the verified enterprise mail only | + offboarding executes, verifies, mails the PMO |
+| New Azure resources | None: containers in the existing free-tier account (21 of 25 under shared throughput, F90) | None (Exchange configuration only) | None (permissions only) |
+| Expected cost | ≈ ₹0 extra (budget ₹2,000/month unchanged; a few hundred more worker runs inside the Flex free grant, F93) | ≈ ₹0 | ≈ ₹0 |
+| Prerequisites | what-if output and your approval; ProdApprover, DataMaintainer and PMO names; tenant id and production flag per tenant; people inventory (I2) per tenant | sender mailbox; an Exchange admin; people inventory with EnterpriseEmail | a Global or Privileged Role Administrator for admin consent; first live dry run on a SAMPLE test account |
+| Rollback | redeploy the previous commit (`app`, `worker`); the new containers stay empty and harmless | `tap … off` (always allowed); remove the Exchange role assignment | `AGENT_OFFBOARDING=false` (settings only, always allowed); then remove the grants (approval) |
+
+The external upload API (F4) stays off in all three: it needs hosting option B or C (`docs/HOSTING.md`).
+
+Manual steps (people, not code): admin consent for the Graph application permissions (Global or Privileged Role Administrator); Exchange RBAC for Applications scope for `TAP_MAIL_SENDER`; ProdApprover and DataMaintainer users per project (`register_user.py`); PMO and team contacts (Contact inventory page); tenant id and production flag per tenant (`import_workbook.py --tenant-id --production-tenant`); people inventory upload per tenant; an `Uploads.Write` app registration only if the external API is switched on later.

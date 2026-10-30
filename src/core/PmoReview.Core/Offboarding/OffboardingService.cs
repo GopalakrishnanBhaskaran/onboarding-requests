@@ -135,8 +135,10 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
     /// tenant; the account ends with the project's Domain ID suffix (when set); it is a non-retired person of the project's
     /// people inventory, or the Domain ID of a request of the project that both its Owner and Security approved (a request
     /// alone is not enough: any Requester can write one), or an earlier run of the project already changed it. And no other
-    /// project of the same tenant still holds it (an Active person of its inventory, or an approved request not closed):
-    /// offboarding is tenant-wide, so that project releases the person first (review finding 1).
+    /// project of the same tenant still holds it: offboarding is tenant-wide, so that project releases the person first
+    /// (review finding 1). Its people inventory decides when it lists the person (Active holds, Leaver releases); otherwise
+    /// an approved request that is open or Completed holds, so its DataMaintainer releases the person by listing them as
+    /// Leaver (never blocked for good, finding 22).
     /// </summary>
     public static async Task<Refusal?> NotOffboardableAsync(DataStores stores, Project project, string upn, WorkflowSettings settings, CancellationToken ct)
     {
@@ -151,11 +153,13 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         foreach (var other in (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value)
                      .Where(p => p.ProjectId != project.ProjectId && Tenants.Connected(p, settings.AgentTenantId)))
         {
-            var held = (await stores.PeopleInventory.GetAsync(other.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false, Status: PersonStatus.Active }
-                       || (await RequestsForAsync(stores, other.ProjectId, upn, ct)).Any(r => Granted(r) && r.Flow!.Status != RequestStatus.Closed);
+            var listed = (await stores.PeopleInventory.GetAsync(other.ProjectId, Person.MakeId(upn), ct))?.Value is { Retired: false } p ? p : null;
+            var held = listed is not null
+                ? listed.Status == PersonStatus.Active
+                : (await RequestsForAsync(stores, other.ProjectId, upn, ct)).Any(r => Granted(r) && (r.Flow!.Status == RequestStatus.Completed || !r.Flow.IsFinal));
             if (held)
                 return new($"{upn} also belongs to another project in this tenant; offboarding is tenant-wide, so that project releases the person first " +
-                           "(its DataMaintainer marks them Leaver or removes them from its people inventory, and its approved requests are closed)", Shared: true);
+                           "(its DataMaintainer lists them as Leaver in its people inventory)", Shared: true);
         }
         return null;
     }

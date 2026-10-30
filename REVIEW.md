@@ -109,3 +109,40 @@ Fix for the #1 remainder:
 | Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 21 |
 
 Deployment gate (spec P6): **not met**. High = 1: the remaining part of finding 1, a PMO of one project offboarding another project's person through any request in their own project when both projects name the agent's tenant (a documented go-live option).
+
+## Re-check 2 (commit 47d66fe, 2026-10-30)
+Scope: `git diff 5db8b72..47d66fe`, the fixes for the remainder of finding 1, findings 20 and 21, and part of 9. Same rules as before: judged from code and tests only; nothing was deployed; no real Graph, ARM, Entra or mail call; no repo file other than this one was changed.
+
+What was run here:
+- `dotnet build PmoReview.slnx --no-incremental` gave 0 warnings and 0 errors.
+- `dotnet test --project tests/PmoReview.Tests -f net10.0`: **492 total, 491 passed, 0 failed, 1 skipped**. The skip is the opt-in `CosmosEmulatorTests`.
+- `npm --prefix src/web test`: **24/24 passed** in 5 files.
+- Playwright was not re-run.
+- The counts match `docs/V1_1_TEST_RESULTS.md`.
+- **(probe)** marks a result reproduced with 8 throwaway xUnit probes. They ran in a scratch copy outside the repo, which was deleted afterwards, on the real API host and worker jobs with fake Graph and ARM.
+
+### Status changes
+| # | status | evidence (file:line, test) | remaining risk |
+|---|---|---|---|
+| 1 | **Closed** | `OffboardingService.cs:141-165`. A person now counts as the project's own only if one of three holds: they are non-retired in its people inventory; they are the Domain ID of a request whose *current* Owner **and** Security approvals are Approved (`Granted`, `:168`); or an earlier run of the project changed their account. A plan is refused with `409 person_in_other_project` when another project of the tenant still holds the person. "Holds" means Active in that project's inventory, or a granted request that is not Closed. Projects with an empty `TenantId` count as the agent's tenant here. The check runs at plan (`:52`) and at confirm (`:98`). Tests: `F5_Only_the_projects_own_people_are_offboarded`, `F5_A_person_another_project_of_the_tenant_still_holds_is_not_offboarded_from_one_project`. **(probe)**, both projects naming the agent's tenant, BETA marked non-production: (a) the earlier re-check probe, where only Bob's BETA request exists → 404. (b) Bob's BETA request approved by Owner and Security while ALPHA has the person Active → 409. (e) ALPHA with an empty `TenantId` holding the person → 409; a plan from ALPHA itself → 409 `tenant_not_connected`. Also checked in code: a Returned request cannot carry old approvals to a new person, because `ReturnAsync` supersedes all approvals (`WorkflowAgent.cs:222`), and only a Returned request can be resubmitted. | None that bypasses the fix. These are by design: once ALPHA releases the person (marks them Leaver or Retired, or has only Closed or unapproved requests), BETA may offboard them (probes c, d). If another project starts holding the person after BETA's confirm, the run still goes ahead; the window is the time until the next worker run (about 5 minutes). See new finding 22 for the opposite problem: offboarding that is now refused for good. |
+| 9 | Partly closed (Medium) | `RequestService.cs:122-131`: a person offboarded in this project (run Completed or PartiallyCompleted) who is not Active in its inventory gets `409 person_is_leaver`. Test: `F5_Only_the_projects_own_people_are_offboarded`. **(probe)** A new request in the same project after a Completed run → 409. For a person retired from the inventory during the run → 409. | Medium. **(probe)** A new request for the same person in *another* project of the same tenant → 201. The review and the agent still do not refuse a Leaver or a disabled account. |
+| 20 | Closed | `OffboardingJob.cs:42-50`: the worker's check now applies to Planning runs only, so a confirmed run always goes through verify. A person whose account an earlier run changed still counts as the project's (`OffboardingService.cs:148-149`), so a new plan is allowed. Test: `F5_A_confirmed_run_is_finished_and_verified_even_if_the_person_is_retired_meanwhile`. **(probe, the original sequence)** The run paused after "revoke" (Done), then the person was retired. Result: Completed, account disabled, a new plan → 202. | Same symptom by another trigger, already present before these commits: new finding 23. |
+| 21 | Closed | `OffboardingJob.cs:201-213`: execute reads the memberships again; if a directory role appears, every remaining Entra and Azure step is Skipped and audited. Test: `F5_A_directory_role_given_after_the_plan_stops_every_entra_and_azure_write`. **(probe)** A role given while the run was paused after "revoke": only the revoke ran; PartiallyCompleted; the account stays enabled. | None. |
+
+Every other finding keeps the status from the first re-check.
+
+### New findings
+| # | finding | severity | file:line | fix |
+|---|---|---|---|---|
+| 22 | **Offboarding blocked for good for a person with approved requests in two projects of one tenant.** Another project "holds" a person as long as it has a granted request that is not `Closed`. But only the offboarding Close step sets `Closed`, and that step closes only open requests (`OffboardingJob.cs:136`, `IsFinal` at `WorkflowState.cs:236`). So a `Completed` request, or one Rejected at the Prod stage after Owner and Security approved it, holds the person forever. When both projects have such a request, each refuses the other's plan with `409 person_in_other_project`. The refusal asks for "its approved requests are closed", which no one can do. Two projects in one tenant is a documented go-live option (`docs/GO_LIVE_ACTUAL_TENANT.md:178`). **(probe)** ALPHA and BETA name the agent tenant, and the person has a Completed request in each. ALPHA plan → 409 and BETA plan → 409. Both inventories then list the person as Leaver: still 409 and 409. Every project that ever completed a request for the person holds them, so the same applies to a rehire. This fails closed (nothing unauthorized happens), but F5 one-click offboarding is impossible for these people and only manual offboarding remains. | Medium | src/core/PmoReview.Core/Offboarding/OffboardingService.cs:155 | Count only *open* granted requests (not final) plus an Active inventory entry as "held". Or, better, replace the hard refusal with a confirmation by a PMO or Operator of each other holding project, so tenant-wide offboarding goes ahead with their consent. Let the Close step also mark that project's final requests `Closed`. Test the two-project Completed case. |
+| 23 | **A paused run that is switched off is closed as "nothing was changed"** (already present before these commits; same class as 20). With `AGENT_OFFBOARDING` switched off, which rule 4 always allows, a run already paused after a write (for example sessions revoked) is set to `Failed` with the leftover "offboarding was switched off … before the plan ran: nothing was changed". It skips verify and raises no escalation or issue. **(probe)** Run paused after "Revoke sign-in sessions" (Done), worker restarted with the switch off → Failed with that text, 0 `OffboardingLeftover` escalations, account still enabled. A new plan is possible: the earlier run counts. | Low | src/core/PmoReview.Core/Offboarding/OffboardingJob.cs:163 | When any step is Done, write "switched off after N change(s): the rest is left to people" and raise the `OffboardingLeftover` escalation (or set PartiallyCompleted after a read-only verify). Keep "nothing was changed" for runs with no Done step. |
+
+### Summary of OPEN findings after re-check 2
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — (1 closed) |
+| Medium | 6 | 7, 8, 9 (partly), 11, 12, 22 |
+| Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 23 |
+
+Deployment gate (spec P6): **met**. Critical = 0 and High = 0. Six Medium and five Low findings stay open; none is a Prod write path or a cross-project authorization breach. The worst is finding 22: offboarding is refused for good, failing closed, for people with approved requests in two projects of one tenant.
