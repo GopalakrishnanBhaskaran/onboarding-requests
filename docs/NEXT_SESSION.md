@@ -110,6 +110,7 @@ Without `--update`, existing rows are kept. Never type a literal `<…>` placeho
 - Cloud Shell is reset after a short idle time. It loses only the clone, `.local/` (params, workbooks, deploy stamps) and `~/.dotnet`; Azure keeps everything.
 
 ## Working rules
+- **Cloud Shell is ephemeral:** every command for Gokul comes as the full block from `docs/RUNBOOK.md` *Pilot session start* (subscription, clean-up, shallow clone or checkout, command, clean-up). Never assume anything survived.
 - Any Azure resource or permission change: show the what-if or dry run and wait for an explicit "approved".
   - Such changes: `provisioning … on`, `tap … on`, `privileged … on`, `offboarding … on`, `revoke-graph-writes`, `email`, `apply`.
   - No approval needed: `app`, `worker`, `environment`, imports, registrations, any `… off`.

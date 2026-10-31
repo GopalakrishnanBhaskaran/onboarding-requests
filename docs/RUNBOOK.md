@@ -36,12 +36,19 @@ Full v2 steps, approvals and the live end-to-end test: `workflows/09-onboarding-
 
 ## Pilot session start (Azure Cloud Shell, Bash)
 
-Cloud Shell's home folder is reset after a short idle time. Start every session with:
+Cloud Shell is ephemeral: the clone, `.local/`, `~/.dotnet`, uploaded files and shell variables can be gone at any time, and the disk is small. Run this whole block every time, with the command in the middle (`BR` = the branch of the current handoff; `main` once it is merged):
 ```bash
-SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; az account set --subscription $SUB
-cd ~/onboarding-requests 2>/dev/null || { cd ~ && git clone -q -b claude/eager-ride-lx6he8 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests; }
-git fetch -q origin claude/eager-ride-lx6he8 && git checkout -q claude/eager-ride-lx6he8 && git pull -q origin claude/eager-ride-lx6he8   # an old clone gets the latest code
-git log --oneline -1
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+# Free space: download caches and build output only (safe to delete)
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+# Code: shallow clone, or move an existing clone to the latest commit of the branch
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+df -h ~   # the app or worker deploy needs about 2-3 GB free
+# ... the command (e.g. tools/deploy_free.sh app $SUB) ...
+# Afterwards: free the space again
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
 ```
 
 ## Register people (who may use the app)
