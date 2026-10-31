@@ -559,6 +559,23 @@ decide. Ignored; Security reviews.</td>
 search logs for it.</td>
 </tr>
 <tr class="odd">
+<td><em>The app's server did not answer (HTTP 500: Backend call
+failure)</em> (older SPA: <em>Unexpected token 'B', "Backend call
+failure" is not valid JSON</em>)</td>
+<td>The SWA gateway got no answer from the API. <strong>Once, then
+fine:</strong> cold start or restart after a deploy; nothing to do.
+<strong>One action only:</strong> it ran past 45 s (F3) and may still
+have finished; reload, check the request's last step
+(<code>workflow_diag.sh</code>) before repeating. <strong>Every
+page:</strong> the API is not starting. Check the website settings:
+<code>az staticwebapp appsettings list -n &lt;swa&gt; -g rg-pmo-review-pilot --query 'properties.{env:APP_ENVIRONMENT, redirect:NOTIFY_REDIRECT_TO, cosmosSet:COSMOS_CONNECTION_STRING != null}'</code>.
+The API refuses to start if <code>APP_ENVIRONMENT</code> is not
+pilot/dev/test/prod, <code>NOTIFY_REDIRECT_TO</code> is set in prod or
+is not one mail address, or the Cosmos connection string is missing.
+Fix the setting (<code>deploy_free.sh environment …</code>), then
+reload.</td>
+</tr>
+<tr class="odd">
 <td>New person needs access</td>
 <td>Register them by sign-in name (section <em>Register people</em>).
 They don't need to sign in first. Unregistered people see no data.</td>
