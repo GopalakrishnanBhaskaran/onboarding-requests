@@ -509,6 +509,27 @@ PY
   echo "Then run: tools/deploy_free.sh app <subscriptionId> (the website shows 'mailed')."
 }
 
+# A main.bicep deployment replaces the worker's whole app-settings list (siteConfig.appSettings), and what-if cannot show
+# app settings. Settings set later with the CLI and not in worker.bicep would be dropped: list them, snapshot, restore.
+template_setting_names() { grep -oE "\{ name: '[A-Za-z0-9_]+', value:" "$ROOT/infra/modules/worker.bicep" | sed -E "s/\{ name: '([^']+)'.*/\1/" | sort -u; }
+settings_outside_template() { # stdin: live app settings JSON; prints the names the template does not set
+  python3 -c "import json,sys;t=set(open(sys.argv[1]).read().split());print(' '.join(sorted(s['name'] for s in json.load(sys.stdin) if s['name'] not in t)))" <(template_setting_names)
+}
+# Re-apply what a main.bicep deployment dropped or changed on the worker (not the retired switches the template forces off).
+restore_worker_settings() {
+  local name="$1" before="$2" after line restore=()
+  after=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" -o json)
+  while IFS= read -r line; do [[ -n "$line" ]] && restore+=("$line"); done < <(python3 -c "
+import json, sys
+before, after = json.loads(sys.argv[1]), {s['name']: s.get('value') for s in json.loads(sys.argv[2])}
+retired = {'ENTRA_AUTO_ASSIGN', 'ENTRA_PROVISION_JOINERS', 'ENTRA_AUTO_CREATE_PACKAGES'}
+for s in before:
+    if s['name'] not in retired and after.get(s['name']) != s.get('value'): print(f\"{s['name']}={s.get('value') or ''}\")" "$before" "$after")
+  if [[ ${#restore[@]} -eq 0 ]]; then echo "Worker app settings unchanged by the deployment."; return 0; fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings "${restore[@]}"
+  echo "Worker app settings restored to their values before the deployment: $(printf '%s\n' "${restore[@]}" | cut -d= -f1 | tr '\n' ' ')"
+}
+
 policy_allows_databricks() {
   az policy assignment show -g "$RG_DEFAULT" -n pmo-pilot-allowed-types \
     --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Databricks/workspaces"
@@ -534,6 +555,12 @@ PY
   echo "  Create: Azure Databricks workspace dbw-pmo-<suffix> ($location, Premium, computeMode Serverless, public network access)"
   echo "  Not created: managed resource group, VNet, NAT gateway, public IP, storage account, access connector (serverless, F71)"
   echo "  Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group>... (dry run, then --approved-by)"
+  local worker before=""
+  worker=$(worker_name)
+  if [[ -n "$worker" ]]; then
+    before=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$worker" -o json)
+    echo "  Worker app settings outside the template (the policy deployment drops them; the approved run restores them): $(settings_outside_template <<<"$before" | sed 's/^$/none/')"
+  fi
   if [[ -z "${APPROVED_BY:-}" ]]; then
     # Only real changes: unchanged resources (NoChange) and the mail resources deployed outside main.bicep (Ignore) are left out.
     echo "== what-if (policy change; expect 1 to modify: pmo-pilot-allowed-types) =="
@@ -564,6 +591,7 @@ print('  resources in the template:', len(r))" | tee -a "$ROOT/.local/whatif-dat
   fi
   if ! policy_allows_databricks; then
     az deployment sub create --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" --parameters "@$ROOT/.local/params-databricks.json" -o none
+    [[ -n "$worker" ]] && restore_worker_settings "$worker" "$before"
     echo "Policy updated (approved by $APPROVED_BY). Waiting for it to take effect (up to 30 minutes)..."
     local i; for i in $(seq 1 30); do policy_allows_databricks && break; sleep 60; done
     sleep 120 # the assignment reads as updated before the deny evaluation follows
