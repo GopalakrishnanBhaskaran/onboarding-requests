@@ -1,7 +1,23 @@
-# Next session — handoff (updated 31 Oct 2026: API on .NET 10 and account deletion switch, both code only; v1.1 live, agent offboarding switched on)
+# Next session — handoff (updated 31 Oct 2026: API back on .NET 9, offboarding "Make a new plan", Databricks + Fabric merged — code only; v1.1 live, agent offboarding and account deletion switched on)
+
+## 31 Oct 2026 — Databricks + Fabric (code only, nothing deployed, nothing approved)
+Built on branch `claude/gifted-wozniak-7woywt`; merged into **`claude/nifty-bardeen-j0pqm3`** (PR 4) on 31 Oct 2026, facts renumbered F114–F122. Runbook: `docs/DATABRICKS_FABRIC.md`; facts F114–F122.
+- **Databricks:** `tools/deploy_free.sh databricks $SUB` (dry run: plan + what-if) → after "approved" `… --approved-by "<name> <date>"`. It registers `Microsoft.Databricks`, adds `Microsoft.Databricks/workspaces` to the policy (`enableDatabricks`, stage A), waits, then creates one **serverless** Premium workspace (`infra/modules/databricks.bicep`). No managed resource group, VNet or storage account, so it fits rules 1–2 once approved. `params` keeps the policy type, and `cost_check.sh` allows exactly one workspace.
+- **Entra groups → Databricks:** after the first account admin (an Entra Global Administrator signs in at accounts.azuredatabricks.net) and the account id: `python3 tools/databricks_setup.py --account-id <id> --group <group>` (dry run) → `--approved-by`. Automatic identity management syncs membership at sign-in; per joiner only the Entra membership is needed.
+- **Fabric:** trial capacity, no Azure resource. Tenant settings, trial and workspace in the portal, then `python3 tools/fabric_groups.py --workspace "<name>" --group <group>[=Contributor]` (dry run) → `--approved-by`.
+- **Tests:**
+  - .NET: 382 (381 pass, 1 opt-in skip), including a new infra test.
+  - `python3 tools/test_platform_groups.py`, both `--self-test`s.
+  - `bicep build` of `main.bicep` and `databricks.bicep`: exit 0 (only the old BCP187 warning).
+  - Not run against Azure: no credentials in the build session.
+- **Open:**
+  - Default storage **is billed** (Learn, 11 Sep 2026: storage space + API operations, DSUs; F119), unlike the branch's earlier note: the workspace is not free while it holds data. DBU and DSU rates not read: check the pricing pages before approval.
+  - Az CLI token for the Fabric API is only seen in search results (F121).
+  - Databricks and Fabric rows still go to the role team (possible later change: "granted by group").
+
 
 **Start the next session with:**
-> Continue the PMO Access Portal v1.1 rollout on branch `claude/elegant-darwin-nfot4p`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
+> Continue the PMO Access Portal v1.1 rollout on branch `claude/nifty-bardeen-j0pqm3` (PR 4). Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
 
 Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
 Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.

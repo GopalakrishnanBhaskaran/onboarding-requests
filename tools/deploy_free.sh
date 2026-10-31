@@ -74,10 +74,17 @@
 #       (pay per mail, from credits) + one role for the worker on that resource: dry run (plan + what-if) without
 #       --approved-by. Approved: policy stage A (allow the 3 types), wait for it, create the resources, switch the worker
 #       to NOTIFY_SENDER=AcsEmail.
+#
+#   tools/deploy_free.sh databricks <subscriptionId> [--location <region>] [--approved-by "<name> <date>"]
+#       One SERVERLESS Azure Databricks workspace (Premium; no managed resource group, VNet, NAT gateway or storage account;
+#       pay per DBU only while serverless compute runs, F114-F119). New resource: dry run (plan + what-if) without
+#       --approved-by. Approved: register the Microsoft.Databricks provider if needed, policy stage A (allow
+#       Microsoft.Databricks/workspaces), wait for it, create the workspace. Then add the Entra groups to it with
+#       tools/databricks_setup.py (dry run, then approval; automatic identity management keeps membership in sync).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email|databricks}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -615,6 +622,114 @@ PY
   echo "Then run: tools/deploy_free.sh app <subscriptionId> (the website shows 'mailed')."
 }
 
+# A main.bicep deployment replaces the worker's whole app-settings list (siteConfig.appSettings), and what-if cannot show
+# app settings. Settings set later with the CLI and not in worker.bicep would be dropped: list them, snapshot, restore.
+template_setting_names() { grep -oE "\{ name: '[A-Za-z0-9_]+', value:" "$ROOT/infra/modules/worker.bicep" | sed -E "s/\{ name: '([^']+)'.*/\1/" | sort -u; }
+settings_outside_template() { # stdin: live app settings JSON; prints the names the template does not set
+  python3 -c "import json,sys;t=set(open(sys.argv[1]).read().split());print(' '.join(sorted(s['name'] for s in json.load(sys.stdin) if s['name'] not in t)))" <(template_setting_names)
+}
+# Re-apply what a main.bicep deployment dropped or changed on the worker (not the retired switches the template forces off).
+restore_worker_settings() {
+  local name="$1" before="$2" after line restore=()
+  after=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$name" -o json)
+  while IFS= read -r line; do [[ -n "$line" ]] && restore+=("$line"); done < <(python3 -c "
+import json, sys
+before, after = json.loads(sys.argv[1]), {s['name']: s.get('value') for s in json.loads(sys.argv[2])}
+retired = {'ENTRA_AUTO_ASSIGN', 'ENTRA_PROVISION_JOINERS', 'ENTRA_AUTO_CREATE_PACKAGES'}
+for s in before:
+    if s['name'] not in retired and after.get(s['name']) != s.get('value'): print(f\"{s['name']}={s.get('value') or ''}\")" "$before" "$after")
+  if [[ ${#restore[@]} -eq 0 ]]; then echo "Worker app settings unchanged by the deployment."; return 0; fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings "${restore[@]}"
+  echo "Worker app settings restored to their values before the deployment: $(printf '%s\n' "${restore[@]}" | cut -d= -f1 | tr '\n' ' ')"
+}
+
+policy_allows_databricks() {
+  az policy assignment show -g "$RG_DEFAULT" -n pmo-pilot-allowed-types \
+    --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Databricks/workspaces"
+}
+
+# One serverless Azure Databricks workspace (VERIFIED_FACTS F114-F119). New resource: approval-gated, dry run first.
+databricks_setup() {
+  local location="${1:-centralindia}" provider existing out
+  [[ -f "$ROOT/.local/params.json" ]] || { echo "Run tools/deploy_free.sh params <subscriptionId> first."; return 1; }
+  python3 - "$ROOT/.local/params.json" "$ROOT/.local/params-databricks.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["parameters"]["enableDatabricks"] = {"value": True}
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+  provider=$(az provider show -n Microsoft.Databricks --query registrationState -o tsv 2>/dev/null || echo NotRegistered)
+  existing=$(az resource list -g "$RG_DEFAULT" --resource-type Microsoft.Databricks/workspaces --query "[].name" -o tsv)
+  if [[ -n "$existing" ]]; then echo "A workspace already exists in $RG_DEFAULT: $existing (one only, CLAUDE.md rule 1)."; fi
+  local tags="{\"workload\":\"pmo-review-pilot\",\"costProfile\":\"databricks-serverless-pay-per-dbu\"}"
+  echo "Plan (Databricks), expected cost: no compute while idle; default storage billed by data stored and API calls (DSUs, F119); DBUs (Premium, serverless) only while a notebook, job or SQL"
+  echo "warehouse runs, billed on the workspace resource inside the ₹2,000 budget (F119). Stop compute after each test."
+  echo "  Provider: Microsoft.Databricks is $provider on the subscription$([[ "$provider" == Registered ]] || echo " (will be registered, free)")"
+  echo "  Policy (stage A): allow Microsoft.Databricks/workspaces in $RG_DEFAULT"
+  echo "  Create: Azure Databricks workspace dbw-pmo-<suffix> ($location, Premium, computeMode Serverless, public network access)"
+  echo "  Not created: managed resource group, VNet, NAT gateway, public IP, storage account, access connector (serverless, F114)"
+  echo "  Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group>... (dry run, then --approved-by)"
+  local worker before=""
+  worker=$(worker_name)
+  if [[ -n "$worker" ]]; then
+    before=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$worker" -o json)
+    echo "  Worker app settings outside the template (the policy deployment drops them; the approved run restores them): $(settings_outside_template <<<"$before" | sed 's/^$/none/')"
+  fi
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    # Only real changes: unchanged resources (NoChange) and the mail resources deployed outside main.bicep (Ignore) are left out.
+    echo "== what-if (policy change; expect 1 to modify: pmo-pilot-allowed-types) =="
+    az deployment sub what-if --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" \
+      --parameters "@$ROOT/.local/params-databricks.json" --result-format FullResourcePayloads --exclude-change-types NoChange Ignore \
+      | tee "$ROOT/.local/whatif-databricks.txt" || true
+    echo "== workspace =="
+    if policy_allows_databricks; then
+      az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
+        --parameters "location=$location" "tags=$tags" --result-format FullResourcePayloads --exclude-change-types Ignore \
+        | tee -a "$ROOT/.local/whatif-databricks.txt" || true
+    else
+      # Azure checks a new resource against the CURRENT policy: before stage A its what-if can only say RequestDisallowedByPolicy.
+      echo "What-if not possible yet: the live policy does not allow Microsoft.Databricks/workspaces (that is stage A)."
+      echo "The approved run re-checks it after the policy change and creates only if it is exactly this one workspace:"
+      az bicep build --file "$ROOT/infra/modules/databricks.bicep" --stdout 2>/dev/null | python3 -c "
+import json, sys
+r = json.load(sys.stdin)['resources']; r = r if isinstance(r, list) else list(r.values())
+for x in r: print('  +', x['type'], x['apiVersion'], json.dumps({'sku': x.get('sku'), 'properties': x.get('properties')}))
+print('  resources in the template:', len(r))" | tee -a "$ROOT/.local/whatif-databricks.txt" || echo "  (az bicep build not available: see infra/modules/databricks.bicep)"
+    fi
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  if [[ "$provider" != "Registered" ]]; then
+    az provider register -n Microsoft.Databricks --wait -o none
+    echo "Provider Microsoft.Databricks registered (approved by $APPROVED_BY)."
+  fi
+  if ! policy_allows_databricks; then
+    az deployment sub create --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" --parameters "@$ROOT/.local/params-databricks.json" -o none
+    [[ -n "$worker" ]] && restore_worker_settings "$worker" "$before"
+    echo "Policy updated (approved by $APPROVED_BY). Waiting for it to take effect (up to 30 minutes)..."
+    local i; for i in $(seq 1 30); do policy_allows_databricks && break; sleep 60; done
+    sleep 120 # the assignment reads as updated before the deny evaluation follows
+  fi
+  cp "$ROOT/.local/params-databricks.json" "$ROOT/.local/params.json" # later deployments keep the type allowed
+  # The workspace what-if now runs against the updated policy: create only if it changes exactly the one workspace.
+  az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
+    --parameters "location=$location" "tags=$tags" --no-pretty-print -o json > "$ROOT/.local/whatif-databricks-workspace.json" \
+    || { echo "STOP: workspace what-if failed (policy not effective yet?). Re-run the same command in a few minutes."; return 1; }
+  python3 - "$ROOT/.local/whatif-databricks-workspace.json" <<'PY' || { echo "STOP: nothing created. Send .local/whatif-databricks-workspace.json for review."; return 1; }
+import json, sys
+changes = [c for c in json.load(open(sys.argv[1])).get("changes") or [] if c.get("changeType") not in ("Ignore", "NoChange")]
+for c in changes: print(f"  what-if: {c['changeType']} {c['resourceId']}")
+ok = len(changes) <= 1 and all(c["changeType"] in ("Create", "Modify") and "/providers/Microsoft.Databricks/workspaces/" in c["resourceId"] for c in changes)
+sys.exit(0 if ok else 1)
+PY
+  out=$(az deployment group create -g "$RG_DEFAULT" -n pmo-review-databricks --template-file "$ROOT/infra/modules/databricks.bicep" \
+    --parameters "location=$location" "tags=$tags" --query properties.outputs -o json)
+  echo "$out" > "$ROOT/.local/databricks.json"
+  python3 -c "import json,sys;o=json.load(sys.stdin);print('Databricks workspace on (approved by '+sys.argv[1]+'):',o['workspaceName']['value'],'https://'+o['workspaceUrl']['value'],'(workspace id',str(o['workspaceId']['value'])+')')" "$APPROVED_BY" <<<"$out"
+  echo "Next: open the workspace URL once as the deploying admin (becomes workspace admin), then sign in to"
+  echo "https://accounts.azuredatabricks.net as an Entra Global Administrator (first account admin) and copy the account id."
+  echo "Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group> (dry run) → … --approved-by \"<name> <date>\""
+}
+
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;
 # InfraConsistencyTests checks it matches the API project's TargetFramework).
 deploy_app() {
@@ -770,6 +885,9 @@ PY
     for c in mappingSheet responseDocument notifications issues; do
       ok "Cosmos container '$c' exists (v2)" "az cosmosdb sql container show -g $RG -a $COSMOS -d pmoreview -n $c"
     done
+    echo "== Databricks (optional, deploy_free.sh databricks) =="
+    ok "policy allows Microsoft.Databricks/workspaces" policy_allows_databricks
+    echo "  workspace: $(az resource list -g "$RG" --resource-type Microsoft.Databricks/workspaces --query "[0].name" -o tsv 2>/dev/null || true)"
     echo "== Worker =="
     W=$(worker_name); echo "  worker: ${W:-not deployed}"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
@@ -790,7 +908,8 @@ PY
     HOST=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].defaultHostname" -o tsv 2>/dev/null)
     W=$(worker_name 2>/dev/null || true)
     LIVE=$([[ -n "$W" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$W" -o json 2>/dev/null || echo "[]")
-    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" "$LIVE" <<'PY'
+    DBX=$(policy_allows_databricks && echo true || echo false)
+    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" "$LIVE" "$DBX" <<'PY'
 import json, sys
 b, out, host = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
 live = {s["name"]: s.get("value") or "" for s in json.loads(sys.argv[4] or "[]")}
@@ -817,7 +936,9 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "agentOffboarding": v(live.get("AGENT_OFFBOARDING", "").lower() == "true"),
      "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
      "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
-     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", ""))}
+     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", "")),
+     # Databricks policy type as it is live (deploy_free.sh databricks, approved separately).
+     "enableDatabricks": v(sys.argv[5] == "true")}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
@@ -898,6 +1019,17 @@ PY
     done
     email_setup "$REDIRECT"
     ;;
+  databricks)
+    shift 2; DBX_LOCATION="centralindia"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --location) DBX_LOCATION="${2:?region}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (databricks): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    databricks_setup "$DBX_LOCATION"
+    ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
     note_approval app "${3:-}" "${4:-}"
@@ -916,5 +1048,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email|databricks ..."; exit 1 ;;
 esac
