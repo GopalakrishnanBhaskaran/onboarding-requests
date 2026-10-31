@@ -38,7 +38,7 @@ Full v2 steps, approvals and the live end-to-end test: `workflows/09-onboarding-
 
 Cloud Shell is ephemeral: the clone, `.local/`, `~/.dotnet`, uploaded files and shell variables can be gone at any time, and the disk is small. Run this whole block every time, with the command in the middle (`BR` = the branch of the current handoff; `main` once it is merged). Commands carry `--approved-by "<name> <date>"`: only recorded for `app` / `worker`; for an approval-gated command run the block with the dry run first, then the same block with `--approved-by`:
 ```bash
-SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/nifty-bardeen-j0pqm3
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
 az account set --subscription $SUB
 # Free space: download caches and build output only (safe to delete)
 rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
