@@ -1,4 +1,4 @@
-"""Shared helpers for tools/databricks_setup.py and tools/fabric_groups.py. Standard library only (Cloud Shell, Mac).
+"""Shared helpers for tools/fabric_groups.py. Standard library only (Cloud Shell, Mac).
 
 Tokens come from the signed-in Azure CLI (`az account get-access-token`), stay in memory and are never printed or saved.
 Entra groups are resolved read-only with `az ad group show` (the signed-in admin's own Graph rights).

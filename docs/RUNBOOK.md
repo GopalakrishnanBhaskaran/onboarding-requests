@@ -45,7 +45,7 @@ rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_
 # Code: shallow clone, or move an existing clone to the latest commit of the branch
 [ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
 cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
-df -h ~   # the app or worker deploy needs about 2-3 GB free
+df -h ~   # the app or worker deploy needs about 2-3 GB free (46 GB free on 31 Oct)
 # ... the command, approval filled in, e.g. tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-10-31" ...
 # Afterwards: free the space again
 rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*

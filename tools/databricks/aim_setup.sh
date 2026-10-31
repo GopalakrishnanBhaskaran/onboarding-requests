@@ -5,6 +5,7 @@
 #   aim_setup.sh plan   --account-id <id> [--workspace <name|id> --group <name|object id>...]
 #   aim_setup.sh apply  --account-id <id> --workspace <name|id> --group <name|object id>... [--admin] --approved-by "<name> <date>"
 #   aim_setup.sh status --account-id <id> --workspace <name|id>
+#   aim_setup.sh grants --workspace <name> --catalog <c> --schema <s> --group <name|object id>[=READ|=WRITE]... [--approved-by "<name> <date>"]
 #   aim_setup.sh self-test                                   offline, against mocked Azure CLI and Databricks
 #   Option for all: --subscription <id> (where the workspaces are; default: the Azure CLI's current one)
 #
@@ -16,6 +17,12 @@
 #          off, so the first group is also the proof that AIM works (F111); then assigns it to the workspace as USER, or
 #          ADMIN with --admin (F112). A second apply changes only what is missing; it never lowers ADMIN to USER.
 #   status who is assigned to the workspace.
+#   grants Unity Catalog data access for the groups (workspace access is not data access). READ = USE_CATALOG on the catalog
+#          + USE_SCHEMA, SELECT on the schema (all its current and future tables); WRITE adds MODIFY, CREATE_TABLE on the
+#          schema (F123). Without --approved-by it only reads and prints the plan; with it, it adds what is missing through
+#          the Unity Catalog permissions API (no SQL warehouse, so no DBUs; F125) and reads it back. It never removes a
+#          privilege and never grants ALL_PRIVILEGES, MANAGE or ownership. Needs MANAGE on the catalog/schema, ownership of
+#          it or its catalog, or metastore admin; workspace admins own the workspace catalog (F124). No --account-id.
 # Sign-in: the Azure CLI, as a Databricks account admin (F113). The Databricks token stays in memory and never reaches the
 # output or a command line (curl gets it through a header file descriptor). Guide: docs/DATABRICKS_AIM.md.
 set -euo pipefail
@@ -26,7 +33,7 @@ SCIM_GALLERY_APP="Azure Databricks SCIM Provisioning Connector"
 GUID_RE='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
-DBX_TOKEN="" ACCOUNT="" WORKSPACE="" APPROVED_BY="" PERMISSION="USER"
+DBX_TOKEN="" ACCOUNT="" WORKSPACE="" APPROVED_BY="" PERMISSION="USER" CATALOG="" SCHEMA=""
 GROUP_ARGS=() SUB_ARGS=()
 
 say() { printf '%s\n' "$*"; }
@@ -191,6 +198,93 @@ status_cmd() {
   assignments "$ws" | sed 's/^/  /'
 }
 
+# ---- Unity Catalog grants (F123-F125) ----------------------------------------------------------------------------------
+
+uc_privileges() {  # LEVEL TYPE → the privileges for that securable; READ and WRITE are the only levels
+  case "$1:$2" in
+    READ:catalog|WRITE:catalog) printf 'USE_CATALOG' ;;
+    READ:schema) printf 'USE_SCHEMA,SELECT' ;;
+    WRITE:schema) printf 'USE_SCHEMA,SELECT,MODIFY,CREATE_TABLE' ;;
+    *) die "access level must be READ or WRITE" ;;
+  esac
+}
+
+workspace_url() {  # a workspace name in the subscription → its host (adb-<id>.<n>.azuredatabricks.net)
+  local ids n
+  mapfile -t ids < <(azq resource list --resource-type Microsoft.Databricks/workspaces ${SUB_ARGS[@]+"${SUB_ARGS[@]}"} --query "[?name=='$1'].id" -o tsv)
+  n=${#ids[@]}
+  (( n == 1 )) || die "workspace \"$1\": $n found in this subscription (grants needs the workspace name; use --subscription if it is elsewhere)"
+  azq resource show --ids "${ids[0]}" --query properties.workspaceUrl -o tsv
+}
+
+uc_fail() {
+  case "$(http_status)" in
+    401) die "$1 failed (401): the workspace did not accept your sign-in (az login to the workspace's tenant)." ;;
+    403) die "$1 failed (403): $(api_error). You need MANAGE on it, ownership of it or of its catalog, or metastore admin (workspace admins own the workspace catalog, F124)." ;;
+    404) die "$1 failed (404): $(api_error). Check the catalog and schema names in Catalog Explorer." ;;
+    *) die "$1 failed ($(http_status)): $(api_error)" ;;
+  esac
+}
+
+uc_current() {  # HOST TYPE FULL_NAME PRINCIPAL → that principal's direct privileges on it, comma-separated
+  call GET "https://$1/api/2.1/unity-catalog/permissions/$2/$(urlenc "$3")?principal=$(urlenc "$4")" || uc_fail "reading the grants on $2 $3"
+  jq -r --arg p "$4" '[.privilege_assignments[]? | select(.principal == $p) | .privileges[]?] | unique | join(",")' "$WORK/body"
+}
+
+missing_privs() {  # WANTED HAVE → the wanted privileges not in HAVE, comma-separated
+  local w p out=()
+  IFS=, read -ra w <<<"$1"
+  for p in "${w[@]}"; do [[ ",$2," == *",$p,"* ]] || out+=("$p"); done
+  local IFS=,; printf '%s' "${out[*]-}"
+}
+
+grants_cmd() {
+  local host g level line name row type full wanted have miss fails=0 rows=()
+  [[ -n "$WORKSPACE" && -n "$CATALOG" && -n "$SCHEMA" && ${#GROUP_ARGS[@]} -gt 0 ]] \
+    || die "grants needs --workspace <name>, --catalog, --schema and at least one --group <name|object id>[=READ|=WRITE]"
+  [[ "$WORKSPACE" =~ ^[0-9]+$ ]] && die "grants needs the workspace name, not its id"
+  for g in "${GROUP_ARGS[@]}"; do
+    level=READ
+    case "${g^^}" in
+      *=READ) g=${g%=*} ;;
+      *=WRITE) level=WRITE; g=${g%=*} ;;
+      *=*) die "group \"$g\": the access level is READ or WRITE only (never ALL_PRIVILEGES, MANAGE or ownership)" ;;
+    esac
+    rows+=("$g"$'\t'"$level")
+  done
+  dbx_login
+  host=$(workspace_url "$WORKSPACE")
+  [[ -n "$host" ]] || die "workspace \"$WORKSPACE\" has no URL yet"
+  local resolved=()
+  for row in "${rows[@]}"; do line=$(entra_group "${row%%$'\t'*}"); resolved+=("${line#*$'\t'}"$'\t'"${row#*$'\t'}"); done
+
+  say "Workspace $WORKSPACE ($host): Unity Catalog grants on catalog $CATALOG and schema $CATALOG.$SCHEMA"
+  [[ -n "$APPROVED_BY" ]] && say "Approval recorded: $APPROVED_BY"
+  for row in "${resolved[@]}"; do
+    name=${row%%$'\t'*}; level=${row#*$'\t'}
+    for type in catalog schema; do
+      full=$CATALOG; [[ $type == schema ]] && full="$CATALOG.$SCHEMA"
+      wanted=$(uc_privileges "$level" "$type")
+      have=$(uc_current "$host" "$type" "$full" "$name")
+      miss=$(missing_privs "$wanted" "$have")
+      if [[ -z "$miss" ]]; then say "  $name: $type $full already has $wanted (kept)"; continue; fi
+      if [[ -z "$APPROVED_BY" ]]; then say "  $name ($level): $type $full will get $miss${have:+ (now $have)}"; continue; fi
+      jq -nc --arg p "$name" --arg a "$miss" '{changes: [{principal: $p, add: ($a | split(","))}]}' \
+        | call PATCH "https://$host/api/2.1/unity-catalog/permissions/$type/$(urlenc "$full")" body \
+        || uc_fail "granting $miss on $type $full to $name"
+      have=$(uc_current "$host" "$type" "$full" "$name")
+      if [[ -z "$(missing_privs "$wanted" "$have")" ]]; then say "  PASS $name: $type $full has $have (added $miss)"
+      else say "  FAIL $name: $type $full has ${have:-nothing}, expected $wanted"; fails=$((fails + 1)); fi
+    done
+  done
+  if [[ -z "$APPROVED_BY" ]]; then
+    say "Plan only: nothing changed. After the approval, run the same command with --approved-by \"<name> <date>\"."
+    return
+  fi
+  (( fails == 0 )) || die "$fails grant(s) not confirmed by the read-back"
+  say "Done. Members get the access at their next query; the group membership itself comes from Entra (automatic identity management)."
+}
+
 # ---- offline self-test (mocked Azure CLI and Databricks) --------------------------------------------------------------------
 
 mock_az() {
@@ -201,6 +295,7 @@ mock_az() {
     "resource list"*"?name=='ws-sample'"*) printf '/subscriptions/s1/resourceGroups/rg-sample/providers/Microsoft.Databricks/workspaces/ws-sample\n' ;;
     "resource list"*"?name=="*) ;;
     "resource list"*) printf 'ws-sample\trg-sample\tpremium\n' ;;
+    "resource show"*workspaceUrl*) printf 'adb-1234567890123456.7.azuredatabricks.net\n' ;;
     "resource show"*) printf '1234567890123456\n' ;;
     "ad group show --group SAMPLE-GRP-DBX-USERS"*) printf '{"id":"aaaaaaaa-0000-4000-8000-000000000001","name":"SAMPLE-GRP-DBX-USERS"}\n' ;;
     "ad group show --group SAMPLE-GRP-DBX-ADMINS"*) printf '{"id":"aaaaaaaa-0000-4000-8000-000000000002","name":"SAMPLE-GRP-DBX-ADMINS"}\n' ;;
@@ -214,7 +309,7 @@ mock_az() {
 mock_call() {
   local method="$1" url="$2" with_body="${3:-}" m="$AIM_SETUP_MOCK" in="" code=200 out='{}' path
   [[ "$with_body" == body ]] && in=$(cat)
-  path="${url#"$ACCOUNTS"}"
+  path="${url#"$ACCOUNTS"}"; path="${path#https://adb-1234567890123456.7.azuredatabricks.net}"
   printf 'dbx %s %s %s\n' "$method" "$path" "$in" >> "$m/calls.log"
   case "$method $path" in
     "GET /api/2.1/accounts/"*"/scim/v2/Users?count=1") out='{"totalResults":5}' ;;
@@ -228,6 +323,24 @@ mock_call() {
       local pid=${path##*/} name; name=$([[ $pid == 9001 ]] && echo SAMPLE-GRP-DBX-USERS || echo SAMPLE-GRP-DBX-ADMINS)
       { grep -v "^$pid	" "$m/assigned" 2>/dev/null || true; printf '%s\t%s\t%s\n' "$pid" "$name" "$(jq -r '.permissions | join(",")' <<<"$in")"; } > "$m/assigned.new"
       mv "$m/assigned.new" "$m/assigned" ;;
+    "GET /api/2.1/unity-catalog/permissions/"*|"PATCH /api/2.1/unity-catalog/permissions/"*)
+      local rest=${path#/api/2.1/unity-catalog/permissions/} type name principal=""
+      type=${rest%%/*}; rest=${rest#*/}; name=${rest%%\?*}
+      [[ "$rest" == *"?principal="* ]] && principal=${rest#*principal=}
+      if [[ -f "$m/uc_forbidden" ]]; then code=403; out='{"error_code":"PERMISSION_DENIED","message":"mock: User does not have MANAGE on Catalog"}'
+      elif [[ "$name" == nope* ]]; then code=404; out='{"error_code":"CATALOG_DOES_NOT_EXIST","message":"mock: Catalog does not exist"}'
+      elif [[ "$method" == GET ]]; then
+        out=$(awk -F'\t' -v t="$type" -v n="$name" -v p="$principal" '$1 == t && $2 == n && (p == "" || $3 == p) {print $3 "\t" $4}' "$m/uc" 2>/dev/null \
+          | jq -Rn '{privilege_assignments: [inputs | select(length > 0) | split("\t") | {principal: .[0], privileges: (.[1] | split(","))}]}')
+      else
+        principal=$(jq -r '.changes[0].principal' <<<"$in")
+        local have add
+        have=$(awk -F'\t' -v t="$type" -v n="$name" -v p="$principal" '$1 == t && $2 == n && $3 == p {print $4}' "$m/uc" 2>/dev/null)
+        add=$(jq -r --arg h "$have" '[($h | split(",") | map(select(length > 0)))[], .changes[0].add[]] | unique | join(",")' <<<"$in")
+        { awk -F'\t' -v t="$type" -v n="$name" -v p="$principal" '!($1 == t && $2 == n && $3 == p)' "$m/uc" 2>/dev/null || true
+          printf '%s\t%s\t%s\t%s\n' "$type" "$name" "$principal" "$add"; } > "$m/uc.new"
+        mv "$m/uc.new" "$m/uc"
+      fi ;;
     *) code=404; out='{"message":"mock: no route"}' ;;
   esac
   printf '%s' "$out" > "$WORK/body"; printf '%s' "$code" > "$WORK/status"
@@ -268,6 +381,25 @@ self_test() {
   out=$(run status --account-id "$acc" --workspace ws-sample)
   check "status lists both groups" '[[ "$out" == *"SAMPLE-GRP-DBX-USERS"*"USER"* && "$out" == *"SAMPLE-GRP-DBX-ADMINS"*"ADMIN"* ]]'
   check "unknown Entra group refused" '! run plan --account-id "$acc" --workspace ws-sample --group NOPE >/dev/null'
+  local U=(--workspace ws-sample --catalog sample_cat --schema sales)
+  patches() { grep -c '^dbx PATCH ' "$m/calls.log" || true; }
+  : > "$m/calls.log"
+  check "grants without --schema refused" '! run grants --workspace ws-sample --catalog sample_cat --group SAMPLE-GRP-DBX-USERS >/dev/null'
+  check "grants with any level but READ/WRITE refused, nothing sent" '! run grants "${U[@]}" --group SAMPLE-GRP-DBX-USERS=MANAGE >/dev/null && [[ "$(patches)" == 0 ]]'
+  out=$(run grants "${U[@]}" --group SAMPLE-GRP-DBX-USERS)
+  check "grants plan: reads only, lists USE_CATALOG and USE_SCHEMA,SELECT" '[[ "$(patches)" == 0 && "$out" == *"catalog sample_cat will get USE_CATALOG"* && "$out" == *"schema sample_cat.sales will get USE_SCHEMA,SELECT"* && "$out" == *"Plan only"* ]]'
+  out=$(run grants "${U[@]}" --group SAMPLE-GRP-DBX-USERS --approved-by "SAMPLE 2026-10-31")
+  check "grants READ: two adds (catalog, schema), read back PASS" '[[ "$(patches)" == 2 && $(grep -c "  PASS SAMPLE-GRP-DBX-USERS" <<<"$out") == 2 ]] && grep -q "PATCH /api/2.1/unity-catalog/permissions/schema/sample_cat.sales {\"changes\":\[{\"principal\":\"SAMPLE-GRP-DBX-USERS\",\"add\":\[\"USE_SCHEMA\",\"SELECT\"\]}\]}" "$m/calls.log"'
+  : > "$m/calls.log"
+  out=$(run grants "${U[@]}" --group SAMPLE-GRP-DBX-USERS --approved-by "SAMPLE 2026-10-31")
+  check "second grants run: nothing added" '[[ "$(patches)" == 0 && $(grep -c "already has" <<<"$out") == 2 ]]'
+  out=$(run grants "${U[@]}" --group SAMPLE-GRP-DBX-USERS=WRITE --approved-by "SAMPLE 2026-10-31")
+  check "READ to WRITE adds only MODIFY,CREATE_TABLE on the schema" '[[ "$(patches)" == 1 ]] && grep -q "\"add\":\[\"MODIFY\",\"CREATE_TABLE\"\]" "$m/calls.log"'
+  check "grants never send a remove" '! grep -q "\"remove\"" "$m/calls.log"'
+  touch "$m/uc_forbidden"
+  out=$(run grants "${U[@]}" --group SAMPLE-GRP-DBX-ADMINS --approved-by "SAMPLE 2026-10-31" || true)
+  check "grants without the right: stops and names MANAGE / ownership" '[[ "$out" == *"403"* && "$out" == *"MANAGE"* && "$out" == *"ownership"* ]]'
+  rm "$m/uc_forbidden"
   check "the Databricks token never appears in any output" '[[ "$all" != *"$token"* ]]'
   if (( fails == 0 )); then say "self-test passed"; else say "self-test: $fails failed"; exit 1; fi
 }
@@ -283,12 +415,15 @@ while [[ $# -gt 0 ]]; do
     --admin) PERMISSION=ADMIN; shift ;;
     --subscription) SUB_ARGS=(--subscription "${2:?subscription id}"); shift 2 ;;
     --approved-by) APPROVED_BY="${2:?name and date}"; shift 2 ;;
+    --catalog) CATALOG="${2:?catalog name}"; shift 2 ;;
+    --schema) SCHEMA="${2:?schema name}"; shift 2 ;;
     *) die "unknown argument $1 (see the header of this script)" ;;
   esac
 done
 case "$CMD" in
   plan|apply) plan_or_apply "$CMD" ;;
   status) status_cmd ;;
+  grants) grants_cmd ;;
   self-test) self_test ;;
-  *) die "usage: $(basename "$0") plan|apply|status|self-test [options] (see the header of this script)" ;;
+  *) die "usage: $(basename "$0") plan|apply|status|grants|self-test [options] (see the header of this script)" ;;
 esac

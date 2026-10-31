@@ -67,6 +67,19 @@ bash $A status --account-id "$ACC" --workspace <workspace name>
   - Running it again changes only what is missing, and never lowers ADMIN to USER.
 - `plan` does not call the external group API, because reading a group adds it to the account.
 
+### Data access: Unity Catalog grants
+
+Workspace access is not data access. As a workspace admin (owner of the workspace catalog) or with `MANAGE` on the catalog or schema (F124):
+
+```bash
+bash $A grants --workspace <workspace name> --catalog <catalog> --schema <schema> --group "<reader group>" --group "<writer group>=WRITE"
+bash $A grants --workspace <workspace name> --catalog <catalog> --schema <schema> --group "<reader group>" --group "<writer group>=WRITE" --approved-by "<name> <date>"
+```
+
+- Levels (F123): **READ** = `USE_CATALOG` on the catalog + `USE_SCHEMA`, `SELECT` on the schema, which covers all current and future tables in it. **WRITE** adds `MODIFY`, `CREATE_TABLE` on the schema.
+- Without `--approved-by` it only reads the current grants and prints what it would add. With it, it adds only what is missing through the Unity Catalog permissions API, then reads it back (`PASS` / `FAIL`). No SQL warehouse runs, so no DBUs (F125).
+- It never removes a privilege and never grants `ALL_PRIVILEGES`, `MANAGE` or ownership. No `--account-id` needed.
+
 ## Check it works
 
 - Account console → **User management** → **Groups**: the group shows as external.

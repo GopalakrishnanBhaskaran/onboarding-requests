@@ -80,7 +80,7 @@
 #       pay per DBU only while serverless compute runs, F114-F119). New resource: dry run (plan + what-if) without
 #       --approved-by. Approved: register the Microsoft.Databricks provider if needed, policy stage A (allow
 #       Microsoft.Databricks/workspaces), wait for it, create the workspace. Then add the Entra groups to it with
-#       tools/databricks_setup.py (dry run, then approval; automatic identity management keeps membership in sync).
+#       tools/databricks/aim_setup.sh (plan, then apply with approval; then grants for Unity Catalog data access).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
@@ -667,7 +667,7 @@ PY
   echo "  Policy (stage A): allow Microsoft.Databricks/workspaces in $RG_DEFAULT"
   echo "  Create: Azure Databricks workspace dbw-pmo-<suffix> ($location, Premium, computeMode Serverless, public network access)"
   echo "  Not created: managed resource group, VNet, NAT gateway, public IP, storage account, access connector (serverless, F114)"
-  echo "  Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group>... (dry run, then --approved-by)"
+  echo "  Then: tools/databricks/aim_setup.sh plan/apply (groups on the workspace) and grants (Unity Catalog data access), each dry run, then --approved-by"
   local worker before=""
   worker=$(worker_name)
   if [[ -n "$worker" ]]; then
@@ -727,7 +727,8 @@ PY
   python3 -c "import json,sys;o=json.load(sys.stdin);print('Databricks workspace on (approved by '+sys.argv[1]+'):',o['workspaceName']['value'],'https://'+o['workspaceUrl']['value'],'(workspace id',str(o['workspaceId']['value'])+')')" "$APPROVED_BY" <<<"$out"
   echo "Next: open the workspace URL once as the deploying admin (becomes workspace admin), then sign in to"
   echo "https://accounts.azuredatabricks.net as an Entra Global Administrator (first account admin) and copy the account id."
-  echo "Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group> (dry run) → … --approved-by \"<name> <date>\""
+  echo "Then: bash tools/databricks/aim_setup.sh plan --account-id <id> --workspace <name> --group <Entra group> → apply … --approved-by \"<name> <date>\";"
+  echo "      data access: bash tools/databricks/aim_setup.sh grants --workspace <name> --catalog <c> --schema <s> --group <g>[=WRITE] → … --approved-by"
 }
 
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;

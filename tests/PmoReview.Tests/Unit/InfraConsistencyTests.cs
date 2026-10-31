@@ -314,14 +314,20 @@ public partial class InfraConsistencyTests
         Assert.Contains("\"enableDatabricks\": v(sys.argv[5] == \"true\")", deploy); // params keeps the live policy type allowed
         Assert.Contains("DATABRICKS='^Microsoft\\.Databricks/workspaces$'", Read("tools", "cost_check.sh"));
 
-        // Group tools: read-only without --approved-by; one kind of write each; never delete, patch or give Fabric Admin.
-        var dbx = Read("tools", "databricks_setup.py");
-        Assert.Single(Regex.Matches(dbx, @"http\(""PUT"""));
-        Assert.Contains("if not a.approved_by:", dbx);
+        // Databricks groups and Unity Catalog grants: aim_setup.sh (one PUT for workspace assignments, one PATCH that only
+        // adds READ / WRITE privileges; never a remove, ALL_PRIVILEGES or MANAGE). Fabric: read-only without --approved-by.
+        var aim = Read("tools", "databricks", "aim_setup.sh");
+        Assert.Single(Regex.Matches(aim, @"\| call PUT "));
+        Assert.Single(Regex.Matches(aim, @"\| call PATCH "));
+        Assert.Contains("'{changes: [{principal: $p, add: ($a | split(\",\"))}]}'", aim);
+        Assert.Contains("    READ:schema) printf 'USE_SCHEMA,SELECT' ;;", aim);
+        Assert.Contains("    WRITE:schema) printf 'USE_SCHEMA,SELECT,MODIFY,CREATE_TABLE' ;;", aim);
+        Assert.DoesNotContain("remove:", aim);
+        Assert.False(File.Exists(Path.Combine(Repo(), "tools", "databricks_setup.py")), "one Databricks group tool: aim_setup.sh");
         var fabric = Read("tools", "fabric_groups.py");
         Assert.Single(Regex.Matches(fabric, @"http\(""POST"""));
         Assert.Contains("ROLES = (\"Viewer\", \"Contributor\", \"Member\")", fabric);
-        foreach (var py in new[] { dbx, fabric, Read("tools", "entra_rest.py") })
+        foreach (var py in new[] { fabric, Read("tools", "entra_rest.py") })
             foreach (var verb in new[] { "\"DELETE\"", "\"PATCH\"" })
                 Assert.DoesNotContain(verb, py);
     }
