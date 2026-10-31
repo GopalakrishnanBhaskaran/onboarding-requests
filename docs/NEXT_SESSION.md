@@ -1,10 +1,10 @@
-# Next session — handoff (updated 30 Oct 2026, evening: v1.1 live, agent offboarding switched on)
+# Next session — handoff (updated 31 Oct 2026: API on .NET 10 and account deletion switch, both code only; v1.1 live, agent offboarding switched on)
 
 **Start the next session with:**
 > Continue the PMO Access Portal v1.1 rollout on branch `claude/elegant-darwin-nfot4p`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
 
 Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
-Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
+Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
 
 ## Live state (evidence in `DEPLOYMENT_LOG.md`, 30 Oct 2026)
 - **v1.1 option 1 applied** (~16:40 UTC, `apply` of `9105ddd`, approved by Gokul): 8 new Cosmos containers, worker data roles, app + worker deployed, cost unchanged (budget ₹2,000, spent ₹12.57).
@@ -18,6 +18,10 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v
   - Leftover "still in" that same group: most likely Entra's index lag (F104). Fixed in `7922922`.
   - No Azure leftover: the worker could list the subscription's role assignments; the account had no direct Azure role.
   - The test account is still enabled until tomorrow's re-run, unless Gokul disabled it by hand.
+- **New on 31 Oct (code only, not deployed):**
+  - **SWA API on .NET 10** (`2ccb5f1`, F21): SWA CLI 2.1.0 accepts `dotnet-isolated:10.0` and Learn lists it; .NET 9 support ends **10 Nov**. Needs `app`. Live proof = the deploy ends "Deployed commit …" and the site answers. Rollback: check out `a88e69a`, `app` (.NET 9).
+  - **Account deletion switch** (`163a9ed`, decision F5b; Gokul asked "make it on"): `offboarding $SUB on --delete-user` adds Graph `User.ReadWrite.All` (F75, the only option, tenant-wide) and `OFFBOARD_DELETE_USER=true` — soft delete after disabling, restorable 30 days. Dry run → "approved" → `--approved-by`. `delete-off` switches it off. Fix with it: a refused or skipped planned delete is a leftover (was Completed + PMO mail, REVIEW 25).
+  - `verify_features` line 17 now also checks deletion; line 16 no longer counts it as unapproved.
 - **Code not yet deployed** (unless Gokul ran `worker` + `app` after `7922922`; `verify_features` line 1 tells):
   - worker: a run that sees no subscription is never Completed; verify looks again before a removal of its own counts as a leftover; a 403 names the token delay;
   - app: the switched-off message is information, not an error; the website follows the worker's `AGENT_OFFBOARDING` on every `app` deploy.
@@ -26,12 +30,13 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v
 - **People:** each project has the Gmail tester (Requester, Owner, IdTeam, RoleTeam, PMO, Operator) and the pilot admin (Security). DataMaintainer and ProdApprover not registered yet (output not seen). No people inventory uploaded yet.
 
 ## Next steps (in order)
-1. **Fresh Cloud Shell** (`docs/V1_1_DEPLOY.md`): clone the branch, then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval). Check the offboarding settings (read-only):
+1. **Fresh Cloud Shell** (`docs/V1_1_DEPLOY.md`): clone the branch, then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval). The `app` deploy now ships the **.NET 10 API**: it must end "Deployed commit …"; then sign in and open a request. If it fails with "Function language info isn't provided", roll back (`git checkout a88e69a && tools/deploy_free.sh app $SUB`) and log it under F21. Check the offboarding settings (read-only):
    `az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?name=='AGENT_OFFBOARDING' || name=='OFFBOARD_SUBSCRIPTIONS' || name=='OFFBOARD_DELETE_USER']" -o table`
    Then `bash tools/verify_features.sh $SUB`. Expected: lines 1, 16, 17 PASS; 5b and 15 WAIT. Log it as live check U.
 2. **Graph permissions held** (read-only): `tools/deploy_free.sh grant-graph $SUB` prints them. `User.RevokeSessions.All` and `User.EnableDisableAccount.All` must be listed. If they are missing, the switch-on did not run: dry run again, wait for "approved", then `--approved-by`.
 3. **Entra check:** the test account should no longer be in `azr-pes-rg-data-dev-ph-weu-dataengineers`. That confirms F104 (index lag).
-4. **Re-test offboarding at least 24 h after the grant** (from about 31 Oct evening).
+3b. **Account deletion (decision F5b):** `tools/deploy_free.sh offboarding $SUB on --delete-user` (dry run, after step 1's `worker`): expect `User.ReadWrite.All` NEW, the 7 others held, `OFFBOARD_DELETE_USER=true`, cost 0. Gokul replies "approved" → same command `--approved-by "Gokul <date>"` (Global Administrator or Privileged Role Administrator). `verify_features` line 17: PASS with "delete accounts on". The new permission can take up to 24 h (F61): until then a delete is refused and the run ends Partially completed (account disabled, not deleted).
+4. **Re-test offboarding at least 24 h after the grant** (from about 31 Oct evening; for the delete, 24 h after step 3b). With deletion on, the pilot test account is soft-deleted (restore: Entra admin center → Users → Deleted users).
    - Same request page → *Offboard user* → tick → *Confirm*.
    - Expected: revoke and disable Done, status **Completed**, one mail to the PMO (redirected to the test mailbox).
    - If a removal shows late, the run stays *Executing* for up to ~10 minutes, then completes.
@@ -40,12 +45,8 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v
    - ProdApprover: a third account, to be created in Entra, signed in once, then registered.
    - Then the people inventory upload on the Data uploads page (validate → diff → apply).
 6. **Quality before more changes.**
-   - Independent re-check (REVIEW.md *Re-check 5*) of the code changed after `35e7a62`:
-     - `OffboardingJob` (no-subscription leftover, verify re-check, 403 detail);
-     - `deploy_free.sh offboarding`;
-     - `verify_features` 5b / 16 / 17;
-     - `OffboardingPanel`.
-   - Re-run Playwright (`tools/run_local.sh`, then `npm --prefix src/web run e2e`). The last run was on `35e7a62`, and the offboarding panel changed since.
+   - Re-check 5 is done (REVIEW.md), but **not independent** (same session as the code). A separate reviewer should re-read findings 25–27 and the `--delete-user` switch.
+   - Playwright 11/11 on `163a9ed` (31 Oct). Open from it: Low 27 (a Leaver step skipped by a half-way switch-off is not a leftover).
 
 ## Open decisions (Gokul; any Azure or permission change: dry run or what-if, then "approved")
 - **Option 2, agent TAP mail:** `tools/deploy_free.sh tap $SUB on --sender <shared mailbox>` plus the Exchange RBAC for Applications scope (F81). Until then the ID team issues passes.
@@ -54,7 +55,8 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v
   - a condition on RBAC Administrator, proven live first (Learn documents no way to switch off its create right).
 - **Go-live** (line 15): real addresses on the Contact inventory page, then `tools/deploy_free.sh environment $SUB prod` (`docs/GO_LIVE.md`).
 - **External upload API:** stays off; it needs hosting option B or C (`docs/HOSTING.md`).
-- **REVIEW.md open:** Medium 7, 8, 9 (partly), 11, 12; Low 5 (partly), 15, 18, 19.
+- **Account deletion:** coded (step 3b); on only after its dry run and "approved".
+- **REVIEW.md open:** Medium 7, 8, 9 (partly), 11, 12; Low 5 (partly), 15, 18, 19, 27.
 - **Older items:**
   - a custom ACS mail domain if more than about one request an hour is expected (F70);
   - remove the unused `AuditLog.Read.All`;
@@ -62,14 +64,15 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (`d4070bf` or later). No PR. v
   - Phase 2 SAMPLE leftovers in the tenant;
   - ADO, ARM role read and Azure OpenAI stay off;
   - a production import with real scopes, tenant ids and contacts.
-- **Dates:** the SWA API moves from .NET 9 to 10 before **10 Nov** (F21); P2 trial ends ~15 Nov (F48).
+- **Dates:** deploy the .NET 10 API (`app`, step 1) before **10 Nov** (.NET 9 end of support, F21); P2 trial ends ~15 Nov (F48).
 
-## Tests at hand-off (`d4070bf`)
-- .NET 499/500 (1 opt-in Cosmos emulator skip), incl. 24 F5 offboarding tests and 16 infrastructure tests.
-- SPA 24/24.
+## Tests at hand-off (31 Oct, on `163a9ed` + panel caption)
+- .NET 501 (500 pass, 1 opt-in Cosmos emulator skip); all projects net10.0; `dotnet build PmoReview.slnx` with no warnings.
+- SPA 24/24; web build OK.
 - Python tool self-tests pass (verify_features, import, register, seed).
-- Mutation checks: every fix of 30 Oct evening was caught.
-- Playwright 11/11 last on `35e7a62` (not re-run since).
+- Mutation checks: SWA CLI pin 2.0.10 fails the runtime test; the refused-delete test failed before its fix.
+- Playwright 11/11 (SWA CLI 2.1.0 emulator with the .NET 10 config).
+- Local: the container used Ubuntu's `dotnet-sdk-10.0` (10.0.114); Cloud Shell installs .NET 10 itself (`ensure_dotnet10`).
 
 ## Reference: re-import (only after workbook changes; files are not in git)
 Upload both workbooks (Cloud Shell → *Manage files* → *Upload*), then run `mv ~/*.xlsx ~/onboarding-requests/.local/`. The response file name has spaces.

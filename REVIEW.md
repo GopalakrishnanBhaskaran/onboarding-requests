@@ -233,3 +233,33 @@ What was checked:
 | Low | 4 | 5 (near-duplicate remainder), 15, 18, 19 |
 
 Deployment gate (spec P6): **met**. Critical = 0 and High = 0. The 5 Medium and 4 Low findings still open include no Prod write path and no cross-project authorization breach.
+
+## Re-check 5 (commit 163a9ed + panel caption, 2026-10-31)
+Scope: the code changed after `35e7a62` (handoff step 6): `OffboardingJob` (no-subscription leftover, verify looks again, 403 detail), `deploy_free.sh offboarding`, `verify_features` 5b / 16 / 17, `OffboardingPanel`; plus this session's changes (`2ccb5f1` API on .NET 10, `163a9ed` account deletion switch).
+**Not independent:** done in the same session that wrote `2ccb5f1` and `163a9ed`. A separate reviewer should re-read findings 25–27 and the delete switch.
+
+What was checked:
+- **Verify looks again (F104):** the run stays `Executing`, so the next worker run re-enters `ExecuteAsync`. `PlanHash` uses only name, target and action (`OffboardingService.cs:210`), so finished steps do not fail the hash check; no step is `Planned`, so nothing is written again. At most 2 extra looks (`MaxAttempts - 1`, about 10 minutes); only removals this run did count as lag (`DoneHere`).
+- **No-subscription sentinel:** `""` cannot collide with a configured subscription: `PilotApp.cs:112` keeps only GUIDs from `OFFBOARD_SUBSCRIPTIONS`.
+- **403 detail:** reachable: `DirectoryWriteException` derives from `DirectoryReadException`, and the transient filter excludes `Forbidden` (`OffboardingJob.cs:247`).
+- **Panel:** `switchedOff` matches the API's `offboarding_off` (`OffboardingService.cs:94`); Playwright test 11 covers the button.
+- **`verify_features` 5b:** WAIT without a sender mailbox, or with `Mail.Send` in Entra; self-test covers both.
+- **`deploy_free.sh offboarding`:** every grant comes after the dry-run return (test checks the order); `off` and `delete-off` need no approval.
+
+| # | severity | status | evidence (file:line) | note |
+|---|---|---|---|---|
+| 25 | Medium | Closed (`163a9ed`) | `OffboardingJob.cs` VerifyAsync leftover filter; test `F5_A_refused_delete_is_a_leftover_so_no_completion_mail` | A planned delete that was refused or left to people was not a leftover: no read in verify shows it, so the run ended **Completed** and mailed the PMO while the account still existed (test failed first with `Completed`/`True`). Latent while deletion was off; real once `--delete-user` is on. |
+| 26 | Low | Closed | `OffboardingPanel.tsx:62` | The caption said the run "disables the account" only; it now names the delete when deletion is switched on. |
+| 27 | Low | Open | `OffboardingJob.cs` VerifyAsync leftover filter | A **Leaver** step skipped because `AGENT_OFFBOARDING` was switched off half-way is not a leftover (only failed, or Revoke left to people), so such a run can be Completed with the people inventory not marked Leaver. Proposed fix: count Revoke / Leaver steps whose detail says "AGENT_OFFBOARDING was switched off" too, with a test. |
+
+Tests on this re-check: .NET 501 (500 pass, 1 opt-in skip), SPA 24/24, web build, Python tool self-tests, **Playwright 11/11** (SWA CLI 2.1.0 emulator, `staticwebapp.config.json` with `dotnet-isolated:10.0` loaded: the sign-in redirect test passes only when the config is applied).
+
+### Summary of OPEN findings after re-check 5
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 5 | 7, 8, 9 (partly), 11, 12 |
+| Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 27 |
+
+Deployment gate (spec P6): **still met** (Critical = 0, High = 0).

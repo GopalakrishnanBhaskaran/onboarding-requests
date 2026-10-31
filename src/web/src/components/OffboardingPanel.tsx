@@ -60,7 +60,8 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
       </div>
       <Caption1>
         Removes this person&apos;s access in Entra and Azure: sessions, Temporary Access Pass, group memberships, Azure role assignments, then disables the
-        account. You see the full plan first; nothing changes until it is confirmed.
+        account (and deletes it, restorable for 30 days, when account deletion is switched on). You see the full plan first; nothing changes until it is
+        confirmed.
       </Caption1>
       {switchedOff(error) ? (
         <MessageBar intent="info" layout="multiline">
