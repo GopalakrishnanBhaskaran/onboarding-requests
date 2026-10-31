@@ -535,12 +535,26 @@ PY
   echo "  Not created: managed resource group, VNet, NAT gateway, public IP, storage account, access connector (serverless, F71)"
   echo "  Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group>... (dry run, then --approved-by)"
   if [[ -z "${APPROVED_BY:-}" ]]; then
-    echo "== what-if (policy change) =="
+    # Only real changes: unchanged resources (NoChange) and the mail resources deployed outside main.bicep (Ignore) are left out.
+    echo "== what-if (policy change; expect 1 to modify: pmo-pilot-allowed-types) =="
     az deployment sub what-if --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" \
-      --parameters "@$ROOT/.local/params-databricks.json" --result-format ResourceIdOnly | tee "$ROOT/.local/whatif-databricks.txt" || true
-    echo "== what-if (workspace) =="
-    az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
-      --parameters "location=$location" "tags=$tags" --result-format FullResourcePayloads | tee -a "$ROOT/.local/whatif-databricks.txt" || true
+      --parameters "@$ROOT/.local/params-databricks.json" --result-format FullResourcePayloads --exclude-change-types NoChange Ignore \
+      | tee "$ROOT/.local/whatif-databricks.txt" || true
+    echo "== workspace =="
+    if policy_allows_databricks; then
+      az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
+        --parameters "location=$location" "tags=$tags" --result-format FullResourcePayloads --exclude-change-types Ignore \
+        | tee -a "$ROOT/.local/whatif-databricks.txt" || true
+    else
+      # Azure checks a new resource against the CURRENT policy: before stage A its what-if can only say RequestDisallowedByPolicy.
+      echo "What-if not possible yet: the live policy does not allow Microsoft.Databricks/workspaces (that is stage A)."
+      echo "The approved run re-checks it after the policy change and creates only if it is exactly this one workspace:"
+      az bicep build --file "$ROOT/infra/modules/databricks.bicep" --stdout 2>/dev/null | python3 -c "
+import json, sys
+r = json.load(sys.stdin)['resources']; r = r if isinstance(r, list) else list(r.values())
+for x in r: print('  +', x['type'], x['apiVersion'], json.dumps({'sku': x.get('sku'), 'properties': x.get('properties')}))
+print('  resources in the template:', len(r))" | tee -a "$ROOT/.local/whatif-databricks.txt" || echo "  (az bicep build not available: see infra/modules/databricks.bicep)"
+    fi
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
   fi
@@ -555,6 +569,17 @@ PY
     sleep 120 # the assignment reads as updated before the deny evaluation follows
   fi
   cp "$ROOT/.local/params-databricks.json" "$ROOT/.local/params.json" # later deployments keep the type allowed
+  # The workspace what-if now runs against the updated policy: create only if it changes exactly the one workspace.
+  az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
+    --parameters "location=$location" "tags=$tags" --no-pretty-print -o json > "$ROOT/.local/whatif-databricks-workspace.json" \
+    || { echo "STOP: workspace what-if failed (policy not effective yet?). Re-run the same command in a few minutes."; return 1; }
+  python3 - "$ROOT/.local/whatif-databricks-workspace.json" <<'PY' || { echo "STOP: nothing created. Send .local/whatif-databricks-workspace.json for review."; return 1; }
+import json, sys
+changes = [c for c in json.load(open(sys.argv[1])).get("changes") or [] if c.get("changeType") not in ("Ignore", "NoChange")]
+for c in changes: print(f"  what-if: {c['changeType']} {c['resourceId']}")
+ok = len(changes) <= 1 and all(c["changeType"] in ("Create", "Modify") and "/providers/Microsoft.Databricks/workspaces/" in c["resourceId"] for c in changes)
+sys.exit(0 if ok else 1)
+PY
   out=$(az deployment group create -g "$RG_DEFAULT" -n pmo-review-databricks --template-file "$ROOT/infra/modules/databricks.bicep" \
     --parameters "location=$location" "tags=$tags" --query properties.outputs -o json)
   echo "$out" > "$ROOT/.local/databricks.json"
