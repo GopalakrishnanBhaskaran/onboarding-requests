@@ -402,3 +402,50 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
   await expect(panel.getByRole('button', { name: 'Offboard user' })).toHaveCount(0); // a second click cannot start another run
   await paul.ctx.close();
 });
+
+test('tracker and inbox: "/" search opens a request, the Owner lane filters, the journey and the check digest show where it stands', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const id = await submit(alice.page, {
+    enterpriseId: enterpriseId('trk'),
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
+    accessLevel: 'User',
+    owner: 'sample-user-olivia@sample.invalid',
+    justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
+  });
+  await expectStage(alice.page, 'Awaiting Owner');
+  // The journey names the step it waits in; the check digest lists only what did not pass, the full table one click away.
+  await expect(alice.page.getByRole('list', { name: /Step 3 of 7, Owner: in progress/ })).toBeVisible();
+  await expect(alice.page.getByRole('heading', { name: /^Checks · \d+ of \d+ passed$/ })).toBeVisible();
+  await expect(alice.page.getByRole('table', { name: 'Review checks' })).toHaveCount(0);
+  await alice.page.getByRole('button', { name: /^Show all \d+ checks$/ }).click();
+  await expect(alice.page.getByRole('table', { name: 'Review checks' })).toBeVisible();
+
+  // "/" jumps to the search; one match and Enter opens it.
+  await alice.page.goto('/#/requests');
+  await expect(alice.page.getByRole('table', { name: 'Request status' })).toBeVisible();
+  await alice.page.keyboard.press('/');
+  await expect(alice.page.getByRole('searchbox', { name: 'Search requests' })).toBeFocused();
+  await alice.page.keyboard.type(id.slice(0, 8));
+  await expect(alice.page.getByRole('table', { name: 'Request status' }).getByRole('row')).toHaveCount(2); // header + the match
+  await alice.page.keyboard.press('Enter');
+  await expect(alice.page.getByRole('heading', { level: 1, name: `Request ${id.slice(0, 8)}` })).toBeVisible();
+
+  // The Owner lane shows only requests waiting on an Owner.
+  await alice.page.goto('/#/requests');
+  await alice.page.getByRole('group', { name: 'In progress, by step' }).getByRole('button', { name: /Owner$/ }).click();
+  const rows = alice.page.getByRole('table', { name: 'Request status' }).getByRole('row');
+  await expect(rows.filter({ hasText: id.slice(0, 8) })).toHaveCount(1);
+  const stages = await rows.locator('.fui-Badge').allTextContents();
+  expect(stages.length).toBeGreaterThan(0);
+  expect(new Set(stages)).toEqual(new Set(['Awaiting Owner']));
+
+  // The named Owner sees it in the inbox (and a count in the navigation) and opens it to decide.
+  const olivia = await as(browser, 'sample-user-olivia');
+  await olivia.page.goto('/#/queue');
+  await expect(olivia.page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /My actions/ })).toContainText(/\d+/);
+  const card = olivia.page.getByRole('article', { name: `Owner decision ${id.slice(0, 8)}` });
+  await card.getByRole('link', { name: 'Open to decide' }).click();
+  await expect(olivia.page.getByRole('heading', { name: 'Your decision as the named Owner' })).toBeVisible();
+  for (const u of [alice, olivia]) await u.ctx.close();
+});

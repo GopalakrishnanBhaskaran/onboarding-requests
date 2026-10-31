@@ -19,6 +19,13 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - No Azure leftover: the worker could list the subscription's role assignments; the account had no direct Azure role.
   - The test account is still enabled until tomorrow's re-run, unless Gokul disabled it by hand.
 - **New on 31 Oct (code only, not deployed):**
+  - **Website redesign** (SPA only; same API, same flow, same guardrails; ships with the next `app` deploy, no approval):
+    - **Shell:** sidebar navigation with a live *waiting on you* count on My actions; avatar with your roles; slimmer permanent scope strip; compact header on phones.
+    - **Requests tracker:** pipeline tiles per step (click to filter), *In progress / Needs attention / Completed / Closed* chips, search (`/` focuses, Enter opens a single match), a 7-step progress bar per row, *more than 24 h* waits highlighted, and a *waiting on you* callout.
+    - **Request page:** journey stepper with the time per step; two columns (actions on the left, facts, decisions and time bars on the right); the check digest shows failed, flagged and not-checked checks first, with the full table one click away; the decision panel is marked *Waiting on you*.
+    - **New request:** four numbered parts, plus a live *Your request* summary with a readiness checklist; the submit bar stays in view; a justification character count.
+    - **My actions:** cards grouped by action, longest wait first.
+    - Logic is in `src/web/src/lib/tracker.ts` (unit tests in `tracker.test.ts`); new e2e test *tracker and inbox*.
   - **SWA API on .NET 10** (`2ccb5f1`, F21): SWA CLI 2.1.0 accepts `dotnet-isolated:10.0` and Learn lists it; .NET 9 support ends **10 Nov**. Needs `app`. Live proof = the deploy ends "Deployed commit …" and the site answers. Rollback: check out `a88e69a`, `app` (.NET 9).
   - **Account deletion switch** (`163a9ed`, decision F5b; Gokul asked "make it on"): `offboarding $SUB on --delete-user` adds Graph `User.ReadWrite.All` (F75, the only option, tenant-wide) and `OFFBOARD_DELETE_USER=true` — soft delete after disabling, restorable 30 days. Dry run → "approved" → `--approved-by`. `delete-off` switches it off. Fix with it: a refused or skipped planned delete is a leftover (was Completed + PMO mail, REVIEW 25).
   - `verify_features` line 17 now also checks deletion; line 16 no longer counts it as unapproved.
@@ -67,7 +74,7 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - a production import with real scopes, tenant ids and contacts.
 - **Dates:** deploy the .NET 10 API (`app`, step 1) before **10 Nov** (.NET 9 end of support, F21); P2 trial ends ~15 Nov (F48).
 
-## Tests at hand-off (31 Oct, on `163a9ed` + panel caption)
+## Tests at hand-off (31 Oct, on `163a9ed` + panel caption; website redesign: SPA 37/37, Playwright 12/12, InfraConsistency 16/16)
 - .NET 501 (500 pass, 1 opt-in Cosmos emulator skip); all projects net10.0; `dotnet build PmoReview.slnx` with no warnings.
 - SPA 24/24; web build OK.
 - Python tool self-tests pass (verify_features, import, register, seed).

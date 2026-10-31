@@ -1,12 +1,29 @@
 import { useState } from 'react';
 import {
   Badge, Body1, Button, Caption1, Checkbox, Field, Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Textarea,
+  makeStyles, mergeClasses, tokens,
 } from '@fluentui/react-components';
+import { PersonAvailable20Regular, ShieldCheckmark20Regular } from '@fluentui/react-icons';
 import { api, ApiError } from '../lib/api';
 import { APPROVE_LABEL } from '../lib/flow';
 import { dateTime, grantsOf, scopeName } from '../lib/format';
 import type { AccessRequest, Escalation, ProjectSummary, RequestView } from '../lib/types';
 import { ErrorBar, useStyles } from './common';
+
+const useDecision = makeStyles({
+  /** The one card on the page that asks this person to act: a brand accent and a little more room. */
+  panel: { borderTop: `4px solid ${tokens.colorBrandBackground}`, boxShadow: tokens.shadow8, gap: '12px' },
+  head: { display: 'flex', alignItems: 'center', gap: '12px' },
+  icon: {
+    width: '36px', height: '36px', borderRadius: tokens.borderRadiusLarge, display: 'grid', placeItems: 'center', flexShrink: 0,
+    backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1,
+  },
+  eyebrow: {
+    color: tokens.colorBrandForeground1, fontSize: tokens.fontSizeBase100, fontWeight: tokens.fontWeightSemibold,
+    letterSpacing: '0.06em', textTransform: 'uppercase',
+  },
+  actions: { display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', paddingTop: '8px', borderTop: `1px solid ${tokens.colorNeutralStroke2}` },
+});
 
 /**
  * Stage 3, the only place with decision controls. Rendered only when the server says this caller may decide now:
@@ -23,6 +40,7 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
   onStale: () => void;
 }) {
   const s = useStyles();
+  const d = useDecision();
   const [remarks, setRemarks] = useState('');
   const [read, setRead] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,8 +72,14 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
   );
 
   return (
-    <section className={s.section} aria-labelledby="decision-h" style={{ borderWidth: 2 }}>
-      <Subtitle2 as="h2" id="decision-h">{stage === 'owner' ? 'Your decision as the named Owner' : 'Your decision as Security'}</Subtitle2>
+    <section className={mergeClasses(s.section, d.panel)} aria-labelledby="decision-h">
+      <div className={d.head}>
+        <span className={d.icon} aria-hidden="true">{stage === 'owner' ? <PersonAvailable20Regular /> : <ShieldCheckmark20Regular />}</span>
+        <div>
+          <Caption1 block className={d.eyebrow}>Waiting on you</Caption1>
+          <Subtitle2 as="h2" id="decision-h">{stage === 'owner' ? 'Your decision as the named Owner' : 'Your decision as Security'}</Subtitle2>
+        </div>
+      </div>
       <Body1>
         {stage === 'owner'
           ? 'Decide on the business need. Read what is requested below and the AI review summary.'
@@ -115,11 +139,12 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
       <Field label="Remarks" hint="Required when rejecting. Never paste passwords or passes.">
         <Textarea value={remarks} onChange={(_, d) => setRemarks(d.value)} maxLength={1000} />
       </Field>
-      <div className={s.row}>
-        <Button appearance="primary" disabled={busy || !runId || !read} onClick={() => void decide('Approved')}>
+      <div className={d.actions}>
+        <Button appearance="primary" size="large" disabled={busy || !runId || !read} onClick={() => void decide('Approved')}>
           {stage === 'owner' ? APPROVE_LABEL.owner : APPROVE_LABEL.security}
         </Button>
-        <Button disabled={busy || remarks.trim() === ''} onClick={() => void decide('Rejected')}>{APPROVE_LABEL.reject}</Button>
+        <Button size="large" disabled={busy || remarks.trim() === ''} onClick={() => void decide('Rejected')}>{APPROVE_LABEL.reject}</Button>
+        {!read && <Caption1 className={s.muted}>Tick the box above first.</Caption1>}
       </div>
       <Caption1 className={s.muted}>Decisions count only here, from the named Owner and then a different Security approver. Nothing is approved automatically.</Caption1>
     </section>
