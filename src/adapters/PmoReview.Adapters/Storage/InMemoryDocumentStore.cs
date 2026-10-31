@@ -109,5 +109,13 @@ public static class InMemoryDataStores
         new InMemoryDocumentStore<MappingRow>(),
         new InMemoryDocumentStore<ResponseRecord>(),
         new InMemoryDocumentStore<Core.Workflow.Notification>(),
-        new InMemoryDocumentStore<Core.Workflow.Issue>());
+        new InMemoryDocumentStore<Core.Workflow.Issue>(),
+        new InMemoryDocumentStore<DataVersion>(),
+        new InMemoryDocumentStore<Person>(),
+        new InMemoryDocumentStore<DataVersion>(),
+        new InMemoryDocumentStore<Escalation>(),
+        new InMemoryDocumentStore<MappingQualityIssue>(),
+        new InMemoryDocumentStore<GroupResolution>(),
+        new InMemoryDocumentStore<OffboardingRun>(),
+        new InMemoryDocumentStore<AuditEvent>());
 }

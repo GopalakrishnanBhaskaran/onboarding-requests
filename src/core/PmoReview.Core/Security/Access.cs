@@ -27,6 +27,21 @@ public enum Permission
     ViewContacts,
     /// <summary>Change the contact inventory: PMO and Operators. Never decides who may approve (that stays userAccess).</summary>
     EditContacts,
+    // v1.1 (30 Oct 2026)
+    /// <summary>Read escalations (Prod writes, unresolved groups, TAP recipient, offboarding leftovers).</summary>
+    ViewEscalations,
+    /// <summary>F3: approve or reject a Prod escalation. ProdApprover only; never the requester or an approver of the same request.</summary>
+    DecideProdEscalation,
+    /// <summary>F4: validate, apply and roll back mapping sheet and people inventory uploads. Data Steward only.</summary>
+    UploadData,
+    /// <summary>F4: see upload versions and diffs.</summary>
+    ViewUploads,
+    /// <summary>F1: see mapping quality issues (near-duplicate group names).</summary>
+    ViewMappingQuality,
+    /// <summary>Read the people inventory (Enterprise ID, mail, status). Personal data: only the roles that need it.</summary>
+    ViewPeopleInventory,
+    /// <summary>F5: plan, confirm and run an offboarding. PMO and Operators.</summary>
+    Offboard,
 }
 
 /// <summary>Role → permission table. Single place to change who can do what. Nobody but Owner and Security approves.</summary>
@@ -38,14 +53,22 @@ public static class AccessPolicy
     {
         [AppRole.Requester] = [.. Read, Permission.SubmitRequests],
         [AppRole.Owner] = [.. Read, Permission.ApproveAsOwner],
-        [AppRole.Security] = [.. Read, Permission.ApproveAsSecurity, Permission.ViewIssues, Permission.ViewReports],
-        [AppRole.IdTeam] = [.. Read, Permission.WorkIdTeamTasks, Permission.UpdateMappingGroup],
+        [AppRole.Security] = [.. Read, Permission.ApproveAsSecurity, Permission.ViewIssues, Permission.ViewReports, Permission.ViewEscalations],
+        [AppRole.IdTeam] = [.. Read, Permission.WorkIdTeamTasks, Permission.UpdateMappingGroup, Permission.ViewEscalations],
         [AppRole.RoleTeam] = [.. Read, Permission.WorkRoleTeamTasks],
-        [AppRole.PMO] = [.. Read, Permission.EditMappingSheet, Permission.ViewReports, Permission.EditContacts],
-        [AppRole.Operator] = [.. Read, Permission.ViewIssues, Permission.ViewReports, Permission.RecoverRuns, Permission.EditContacts],
-        // Legacy v1 roles grant nothing.
+        [AppRole.PMO] = [.. Read, Permission.EditMappingSheet, Permission.ViewReports, Permission.EditContacts, Permission.ViewEscalations,
+            Permission.ViewUploads, Permission.ViewMappingQuality, Permission.ViewPeopleInventory, Permission.Offboard],
+        [AppRole.Operator] = [.. Read, Permission.ViewIssues, Permission.ViewReports, Permission.RecoverRuns, Permission.EditContacts,
+            Permission.ViewEscalations, Permission.ViewPeopleInventory, Permission.Offboard],
+        // v1.1: Prod escalations (F3) and data uploads (F4). Neither approves anything else.
+        [AppRole.ProdApprover] = [.. Read, Permission.ViewEscalations, Permission.DecideProdEscalation],
+        [AppRole.DataSteward] = [.. Read, Permission.UploadData, Permission.ViewUploads, Permission.ViewMappingQuality, Permission.ViewPeopleInventory,
+            Permission.ViewEscalations],
+        // Legacy v1 roles grant nothing (Maintainer is not the v1.1 Data Steward: old rows must not gain upload rights).
         [AppRole.Reviewer] = [],
         [AppRole.Maintainer] = [],
+        // The Data Steward's earlier name grants nothing itself: AccessService reads it as DataSteward.
+        [AppRole.DataMaintainer] = [],
     };
 
     public static bool Allows(IEnumerable<AppRole> roles, Permission permission) =>
@@ -73,6 +96,9 @@ public sealed class CallerContext(string userId, string displayName, IReadOnlyDi
     }
 
     public bool InProject(string projectId) => Grants.ContainsKey(projectId);
+
+    /// <summary>No signed-in user and no grants: the caller of a route that authenticates an application token itself.</summary>
+    public static CallerContext None { get; } = new("app", "", new Dictionary<string, IReadOnlySet<AppRole>>());
 
     public bool Has(string projectId, Permission permission) =>
         Grants.TryGetValue(projectId, out var roles) && AccessPolicy.Allows(roles, permission);
@@ -132,8 +158,11 @@ public sealed class AccessService(DataStores stores)
             .GroupBy(r => r.ProjectId, StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
-                g => (IReadOnlySet<AppRole>)g.SelectMany(r => r.Roles).ToHashSet(),
+                g => (IReadOnlySet<AppRole>)g.SelectMany(r => r.Roles).Select(Current).ToHashSet(),
                 StringComparer.Ordinal);
         return new CallerContext(principal.UserId, principal.UserDetails, grants);
     }
+
+    /// <summary>A role saved under an earlier name, read as today's role (DataMaintainer → DataSteward, 31 Oct 2026).</summary>
+    public static AppRole Current(AppRole role) => role == AppRole.DataMaintainer ? AppRole.DataSteward : role;
 }

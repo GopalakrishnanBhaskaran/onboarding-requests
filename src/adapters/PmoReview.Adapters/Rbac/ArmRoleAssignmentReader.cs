@@ -8,16 +8,67 @@ using PmoReview.Core.Domain;
 namespace PmoReview.Adapters.Rbac;
 
 /// <summary>
-/// Azure RBAC role assignments, read only (Stage 5 and 6 verification). The worker identity needs Reader (or
-/// "Microsoft.Authorization/roleAssignments/read") on the scopes it verifies. Only Azure scopes are readable here;
-/// any other scope type (e.g. a Databricks workspace role) returns null and the agent verifies against the response
-/// document instead.
+/// Azure RBAC role assignments, read only (Stage 5 and 6 verification; v1.1 F5 offboarding plan and verify). The worker
+/// identity needs Reader (or "Microsoft.Authorization/roleAssignments/read") on the scopes it reads. Only Azure scopes are
+/// readable here; any other scope type (e.g. a Databricks workspace role) returns null and the agent verifies against the
+/// response document instead.
 /// </summary>
-public sealed class ArmRoleAssignmentReader(HttpClient http, TokenCredential credential) : IRoleAssignmentReader
+public sealed class ArmRoleAssignmentReader(HttpClient http, TokenCredential credential) : IRoleAssignmentReader, IRoleAssignmentLister
 {
+    private const string SubscriptionsApiVersion = "2022-12-01";
+
+    /// <summary>F84: the subscriptions the identity can see, every page (F103). More pages than the cap: an error (never a short list).</summary>
+    public async Task<IReadOnlyList<string>> SubscriptionsAsync(CancellationToken ct) =>
+        (await GetAllAsync($"{Arm}/subscriptions?api-version={SubscriptionsApiVersion}", ct) ?? throw new DirectoryReadException("ArmError"))
+            .Select(s => Str(s, "subscriptionId")).Where(s => Guid.TryParse(s, out _)).Select(s => s!).ToList();
+
+    /// <summary>
+    /// F5 (F82): the principal's assignments at, above or below the subscription, every page (F103); null when the identity
+    /// may not read there or there are more pages than the cap (then the subscription is a leftover, never a short list).
+    /// </summary>
+    public async Task<IReadOnlyList<RoleAssignmentRef>?> AssignmentsInSubscriptionAsync(string subscriptionId, string principalObjectId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(subscriptionId, out var sub) || !Guid.TryParse(principalObjectId, out var principal)) return null;
+        var filter = Uri.EscapeDataString($"principalId eq '{principal:D}'");
+        List<JsonElement>? items;
+        try
+        {
+            items = await GetAllAsync($"{Arm}/subscriptions/{sub:D}/providers/Microsoft.Authorization/roleAssignments?api-version={ApiVersion}&$filter={filter}", ct);
+        }
+        catch (DirectoryReadException e) when (e.Category is "ArmForbidden" or "ArmScopeNotFound")
+        {
+            return null;
+        }
+        return items?.Select(a => (Id: Str(a, "id"), P: a.TryGetProperty("properties", out var p) ? p : default))
+            .Where(a => a.Id is not null && a.P.ValueKind == JsonValueKind.Object)
+            .Select(a => new RoleAssignmentRef(a.Id!, Str(a.P, "scope") ?? "", (Str(a.P, "roleDefinitionId") ?? "").Split('/')[^1],
+                Str(a.P, "principalId") ?? "", Str(a.P, "principalType") ?? ""))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Every item of a list, following <c>nextLink</c> (F103) only on management.azure.com, at most <see cref="MaxPages"/>
+    /// pages. Null when there are more pages or a link points anywhere else: the caller treats that as unreadable.
+    /// </summary>
+    private async Task<List<JsonElement>?> GetAllAsync(string url, CancellationToken ct)
+    {
+        var items = new List<JsonElement>();
+        for (var page = 0; page < MaxPages; page++)
+        {
+            using var doc = await GetAsync(url, ct);
+            items.AddRange(Values(doc).Select(v => v.Clone()));
+            var next = Str(doc.RootElement, "nextLink");
+            if (string.IsNullOrEmpty(next)) return items;
+            if (!next.StartsWith(Arm + "/", StringComparison.OrdinalIgnoreCase)) return null;
+            url = next;
+        }
+        return null;
+    }
+
     public const string Scope = "https://management.azure.com/.default";
     private const string Arm = "https://management.azure.com";
     private const string ApiVersion = "2022-04-01";
+    private const int MaxPages = 50;
 
     public async Task<IReadOnlyList<AssignedRole>?> ListForPrincipalAsync(string principalObjectId, string? scope, CancellationToken ct)
     {

@@ -11,6 +11,8 @@ public sealed record WorkflowSettings
     public TimeSpan SecuritySla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan IdTeamSla { get; init; } = TimeSpan.FromHours(24);
     public TimeSpan RoleTeamSla { get; init; } = TimeSpan.FromHours(24);
+    /// <summary>v1.1 (F3): a Prod escalation waiting for a ProdApprover.</summary>
+    public TimeSpan ProdApproverSla { get; init; } = TimeSpan.FromHours(24);
     /// <summary>
     /// Stage 7: how long the final access check may stay pending before the Operators are reminded. The worker checks within
     /// minutes; the user's first sign-in is not waited for (22 Oct 2026).
@@ -68,12 +70,38 @@ public sealed record WorkflowSettings
     /// </summary>
     public MailLimits MailLimits { get; init; } = MailLimits.AzureManagedDomain;
 
+    // v1.1 (Gokul, 30 Oct 2026). Every switch defaults to off.
+    /// <summary>
+    /// F5 (<c>AGENT_OFFBOARDING</c>, off until its permissions are approved): the worker executes confirmed offboarding
+    /// plans (revoke sessions, delete the TAP, remove memberships and Azure role assignments, disable the account).
+    /// Off: plans are still made and shown; execution is refused.
+    /// </summary>
+    public bool AgentOffboarding { get; init; }
+    /// <summary>F5 (<c>OFFBOARD_DELETE_USER</c>, default false): after disabling, soft-delete the account (restorable 30 days, F75).</summary>
+    public bool OffboardDeleteUser { get; init; }
+    /// <summary>
+    /// F5 (<c>OFFBOARD_SUBSCRIPTIONS</c>, decision 18): subscription ids whose Azure role assignments offboarding removes. Empty =
+    /// every subscription the worker identity can list (F84). One it cannot read is reported as a leftover.
+    /// </summary>
+    public IReadOnlyList<string> OffboardSubscriptions { get; init; } = [];
+    /// <summary>F5: a plan older than this must be made again before it is confirmed.</summary>
+    public TimeSpan OffboardPlanValidFor { get; init; } = TimeSpan.FromHours(24);
+    /// <summary>F2 (<c>TAP_MAIL_SENDER</c>): the one shared mailbox the TAP mail is sent from (Graph sendMail, F81). Null = not configured.</summary>
+    public string? TapMailSender { get; init; }
+    /// <summary>F4 (<c>MAX_UPLOAD_BYTES</c>): largest accepted upload file. Default 5 MB, never above 25 MB (SWA request limit 30 MB, F88).</summary>
+    public int MaxUploadBytes { get; init; } = 5 * 1024 * 1024;
+    /// <summary>F4 (<c>EXTERNAL_UPLOAD_API_ENABLED</c>, default false): the app-only upload API answers; off it returns 404.</summary>
+    public bool ExternalUploadApiEnabled { get; init; }
+    /// <summary>F4 external API: the Entra application (client) id of this API (token audience) and the tenant it accepts.</summary>
+    public string? ExternalUploadAudience { get; init; }
+
     public TimeSpan SlaFor(WaitingOn w) => w switch
     {
         WaitingOn.Owner => OwnerSla,
         WaitingOn.Security => SecuritySla,
         WaitingOn.IdTeam => IdTeamSla,
         WaitingOn.RoleTeam => RoleTeamSla,
+        WaitingOn.ProdApprover => ProdApproverSla,
         _ => VerifySla,
     };
 }

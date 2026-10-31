@@ -8,9 +8,11 @@ using PmoReview.Core.Workflow;
 namespace PmoReview.Adapters.Outbound;
 
 /// <summary>
-/// DISABLED in the pilot (NOTIFY_SENDER=Outbox). Sends a notification as mail from one shared mailbox through
-/// Microsoft Graph sendMail (application permission Mail.Send, limited to that mailbox with an Exchange Online
-/// application access policy). Bodies are already masked and never contain a Temporary Access Pass.
+/// Sends a notification as mail from one shared mailbox through Microsoft Graph sendMail (F52). Two uses: the queued
+/// notifications (<c>NOTIFY_SENDER=GraphMail</c>, off in the pilot; bodies masked) and the F2 TAP mail (<c>TAP_MAIL_SENDER</c>,
+/// through <see cref="DirectMail"/>, one recipient). <c>Application Mail.Send</c> is limited to the sender mailbox with
+/// Exchange Online RBAC for Applications (F81), never granted in Entra as well. Only <c>toRecipients</c> is set: never Cc or
+/// Bcc (F96). The body is never logged; Graph error text is not kept.
 /// </summary>
 public sealed class GraphMailSender(HttpClient http, TokenCredential credential, string senderMailbox) : INotificationSender
 {

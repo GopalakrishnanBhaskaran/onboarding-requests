@@ -25,7 +25,7 @@ async function as(browser: Browser, userId: string): Promise<{ ctx: BrowserConte
 const enterpriseId = (tag: string) => `sample.e2e.${tag}.${Date.now().toString(36)}@company.example`;
 
 async function submit(page: Page, fields: {
-  enterpriseId: string; resource: string; accessLevel: string; owner: string; justification: string; environment?: string; tenant?: string;
+  enterpriseId: string; resource: string; group: string; accessLevel: string; owner: string; justification: string; environment?: string; tenant?: string;
 }) {
   await page.goto('/#/requests/new');
   // The tenant is chosen on the form itself (one project per tenant).
@@ -38,10 +38,13 @@ async function submit(page: Page, fields: {
   await page.getByLabel('Enterprise ID').fill(fields.enterpriseId);
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
-  // Environment, resource and access level are picked from the mapping sheet of this tenant.
+  // v1.1 F1: environment and Resource* come from the mapping sheet of this tenant; the resolved groups are ticked.
   if (fields.environment) await page.getByLabel('Environment').selectOption(fields.environment);
-  await page.getByLabel('Resource').selectOption(fields.resource);
-  await page.getByLabel('Access level').selectOption(fields.accessLevel);
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no resource chosen yet
+  await page.getByRole('combobox', { name: /^Resource/ }).selectOption(fields.resource);
+  const table = page.getByRole('table', { name: 'Resolved access' });
+  await expect(table).toBeVisible();
+  await table.getByRole('checkbox', { name: fields.group, exact: true }).check();
   // A ready template, prefilled with the choices; submitting it unfilled is refused.
   await page.getByRole('button', { name: 'Insert into justification' }).click();
   await expect(page.getByRole('textbox', { name: 'Justification' })).toHaveValue(new RegExp(`Access needed: ${fields.accessLevel} on `));
@@ -91,7 +94,8 @@ test('full flow: requester → AI review → named Owner → Security → ID tea
   const alice = await as(browser, 'sample-user-alice');
   const id = await submit(alice.page, {
     enterpriseId: enterpriseId('ok'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
@@ -157,7 +161,8 @@ test('a request the AI review finds gaps in is returned with the reason and can 
   const alice = await as(browser, 'sample-user-alice');
   await submit(alice.page, {
     enterpriseId: enterpriseId('ret'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: views dashboards.',
@@ -172,7 +177,8 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
   const alice = await as(browser, 'sample-user-alice');
   const id = await submit(alice.page, {
     enterpriseId: enterpriseId('rej'),
-    resource: 'SAMPLE Databricks Engineering',
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
     accessLevel: 'User',
     owner: 'sample-user-otto@sample.invalid',
     justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
@@ -190,7 +196,7 @@ test('the named Owner rejects with remarks and the request stops', async ({ brow
   await otto.ctx.close();
 });
 
-test('tenant project: environment, the Azure roles and risk flags are on the decision page; Prod is returned', async ({ browser }) => {
+test('tenant project: environment, the Azure roles and risk flags are on the decision page; red Prod rows are not offered', async ({ browser }) => {
   const alice = await as(browser, 'sample-user-alice');
   await alice.page.goto('/');
   await expect(alice.page.getByText('Tenant:').first()).toBeVisible();
@@ -198,7 +204,8 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
     tenant: 'SAMPLE-PEST',
     enterpriseId: enterpriseId('pest'),
     environment: 'Dev',
-    resource: 'SAMPLE PEST Platform (ph)',
+    resource: 'PH',
+    group: 'sample-azr-pes-rg-data-dev-ph-weu-support-reader',
     accessLevel: 'Support Reader',
     owner: 'sample-user-olivia@sample.invalid',
     justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
@@ -218,18 +225,39 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
   await decide(olivia.page, 'Approve business need');
   await expectStage(olivia.page, 'Awaiting Security');
 
-  const prod = await submit(alice.page, {
-    enterpriseId: enterpriseId('prd'),
-    environment: 'Prod',
-    resource: 'SAMPLE PEST Platform (ph)',
-    accessLevel: 'Support Reader',
-    owner: 'sample-user-olivia@sample.invalid',
-    justification: 'SAMPLE: provides application support for the PEST platform and reads pipeline data for support triage of failed loads.',
-  });
-  expect(prod).toBeTruthy();
-  await expectStage(alice.page, 'Returned');
-  await expect(alice.page.getByText(/flagged red/).first()).toBeVisible();
+  // v1.1 F1: the only Prod row is flagged red (never acted on), so Prod offers nothing to request.
+  await alice.page.goto('/#/requests/new');
+  await alice.page.getByLabel('Environment').selectOption('Prod');
+  await expect(alice.page.getByText(/has no resources for Prod that can be requested/)).toBeVisible();
+  await expect(alice.page.getByRole('button', { name: 'Submit request' })).toBeDisabled();
   for (const u of [alice, olivia]) await u.ctx.close();
+});
+
+test('Resource* checkboxes: All ticks every resource, unticking one clears All, two groups become two requests', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const page = alice.page;
+  await page.goto('/#/requests/new');
+  await page.getByRole('switch', { name: 'Choose several resources' }).check();
+  const group = page.getByRole('group', { name: 'Resources' });
+  await group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' }).check();
+  for (const name of ['Engineering', 'Finance', 'Sales']) await expect(group.getByRole('checkbox', { name, exact: true })).toBeChecked();
+  await group.getByRole('checkbox', { name: 'Sales', exact: true }).uncheck();
+  await expect(group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' })).not.toBeChecked();
+  const table = page.getByRole('table', { name: 'Resolved access' });
+  await expect(table.getByText('SAMPLE-GRP-ALPHA-SALES-READ')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no group ticked yet
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-FIN-VIEW', exact: true }).check();
+  await page.getByLabel('Enterprise ID').fill(enterpriseId('bundle'));
+  await page.getByLabel('First name').fill('Sample');
+  await page.getByLabel('Last name').fill('Joiner');
+  await page.getByRole('textbox', { name: 'Justification' }).fill('SAMPLE: joins the data engineering team and builds the finance reports from the curated data.');
+  await page.getByLabel('Owner (sign-in name)').fill('sample-user-olivia@sample.invalid');
+  await page.getByRole('button', { name: 'Submit request' }).click();
+  await expect(page).toHaveURL(/#\/requests$/);
+  await expect(page.getByText('SAMPLE Finance Reports').first()).toBeVisible();
+  await expect(page.getByText('SAMPLE Databricks Engineering').first()).toBeVisible();
+  await alice.ctx.close();
 });
 
 test('PMO sees the mapping sheet and the response document', async ({ browser }) => {
@@ -258,7 +286,7 @@ test('PMO sees the mapping sheet and the response document', async ({ browser })
 test('contact inventory: PMO edits the team mail lists (semicolon-separated); others read them', async ({ browser }) => {
   const paul = await as(browser, 'sample-user-paul');
   await paul.page.goto('/#/contacts');
-  await expect(paul.page.getByRole('heading', { name: 'Contact inventory' })).toBeVisible();
+  await expect(paul.page.getByRole('heading', { name: 'Team contacts' })).toBeVisible();
   const security = paul.page.getByRole('textbox', { name: 'Security', exact: true });
   await expect(security).toHaveValue(/@/);
   const team = `sec.${Date.now().toString(36)}@company.example`; // unique per run: the local store outlives a run
@@ -288,4 +316,89 @@ test('unregistered user sees their id and no data', async ({ browser }) => {
   // The sign-in name is enough to register someone (or the user id).
   await expect(page.locator('code', { hasText: 'sample-user-nobody@sample.invalid' })).toBeVisible();
   await ctx.close();
+});
+
+test('Data uploads: the Data Steward checks a mapping file, sees the diff, applies it and rolls it back', async ({ browser }) => {
+  const tenant = '00000000-0000-4000-8000-0000000000a1'; // tools/run_local.sh AGENT_TENANT_ID
+  const group = `SAMPLE-E2E-UPLOAD-${Date.now().toString(36).toUpperCase()}`; // the local store outlives a run
+  const header = 'TenantId,Domain,ResourceGroupType,Environment,AccessLevel,EntraGroupName,EntraGroupObjectId,Owner,EffectiveFrom,EffectiveTo';
+  const csv = `${header}\r\n${tenant},Finance,Domain,Dev,Read,${group},,sample-user-olivia@sample.invalid,2026-01-01,\r\n`;
+  const dana = await as(browser, 'sample-user-dana');
+  await dana.page.goto('/#/uploads');
+  await expect(dana.page.getByRole('heading', { name: 'Data uploads' })).toBeVisible();
+  const mapping = dana.page.getByRole('region', { name: 'PMO mapping sheet' });
+
+  // A macro-enabled workbook never leaves the browser.
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.xlsm', mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12', buffer: Buffer.from('PK') });
+  await expect(mapping.getByText(/macro-enabled or binary Excel files are refused/)).toBeVisible();
+
+  // A wrong column is named and nothing can be applied.
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.csv', mimeType: 'text/csv', buffer: Buffer.from(csv.replace('EntraGroupName', 'Entra Group Name')) });
+  await expect(mapping.getByText('Invalid', { exact: true })).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'Validation errors' })).toContainText('Rename it to "EntraGroupName"');
+  await expect(mapping.getByRole('button', { name: /^Apply as v/ })).toHaveCount(0);
+
+  await mapping.getByLabel('Upload PMO mapping sheet file').setInputFiles({ name: 'mapping.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await expect(mapping.getByText('Valid', { exact: true })).toBeVisible();
+  await expect(mapping.getByText(/1 added, 0 updated/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'Changes against the current version' })).toContainText(group);
+  await mapping.getByRole('button', { name: /^Apply as v\d+$/ }).click();
+  await expect(mapping.getByText(/^Applied: v\d+\.$/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'PMO mapping sheet versions' })).toContainText('mapping.csv');
+
+  await mapping.getByRole('button', { name: /^Roll back v\d+…$/ }).click();
+  await mapping.getByRole('button', { name: /^Roll back v\d+$/ }).click();
+  await expect(mapping.getByText(/^Applied: v\d+ \(rollback of v\d+\)\.$/)).toBeVisible();
+  await expect(mapping.getByRole('table', { name: 'PMO mapping sheet versions' })).toContainText('rolled back');
+  await dana.ctx.close();
+
+  // PMO reads the page; only the Data Steward uploads.
+  const paul = await as(browser, 'sample-user-paul');
+  await paul.page.goto('/#/uploads');
+  await expect(paul.page.getByText('Read only: uploads are made by the Data Steward.')).toBeVisible();
+  await expect(paul.page.getByRole('button', { name: 'Upload PMO mapping sheet' })).toHaveCount(0);
+  await paul.ctx.close();
+});
+
+test('Offboard user: PMO asks for a plan on the request page; the requester does not see the button', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const tag = enterpriseId('off');
+  const requestId = await submit(alice.page, {
+    enterpriseId: tag,
+    resource: 'Engineering',
+    group: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER',
+    accessLevel: 'User',
+    owner: 'sample-user-olivia@sample.invalid',
+    justification: 'SAMPLE: joins the data engineering team to build and run ingestion pipelines in the workspace.',
+  });
+  await expect(alice.page.getByRole('button', { name: 'Offboard user' })).toHaveCount(0);
+  await alice.ctx.close();
+
+  const upn = `${tag.split('@')[0]}@sample.invalid`; // the account in the tenant (domain-specific ID)
+  const paul = await as(browser, 'sample-user-paul');
+  await open(paul.page, requestId);
+  const panel = paul.page.getByRole('region', { name: 'Offboarding' });
+  await expect(panel.getByRole('heading', { name: `Offboarding — ${upn}` })).toBeVisible();
+  // A request alone does not make the person the project's (any Requester can write one): not found until approved.
+  await panel.getByRole('button', { name: 'Offboard user' }).click();
+  await expect(panel.getByText(/Person in this project not found/)).toBeVisible();
+
+  const olivia = await as(browser, 'sample-user-olivia');
+  await open(olivia.page, requestId);
+  await decide(olivia.page, 'Approve business need');
+  await olivia.ctx.close();
+  const sam = await as(browser, 'sample-user-sam');
+  await open(sam.page, requestId);
+  await decide(sam.page, 'Approve risk and access level');
+  await expectStage(sam.page, 'With ID Team');
+  await sam.ctx.close();
+
+  await open(paul.page, requestId);
+  await panel.getByRole('button', { name: 'Offboard user' }).click();
+  // No worker runs locally: the plan stays with the AI agent, and nothing can be confirmed before it is ready.
+  await expect(panel.getByText('Planning (the AI agent reads Entra and Azure)')).toBeVisible();
+  await expect(panel.getByText(/works on it within about 5 minutes/)).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Confirm offboarding' })).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: 'Offboard user' })).toHaveCount(0); // a second click cannot start another run
+  await paul.ctx.close();
 });

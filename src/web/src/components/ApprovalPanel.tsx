@@ -5,7 +5,7 @@ import {
 import { api, ApiError } from '../lib/api';
 import { APPROVE_LABEL } from '../lib/flow';
 import { dateTime, grantsOf, scopeName } from '../lib/format';
-import type { AccessRequest, ProjectSummary, RequestView } from '../lib/types';
+import type { AccessRequest, Escalation, ProjectSummary, RequestView } from '../lib/types';
 import { ErrorBar, useStyles } from './common';
 
 /**
@@ -122,6 +122,60 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
         <Button disabled={busy || remarks.trim() === ''} onClick={() => void decide('Rejected')}>{APPROVE_LABEL.reject}</Button>
       </div>
       <Caption1 className={s.muted}>Decisions count only here, from the named Owner and then a different Security approver. Nothing is approved automatically.</Caption1>
+    </section>
+  );
+}
+
+/** v1.1 (F3) labels of the ProdApprover decision. */
+export const PROD_LABEL = { approve: 'Approve production access above Read', reject: 'Reject' };
+
+/**
+ * F3: a ProdApprover decides a production request above Read, after Owner and Security. Shown only for an Open ProdWrite
+ * escalation to a ProdApprover; the server refuses the requester and the earlier approvers, and a decision on a changed
+ * request (another revision): the decision is tied to the revision shown here.
+ */
+export function ProdDecisionPanel({ escalation, projectId, onDone }: {
+  escalation: Escalation;
+  projectId: string;
+  onDone: () => void;
+}) {
+  const s = useStyles();
+  const [remarks, setRemarks] = useState('');
+  const [read, setRead] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function decide(decision: 'Approved' | 'Rejected') {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideEscalation(projectId, escalation.id, decision, remarks.trim(), escalation.requestRevision ?? 0);
+      onDone();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className={s.section} aria-label={`Prod decision ${escalation.id}`} style={{ borderWidth: 2 }}>
+      <Subtitle2 as="h3">Your decision as ProdApprover</Subtitle2>
+      <Body1>
+        Production is read-only by default. {escalation.reason}. Owner and Security approved; nothing is granted until you decide.
+        Request {escalation.requestId?.slice(0, 8)}, revision {escalation.requestRevision}: user {escalation.user}, group {escalation.group},
+        level {escalation.level}, environment {escalation.environment}.
+      </Body1>
+      <ErrorBar error={error} />
+      <Checkbox checked={read} onChange={(_, d) => setRead(d.checked === true)} label="I have read the request and its Azure roles (open the request to see the AI review)." />
+      <Field label="Remarks" hint="Required when rejecting. Never paste passwords or passes.">
+        <Textarea value={remarks} onChange={(_, d) => setRemarks(d.value)} maxLength={1000} />
+      </Field>
+      <div className={s.row}>
+        <Button appearance="primary" disabled={busy || !read} onClick={() => void decide('Approved')}>{PROD_LABEL.approve}</Button>
+        <Button disabled={busy || remarks.trim() === ''} onClick={() => void decide('Rejected')}>{PROD_LABEL.reject}</Button>
+      </div>
+      <Caption1 className={s.muted}>The requester, the Owner approver and the Security approver of this request cannot decide it.</Caption1>
     </section>
   );
 }

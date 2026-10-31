@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from collections import Counter
 from dataclasses import dataclass
 
 PASS, WAIT, FAIL = "PASS", "WAIT", "FAIL"
+V11_CONTAINERS = ("mappingVersions", "peopleInventory", "inventoryVersions", "escalations", "mappingQualityIssues", "groupResolutions",
+                  "offboardingRuns", "auditEvents")
 READ_ROLES = {"User.Read.All", "GroupMember.Read.All", "UserAuthenticationMethod.Read.All", "AuditLog.Read.All"}
 CREATE_ROLES = {"User.Create", "Group.Create", "GroupMember.ReadWrite.All"}
 RETIRED_ROLES = {"EntitlementManagement.ReadWrite.All", "User.ReadWrite.All", "LicenseAssignment.ReadWrite.All",
@@ -22,6 +25,10 @@ READER = "acdd72a7-3385-48ef-bd42-f606fba81ae7"
 # The roles of the PEST Dev Support Reader row (response document), by lower-case name: the end-to-end test needs both.
 TEST_ROLES = {"reader": READER, "storage blob data reader": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"}
 TAP_ROLE = "UserAuthMethod-TAP.ReadWrite.All"
+# v1.1 F5 option 3: what the offboarding writes and reads need (F71, F74; the rest is reused).
+OFFBOARD_ROLES = {"User.RevokeSessions.All", "User.EnableDisableAccount.All", "GroupMember.ReadWrite.All", TAP_ROLE,
+                  "User.Read.All", "GroupMember.Read.All", "UserAuthenticationMethod.Read.All"}
+OFFBOARD_DELETE_ROLE = "User.ReadWrite.All"  # only with OFFBOARD_DELETE_USER (F75: no narrower application permission)
 # Built-in role ids by lower-case name (BuiltInRoles.Ids) and the ones the agent never assigns (BuiltInRoles.NeverByAgent).
 from sheet_roles import CATALOGUE as ROLE_IDS, NEVER  # noqa: E402  (tools/ is the script's folder)
 NEVER_BY_AGENT = set(NEVER)
@@ -113,12 +120,17 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       "" if prov_ok and not retired else "tools/deploy_free.sh revoke-graph-writes <sub> --approved-by …" if retired
                       else f"tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(TEST_ROLES.values())} (dry run → approval)"))
 
-    # 5b. Agent TAP (sign-in details mailed by the agent)
-    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and s.get("NOTIFY_SENDER") in ("AcsEmail", "GraphMail")
+    # 5b. Agent TAP (sign-in details mailed by the agent). v1.1 F2: only through Graph sendMail from TAP_MAIL_SENDER (scoped
+    # by Exchange RBAC for Applications, F81; not visible from here), never through the notification sender. Without the
+    # sender mailbox the worker mails no pass and the ID team hands it over.
+    sender = bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", s.get("TAP_MAIL_SENDER") or ""))
+    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and sender and "Mail.Send" not in roles
     out.append(Result("5b. Agent issues the one-time TAP and mails it with the initial password and MFA steps", PASS if tap_ok else WAIT,
                       f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
+                      f"TAP_MAIL_SENDER {'set' if sender else 'not set (v1.1: no pass is mailed; the ID team hands it over)'}; "
+                      f"{'Graph Mail.Send held in Entra (remove it: it overrides the Exchange scope, F81); ' if 'Mail.Send' in roles else ''}"
                       f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
-                      "" if tap_ok else "tools/deploy_free.sh tap <sub> on (dry run → approval), then tools/deploy_free.sh app <sub>"))
+                      "" if tap_ok else "P7 option 2: tools/deploy_free.sh tap <sub> on --sender <mailbox> (dry run → approval) and the Exchange scope it prints (F81)"))
 
     # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
     prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
@@ -186,11 +198,15 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     evidence("9. Security approval given in the app", "security-approved", "a Security member (not the Owner approver) approves")
     evidence("10. Agent created user / group / membership", "agent-provisioned",
              "after both approvals wait 5–10 min; 'agent-waiting-permission' = new permission not in the token yet (up to 24 h)")
-    signin = [n for n in notes if n.get("kind") == "SignInDetails"]
-    sent = [n for n in signin if n.get("status") == "Sent"]
-    out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if sent else WAIT,
-                      f"{len(sent)} sent, delivered to {sorted({a for n in sent for a in n.get('deliveredTo') or []}) or 'nobody yet'}",
-                      "" if sent else "needs step 5b; then a new request (the agent mails it in the run that creates the account)"))
+    # v1.1 F2: no copy of the mail is stored any more; the request records when and to whom (masked) it went. Older
+    # deployments kept a masked notification (kind SignInDetails): still counted.
+    agent_of = lambda r: ((r.get("flow") or {}).get("idTeamTask") or {}).get("agent") or {}  # noqa: E731
+    mailed = [r for r in v2 if agent_of(r).get("signInDetailsSentAt")]
+    sent = [n for n in notes if n.get("kind") == "SignInDetails" and n.get("status") == "Sent"]
+    to = sorted({agent_of(r).get("signInDetailsSentTo") or "?" for r in mailed} | {a for n in sent for a in n.get("deliveredTo") or []})
+    out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if mailed or sent else WAIT,
+                      f"{len(mailed) + len(sent)} sent, to {to or 'nobody yet'}",
+                      "" if mailed or sent else "needs step 5b, TAP_MAIL_SENDER and a people inventory entry; then a new request (the agent mails it in the run that creates the account)"))
     evidence("11. Agent assigned the Azure role(s)", "agent-role-assigned", "after the agent's own ID step is verified, wait 5–10 min")
     waiting = [r["id"][:8] for r in v2 if "agent-waiting-permission" in steps(r) and status(r) in ("WithIdTeam", "WithRoleTeam")]
     if waiting:
@@ -238,6 +254,38 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     out.append(Result("13. No open High issues", PASS if not high else WAIT,
                       "; ".join(f"{str(i.get('requestId'))[:8]} {i.get('kind')}: {(i.get('summary') or '')[:90]}" for i in high[:5]) or "none",
                       "" if not high else "Issues and reports page; SLA escalations clear once the stage moves on"))
+
+    # 16. v1.1 (P7 option 1): the v1.1 containers exist, the switches nobody approved are off, and each tenant names its
+    # Entra tenant id and whether it is production (not set counts as production: a second person confirms offboarding).
+    have = set(ctx.get("containers") or [])
+    missing_c = [c for c in V11_CONTAINERS if c not in have]
+    # OFFBOARD_DELETE_USER is line 17 (offboarding … on --delete-user, approval-gated).
+    switched_on = ["EXTERNAL_UPLOAD_API_ENABLED"] if str(swa.get("EXTERNAL_UPLOAD_API_ENABLED", "")).lower() == "true" else []
+    unflagged = sorted(k for k, v in real.items() if not v.get("tenantId") or v.get("isProductionTenant") is None)
+    out.append(Result("16. v1.1 data in place, unapproved switches off, tenants flagged (P7 option 1)",
+                      FAIL if switched_on else WAIT if missing_c or unflagged or not real else PASS,
+                      f"missing containers {missing_c or 'none'}; switched on {switched_on or 'none'}; "
+                      f"projects without tenant id or production flag {unflagged or 'none'}",
+                      "switch it off: not approved" if switched_on
+                      else "tools/deploy_free.sh whatif → approved → apply (docs/V1_1_DEPLOY.md)" if missing_c
+                      else "import_workbook.py --tenant-id <guid> --production-tenant yes|no for each project" if unflagged or not real else ""))
+
+    # 17. v1.1 option 3, Entra steps (Gokul, 30 Oct 2026): the agent offboards a confirmed leaver in Entra. Worker and
+    # website switched on together, the Graph permissions held, the subscriptions named (none named = the agent may see no
+    # subscription). No Azure right: the Azure role assignments stay with the role assignment team (a leftover each run).
+    # Deleting (--delete-user, Gokul 30 Oct 2026) also needs User.ReadWrite.All (F75) and offboarding itself on.
+    worker_on, swa_on = on("AGENT_OFFBOARDING"), str(swa.get("AGENT_OFFBOARDING", "")).lower() == "true"
+    delete_on = on("OFFBOARD_DELETE_USER")
+    lacking = sorted((OFFBOARD_ROLES | ({OFFBOARD_DELETE_ROLE} if delete_on else set())) - roles)
+    subs = [x for x in (s.get("OFFBOARD_SUBSCRIPTIONS") or "").split(",") if x.strip()]
+    broken = (worker_on or swa_on or delete_on) and (worker_on != swa_on or lacking or not subs or not worker_on)
+    out.append(Result("17. Agent offboards a confirmed leaver in Entra (sessions, TAP, groups, disable; Azure roles left to the role team)",
+                      FAIL if broken else PASS if worker_on else WAIT,
+                      f"worker AGENT_OFFBOARDING={'true' if worker_on else 'false'}, website {'true' if swa_on else 'false'}; "
+                      f"Graph permissions missing {lacking or 'none'}; OFFBOARD_SUBSCRIPTIONS {len(subs)} named; "
+                      f"delete accounts {'on (soft delete, 30 days)' if delete_on else 'off'}; no Azure right (by design)",
+                      "tools/deploy_free.sh offboarding <sub> on … --approved-by, or offboarding <sub> off" if broken
+                      else "" if worker_on else "tools/deploy_free.sh offboarding <sub> on (dry run → approval)"))
     return out
 
 
@@ -263,7 +311,7 @@ def load() -> tuple:
             print(f"  ({container} not readable: {type(e).__name__})")
             return []
 
-    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion FROM c"),
+    return (q("projects", "SELECT c.projectId, c.tenantId, c.tenantName, c.environments, c.isSample, c.contacts, c.contactsVersion, c.isProductionTenant FROM c"),
             q("mappingSheet", "SELECT c.projectId, c.rowId, c.flag, c.entraGroup, c.azureRoles, c.isSample FROM c"),
             q("requests", "SELECT c.id, c.projectId, c.environment, c.flow.status, c.flow.waitingOn, c.flow.events FROM c"),
             q("notifications", "SELECT c.status, c.lastError, c.deliveredTo, c.kind, c.createdAt FROM c"),
@@ -282,16 +330,21 @@ def flatten(requests: list[dict]) -> list[dict]:
 def self_test() -> None:
     allowed = "/subscriptions/s/resourceGroups/rg-pmo-sample-access"
     ctx = {"head": "abc", "app_deployed": "abc", "worker_deployed": "abc", "app_code_changed": False, "worker_code_changed": False,
-           "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE}), "rbac_admin_scopes": [allowed],
+           "tenant_id": "t1", "acs_exists": True, "acs_role": True, "graph_roles": sorted(READ_ROLES | CREATE_ROLES | {TAP_ROLE} | OFFBOARD_ROLES), "rbac_admin_scopes": [allowed],
            "worker_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "AGENT_TENANT_ID": "T1", "NOTIFY_SENDER": "AcsEmail",
                                "ACS_ENDPOINT": "https://a", "NOTIFY_FROM": "DoNotReply@d", "AGENT_PROVISIONING": "true", "AGENT_ROLE_ASSIGNMENT": "true",
-                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "AGENT_PRIVILEGED": "true",
+                               "AGENT_TAP": "true", "AGENT_TAP_LIFETIME_MINUTES": "480", "TAP_MAIL_SENDER": "tap-sender@company.example", "AGENT_PRIVILEGED": "true",
+                               "AGENT_OFFBOARDING": "true", "OFFBOARD_SUBSCRIPTIONS": "s1",
                                "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
                                "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true"}}
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true",
+                            "AGENT_OFFBOARDING": "true"},
+           "containers": ["projects", "requests", *V11_CONTAINERS]}
     team = {"security": ["sec@company.example"], "idTeam": ["id@company.example"], "roleTeam": ["roles@company.example"]}
-    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1},
-                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team}]
+    projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1,
+                 "isProductionTenant": True},
+                {"projectId": "VESTACY", "tenantId": "t1", "tenantName": "Vestacy", "environments": ["Dev", "Test", "PreProd", "Prod"], "contacts": team,
+                 "isProductionTenant": False}]
     rows = [{"projectId": "PEST", "rowId": "PH-SUPPORT-READER-DEV", "entraGroup": "sample-group-support-reader",
              "azureRoles": [{"roleName": "Storage Blob Data Reader", "scope": allowed}, {"roleName": "Reader", "scope": allowed}]},
             {"projectId": "PEST", "rowId": PRIVILEGED_ROW, "privileged": True,
@@ -302,6 +355,43 @@ def self_test() -> None:
     requests = [{"id": "bbbbbbbbbbbb", "projectId": "PEST", "environment": "Dev", "flow": {"status": "Completed", "events": all_steps}}]
     notes = [{"status": "Sent", "deliveredTo": ["x@y.z"]}, {"status": "Sent", "kind": "SignInDetails", "deliveredTo": ["x@y.z"]}]
     res = evaluate(ctx, projects, rows, requests, notes, [])
+    # v1.1 F2: the sign-in details are recorded on the request (masked recipient), not as a stored mail.
+    f2 = [dict(requests[0], flow=dict(requests[0]["flow"], idTeamTask={"agent": {"signInDetailsSentAt": "2026-10-30T10:00:00Z", "signInDetailsSentTo": "j***@company.example"}}))]
+    tap = next(r for r in evaluate(ctx, projects, rows, f2, notes[:1], []) if r.feature.startswith("10d."))
+    assert tap.status == PASS and "j***@company.example" in tap.detail, (tap.status, tap.detail)
+    # v1.1 option 3: off = WAIT naming the command; on with the permissions and a named subscription = PASS; on without a
+    # permission, without subscriptions or only on one side = FAIL.
+    l17 = lambda c: next(r for r in evaluate(c, projects, rows, requests, notes, []) if r.feature.startswith("17."))  # noqa: E731
+    off = json.loads(json.dumps(ctx))
+    off["worker_settings"]["AGENT_OFFBOARDING"] = off["swa_settings"]["AGENT_OFFBOARDING"] = "false"
+    off["graph_roles"] = sorted(set(off["graph_roles"]) - {"User.RevokeSessions.All", "User.EnableDisableAccount.All"})
+    assert l17(off).status == WAIT and "offboarding <sub> on" in l17(off).next, l17(off)
+    off_on = ctx
+    assert l17(off_on).status == PASS, l17(off_on)
+    assert next(r for r in evaluate(off_on, projects, rows, requests, notes, []) if r.feature.startswith("16.")).status == PASS
+    for broken in ({"graph_roles": sorted(set(off_on["graph_roles"]) - {"User.RevokeSessions.All"})},
+                   {"worker_settings": {**off_on["worker_settings"], "OFFBOARD_SUBSCRIPTIONS": ""}},
+                   {"swa_settings": {**off_on["swa_settings"], "AGENT_OFFBOARDING": "false"}},
+                   {"worker_settings": {**off_on["worker_settings"], "AGENT_OFFBOARDING": "false"}}):
+        got17 = l17({**off_on, **broken})
+        assert got17.status == FAIL and "offboarding <sub>" in got17.next, (broken, got17)
+    # --delete-user: line 16 no longer counts it as unapproved; line 17 needs User.ReadWrite.All and offboarding on.
+    delete_on = json.loads(json.dumps(off_on)); delete_on["worker_settings"]["OFFBOARD_DELETE_USER"] = "true"
+    assert next(r for r in evaluate(delete_on, projects, rows, requests, notes, []) if r.feature.startswith("16.")).status == PASS
+    assert l17(delete_on).status == FAIL and OFFBOARD_DELETE_ROLE in l17(delete_on).detail, l17(delete_on)
+    delete_on["graph_roles"] = sorted(set(delete_on["graph_roles"]) | {OFFBOARD_DELETE_ROLE})
+    assert l17(delete_on).status == PASS and "delete accounts on" in l17(delete_on).detail, l17(delete_on)
+    delete_alone = json.loads(json.dumps(delete_on))
+    delete_alone["worker_settings"]["AGENT_OFFBOARDING"] = "false"; delete_alone["swa_settings"]["AGENT_OFFBOARDING"] = "false"
+    assert l17(delete_alone).status == FAIL, l17(delete_alone)
+    # v1.1 F2: AGENT_TAP on but no TAP sender mailbox (or Graph Mail.Send in Entra) = no pass mailed: WAIT, naming option 2.
+    for change in ({"TAP_MAIL_SENDER": ""}, {"TAP_MAIL_SENDER": "not-a-mailbox"}):
+        nosender = json.loads(json.dumps(ctx)); nosender["worker_settings"].update(change)
+        got5b = next(r for r in evaluate(nosender, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
+        assert got5b.status == WAIT and "not set" in got5b.detail and "--sender" in got5b.next, (change, got5b.detail, got5b.next)
+    entra = {**ctx, "graph_roles": [*ctx["graph_roles"], "Mail.Send"]}
+    got5b = next(r for r in evaluate(entra, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
+    assert got5b.status == WAIT and "F81" in got5b.detail, got5b.detail
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
     assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
     go = next(r for r in res if r.feature.startswith("15."))
@@ -341,6 +431,20 @@ def self_test() -> None:
     ctx3["graph_roles"] = sorted(READ_ROLES | CREATE_ROLES | {"Group.ReadWrite.All"})
     assert next(r for r in evaluate(ctx3, projects, rows, requests, notes, []) if r.feature.startswith("5.")).status == FAIL
     assert flatten([{"id": "x", "status": "Completed", "events": [{"step": "completed"}]}])[0]["flow"]["status"] == "Completed"
+    # 16. v1.1 option 1: containers missing → WAIT (whatif/apply); an unapproved switch on → FAIL (AGENT_OFFBOARDING is line 17,
+    # option 3); a tenant without its flag → WAIT (import).
+    line16 = lambda c, p=projects: next(r for r in evaluate(c, p, rows, requests, notes, []) if r.feature.startswith("16."))  # noqa: E731
+    assert line16(ctx).status == PASS, line16(ctx).detail
+    before = {**ctx, "containers": ["projects", "requests"]}
+    assert line16(before).status == WAIT and "whatif" in line16(before).next and "offboardingRuns" in line16(before).detail
+    on16 = json.loads(json.dumps(ctx))
+    on16["swa_settings"]["EXTERNAL_UPLOAD_API_ENABLED"] = "true"
+    assert line16(on16).status == FAIL and "EXTERNAL_UPLOAD_API_ENABLED" in line16(on16).detail
+    ext = json.loads(json.dumps(ctx))
+    ext["swa_settings"]["EXTERNAL_UPLOAD_API_ENABLED"] = "true"
+    assert line16(ext).status == FAIL
+    noflag = [dict(projects[0], isProductionTenant=None), projects[1]]
+    assert line16(ctx, noflag).status == WAIT and "PEST" in line16(ctx, noflag).detail and "--production-tenant" in line16(ctx, noflag).next
     print("verify_features: self-test passed")
 
 

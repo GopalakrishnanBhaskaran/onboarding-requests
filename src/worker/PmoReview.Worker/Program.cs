@@ -10,6 +10,7 @@ using PmoReview.Adapters.Review;
 using PmoReview.Adapters.Storage;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
+using PmoReview.Core.Offboarding;
 using PmoReview.Core.Storage;
 using PmoReview.Core.Workflow;
 
@@ -61,9 +62,11 @@ var host = new HostBuilder()
             IRoleAssignmentWriter? roleWriter = settings.Workflow.AgentRoleAssignment
                 ? new ArmRoleAssignmentWriter(Http(), credential, settings.Workflow.RoleAssignAllowedRoleIds)
                 : null;
-            // Agent TAP: the sign-in details are sent directly (never through the stored outbox), same sender and test redirect.
-            IDirectMail? directMail = settings.Workflow.AgentTap && writer is not null
-                ? new DirectMail(sp.GetRequiredService<INotificationSender>(), settings.Workflow.MailRedirectTo, settings.Workflow.AppEnvironment)
+            // Agent TAP (F2): the sign-in details go only through Graph sendMail from the one TAP_MAIL_SENDER mailbox
+            // (Application Mail.Send scoped to it by Exchange RBAC for Applications, F81), to one verified address, never
+            // redirected and never through the stored outbox. Without the setting the ID team issues every pass.
+            IDirectMail? directMail = settings.Workflow.AgentTap && writer is not null && settings.Workflow.TapMailSender is { } tapSender
+                ? new DirectMail(new GraphMailSender(Http(), credential, tapSender))
                 : null;
             return PilotApp.BuildWorkflow(sp.GetRequiredService<DataStores>(), settings, sp.GetRequiredService<IClock>(), loggers,
                 directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter, directMail: directMail);
@@ -84,13 +87,22 @@ var host = new HostBuilder()
             var assistant = settings.AiReports && settings.ReviewModelProvider == AzureOpenAIReviewModel.ProviderName
                 ? new AzureOpenAIAssistant(ReviewModelFactory.Chat(settings, logger: loggers.CreateLogger("AzureOpenAI")))
                 : null;
+            // v1.1 F5: offboarding plans are read-only (Graph reader, ARM reader); the writes exist only with AGENT_OFFBOARDING.
+            var reader = sp.GetRequiredService<IDirectoryReader>();
+            var offboarding = new OffboardingJob(parts.Stores, reader, (IOffboardingReader)reader, new ArmRoleAssignmentReader(Http(), credential),
+                settings.Workflow.AgentOffboarding ? new GraphOffboardingWriter(Http(), credential, settings.Workflow.OffboardDeleteUser) : null,
+                settings.Workflow.AgentOffboarding ? new ArmRoleAssignmentRemover(Http(), credential) : null,
+                parts.Notifier, parts.Issues, clock, settings.Workflow, loggers.CreateLogger<OffboardingJob>());
             return new WorkflowWorker(parts.Agent,
                 new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>(),
                     redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment,
-                    // Within the sender's limits (F70); with the agent TAP, 2 mails an hour stay free for the sign-in details.
-                    limits: settings.Workflow.MailLimits, reserve: settings.Workflow.AgentTap ? 2 : 0),
+                    // Within the sender's limits (F70). The sign-in details no longer use this queue (F2: Graph, TAP_MAIL_SENDER).
+                    limits: settings.Workflow.MailLimits),
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
-                new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant));
+                new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
+                // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.
+                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId),
+                offboarding);
         });
     })
     .Build();

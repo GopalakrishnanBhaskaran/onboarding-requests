@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PmoReview.Adapters;
 using PmoReview.Adapters.Dispatch;
@@ -63,21 +64,27 @@ public sealed class TestApp
     /// <summary>Agent TAP: the sign-in details mail (sent directly, never stored).</summary>
     public FakeDirectMail Mail { get; }
     public FakeTracker Tracker { get; } = new();
+    /// <summary>F5: Graph and ARM for offboarding (reads always; writes only when AGENT_OFFBOARDING is on).</summary>
+    public FakeOffboarding Offboarding { get; }
     public PilotSettings Settings { get; }
 
-    private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null)
+    private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
+        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null)
     {
+        loggers ??= NullLoggerFactory.Instance;
         Stores = stores ?? InMemoryDataStores.Create();
         SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
         Settings = settings;
         Directory = FakeDirectory.SeededFromSample();
         Roles = new FakeRoles();
-        Api = PilotApp.BuildWorkflow(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
-        Host = PilotApp.Build(Stores, settings, Clock, NullLoggerFactory.Instance, model, queue, apiDirectory);
+        Api = PilotApp.BuildWorkflow(Stores, settings, Clock, loggers, model, queue, apiDirectory);
+        Host = PilotApp.Build(Stores, settings, Clock, loggers, model, queue, apiDirectory, signingKeys: signingKeys);
         Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
-        Mail = new FakeDirectMail(settings.Workflow.MailRedirectTo);
-        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, NullLoggerFactory.Instance, model, directory: Directory, roles: Roles,
+        Mail = new FakeDirectMail();
+        Offboarding = new FakeOffboarding(Directory);
+        Loggers = loggers;
+        Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, loggers, model, directory: Directory, roles: Roles,
             writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
             directMail: settings.Workflow.AgentTap ? Mail : null);
     }
@@ -93,16 +100,27 @@ public sealed class TestApp
     public static TestApp On(DataStores stores, PilotSettings? settings = null) => new(settings ?? new PilotSettings(), null, null, null, stores);
 
     /// <summary>Real wiring with an optional scripted reviewer, settings, queue, or a directory reader in the API process.</summary>
-    public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null) =>
-        new(settings ?? new PilotSettings(), model, queue, apiDirectory);
+    public static TestApp With(IReviewModel? model = null, PilotSettings? settings = null, IQueueClient? queue = null, IDirectoryReader? apiDirectory = null,
+        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null) =>
+        new(settings ?? new PilotSettings(), model, queue, apiDirectory, loggers: loggers, signingKeys: signingKeys);
+
+    /// <summary>The loggers of the API and the worker (a capturing factory in the F2 "never in the logs" test).</summary>
+    public ILoggerFactory Loggers { get; }
+
+    /// <summary>v1.1: the worker also resolves mapping group names in (fake) Entra. Off by default so older tests keep their Entra call counts.</summary>
+    public bool ResolveGroups { get; set; }
 
     /// <summary>One worker cycle: agent steps for open requests (with the Entra reader), then notifications.</summary>
     public async Task<WorkerSummary> RunWorker()
     {
         var worker = new WorkflowWorker(Worker.Agent,
-            new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, NullLogger<NotificationDispatcher>.Instance),
-            new AdoSync(Stores, Tracker, Worker.Issues, Clock, NullLogger<AdoSync>.Instance),
-            new DailySummaryJob(Stores, Worker.Notifier, Clock));
+            new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, Loggers.CreateLogger<NotificationDispatcher>()),
+            new AdoSync(Stores, Tracker, Worker.Issues, Clock, Loggers.CreateLogger<AdoSync>()),
+            new DailySummaryJob(Stores, Worker.Notifier, Clock),
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null,
+            new PmoReview.Core.Offboarding.OffboardingJob(Stores, Directory, Offboarding, Offboarding,
+                Settings.Workflow.AgentOffboarding ? Offboarding : null, Settings.Workflow.AgentOffboarding ? Offboarding : null,
+                Worker.Notifier, Worker.Issues, Clock, Settings.Workflow, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()));
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 
@@ -235,6 +253,25 @@ public sealed class TestApp
         if (user is not null) headers[ClientPrincipalParser.HeaderName] = Principal(user);
         if (ifMatch is not null) headers["If-Match"] = ifMatch;
         return Send(method, path, headers, rawBody ?? (body is null ? null : AppJson.Serialize(body)), ct);
+    }
+
+    /// <summary>F4: a file upload from the Data uploads page (multipart body, signed-in user).</summary>
+    public Task<Resp> Upload(string user, string project, string kind, byte[] file, string fileName, string mode = "validate", bool retireMissing = false,
+        int? baseVersion = null, string? sheet = null)
+    {
+        var query = $"mode={mode}&retireMissing={(retireMissing ? "true" : "false")}{(baseVersion is null ? "" : $"&baseVersion={baseVersion}")}{(sheet is null ? "" : $"&sheet={Uri.EscapeDataString(sheet)}")}";
+        return SendRaw("POST", $"projects/{project}/uploads/{kind}?{query}", new Dictionary<string, string>
+        {
+            [ClientPrincipalParser.HeaderName] = Principal(user), ["Content-Type"] = UploadFiles.MultipartType,
+        }, UploadFiles.Multipart(file, fileName));
+    }
+
+    /// <summary>A request with a binary body (file uploads), the way the Functions host passes it.</summary>
+    public async Task<Resp> SendRaw(string method, string path, Dictionary<string, string> headers, byte[] body, CancellationToken ct = default)
+    {
+        var text = body.Length <= ApiHost.MaxBodyBytes + 1 ? System.Text.Encoding.UTF8.GetString(body) : null;
+        var r = await Host.HandleAsync(new ApiRequest(method, path, headers, text, Guid.NewGuid().ToString("n")) { RawBody = body }, ct);
+        return new Resp(r.Status, r.SerializedBody, r.Headers);
     }
 
     public async Task<Resp> Send(string method, string path, Dictionary<string, string> headers, string? body, CancellationToken ct = default)

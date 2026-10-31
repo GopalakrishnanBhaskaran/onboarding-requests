@@ -76,12 +76,14 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
     }
 
     /// <summary>Submits a new request (status Submitted). The caller then starts the AI review.</summary>
-    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct)
+    /// <param name="bundleId">Set by the server for requests submitted together from one Resource* selection (F1); never from the body.</param>
+    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct, string? bundleId = null)
     {
         caller.Require(projectId, Permission.SubmitRequests);
         var (clean, fixes) = Validate(input);
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
@@ -99,6 +101,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Justification = clean.Justification,
             Owner = clean.Owner,
             Guest = clean.Guest ?? false,
+            BundleId = bundleId,
             CreatedBy = caller.UserId,
             CreatedByName = caller.DisplayName,
             CreatedAt = now,
@@ -108,6 +111,24 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Flow = flow,
         };
         return await stores.Requests.CreateAsync(doc, ct);
+    }
+
+    /// <summary>
+    /// v1.1 F5: a person the people inventory marks Leaver (offboarded) gets no new access: a new or corrected request is
+    /// refused until the Data Steward marks the person Active again (a rehire).
+    /// </summary>
+    private async Task RefuseLeaverAsync(string projectId, string domainId, CancellationToken ct)
+    {
+        var person = (await stores.PeopleInventory.GetAsync(projectId, Person.MakeId(domainId), ct))?.Value;
+        if (person is { Status: PersonStatus.Leaver, Retired: false })
+            throw AppException.Conflict("person_is_leaver",
+                $"{domainId} is marked as a leaver (offboarded) in the people inventory. A rehire is marked Active again by the Data Steward first.");
+        // Offboarded in this project and not (or no longer) in the people inventory as Active: the same, until a rehire is added.
+        if (person is not { Status: PersonStatus.Active, Retired: false }
+            && (await stores.OffboardingRuns.ListAsync(projectId, ct)).Any(r => string.Equals(r.Value.EnterpriseId, domainId, StringComparison.OrdinalIgnoreCase)
+                                                                             && r.Value.Status is OffboardingStatus.Completed or OffboardingStatus.PartiallyCompleted))
+            throw AppException.Conflict("person_is_leaver",
+                $"{domainId} was offboarded in this project. A rehire is added to the people inventory as Active by the Data Steward first.");
     }
 
     /// <summary>Edits a Returned request and submits it again (new revision, back to AI review).</summary>
@@ -125,6 +146,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
         if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");

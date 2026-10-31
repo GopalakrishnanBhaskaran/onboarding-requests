@@ -33,6 +33,10 @@ After both approvals, the agent (deterministic code, not the AI model) can creat
   - verification no longer waits for the joiner's sign-in;
   - a Contact inventory page;
   - mail goes out within the sender's limit, most urgent first.
+- **30 Oct (v1.1, section 12a):**
+  - Resource\* selector, Prod read-only guard with a ProdApprover, Data uploads, offboarding plans (option 1, live);
+  - the agent does the Entra steps of a confirmed offboarding (option 3, live);
+  - agent TAP mail only to the verified enterprise mail (coded, off).
 
 
 ## 2. Components (pilot)
@@ -66,7 +70,7 @@ After both approvals, the agent (deterministic code, not the AI model) can creat
 - `/logout` goes to a public `signed-out.html`.
 
 **API**
-- Code: `src/api` runs on Static Web Apps managed Functions (.NET 9 isolated, HTTP only). The logic is in `src/core`: `ApiHost`, `Endpoints`, `RequestService`, `WorkflowService`, `MappingSheetService`, `ContactInventoryService`.
+- Code: `src/api` runs on Static Web Apps managed Functions (.NET 10 isolated since 30 Oct 2026, HTTP only). The logic is in `src/core`: `ApiHost`, `Endpoints`, `RequestService`, `WorkflowService`, `MappingSheetService`, `ContactInventoryService`.
 - No managed identity (F2) and a 45-second limit (F3). It reaches Cosmos with a connection string held in the Static Web Apps app settings.
 - It runs the agent step inline after each action, so people see the next stage at once.
 
@@ -297,6 +301,22 @@ Identity comes only from `x-ms-client-principal`. A project the caller has no ro
 - **`az deployment sub what-if` before every resource change:** the resource group is created by the deployment, so it passes the approval gate too.
 
 
+## 12a. v1.1 feature pack (30 Oct 2026, live in the pilot)
+
+Instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions: `docs/V1_1_PLAN.md`; phase results: `docs/V1_1_PHASES.md`; runbook: `docs/V1_1_DEPLOY.md`; evidence: `docs/DEPLOYMENT_LOG.md`.
+- **Data (P1):** eight more containers (`mappingVersions`, `peopleInventory`, `inventoryVersions`, `escalations`, `mappingQualityIssues`, `groupResolutions`, `offboardingRuns`, `auditEvents`), all partitioned by project; 21 containers in the shared free-tier database (limit 25, F90). Roles `ProdApprover` and `DataSteward` (the Data Steward; named `DataMaintainer` until 31 Oct 2026, a name still read as DataSteward); the legacy `Maintainer` still grants nothing.
+- **F1 Resource\* selector (P2):** `ResourceResolver` (pure) and `ResourceService`; `GET resources/options`, `GET resources/resolve` (the contract), `POST projects/{p}/requests/bundle` (one request per ticked group, `BundleId`). The worker's `GroupResolutionJob` reads each mapping group name in Entra (read-only, agent tenant only), raises one UnresolvedGroup escalation per group that does not resolve and records near-duplicate names as mapping quality issues. Near-duplicates: normalised name, edit distance ≤ 2 (banded, prefix/suffix skipped); an unresolved variant is hidden, two groups that both resolve stay visible with a note.
+- **F3 Prod read-only (P2):** `ProdGuard` decides "above Read in Prod" from the level, every Azure role (a Read label never outranks a writing role) and the privileged flag. Security approval → `AwaitingProdApproval` + a ProdWrite escalation; `POST projects/{p}/escalations/{id}/decision` (ProdApprover only; four eyes; bound to revision + scope fingerprint); the agent re-checks before every grant (`ProdBlockAsync`) and team reports are refused without the approval.
+- **Hosting (P3, decided):** option A — F2 and F5 run in the existing worker (managed identity), asynchronously; no new Azure resource (`docs/HOSTING.md`).
+- **F2 TAP recipient (P4):** `TapRecipient` takes the people inventory's EnterpriseEmail of the account the agent created and requires it to equal that Entra user's `mail` or UPN (from the create response); otherwise no pass is created, a TapRecipientMismatch escalation is raised and the ID team hands the pass over. `DirectMail` sends to exactly one address, never redirected, through Graph from `TAP_MAIL_SENDER` (Exchange-scoped `Application Mail.Send`); no copy is stored, only an audit event (`docs/ROOT_CAUSE.md`).
+- **F4 uploads (P4):** `src/core/.../Uploads`: `TabularFile` (CSV/XLSX reader, macro and zip-bomb checks), `UploadSchema` (I1/I2 columns and row checks), `UploadService` (diff, upsert by key, versions with before-images, rollback, head record claimed by ETag, undo of a failed or crashed apply, idempotency), `UploadToken` (Entra v2.0 app token validation). Routes: `GET/POST projects/{p}/uploads[/{kind}]`, `POST projects/{p}/uploads/{kind}/rollback`, and `POST v1/uploads/{kind}` (app-token route, 404 while off). `ApiHost` gained a per-route body limit, raw bodies and routes that skip the SWA principal for their own token check.
+- **F5 offboarding (P5):** `OffboardingService` (API: plan request, confirmation with four eyes in a production tenant, `AGENT_OFFBOARDING` and plan age checks; idempotent run ids) and `OffboardingJob` (worker: plan from Graph/ARM reads; execute only the confirmed plan — `PlanHash` — in order: sessions → TAP → memberships → Azure role assignments → disable → [soft delete] → people inventory Leaver → close open requests; every step reads first and progress is saved after each; transient failures retried at most 3 times; verify; Completed → one mail to the PMO only; leftovers → PartiallyCompleted + OffboardingLeftover escalation). Reads: `GraphDirectoryReader` (getMemberGroups, direct-member advanced query, methods list) and `ArmRoleAssignmentReader` (subscriptions, assignments per principal); writes: `GraphOffboardingWriter`, `ArmRoleAssignmentRemover` (worker only, switch on). Routes: `POST/GET offboarding/{enterpriseId:upn}?projectId=…`; new request status `Closed`.
+- **P6 (done):** edge-case suite and independent review (`REVIEW.md`): Critical 0, High 0 after re-checks 2–4 (last on `35e7a62`); open by decision: Medium 7, 8, 9 (part), 11, 12; Low 5 (part), 15, 18, 19. Approved by Gokul on 30 Oct 2026.
+- **P7 option 1 (live, ~16:40 UTC 30 Oct):** `apply` of `9105ddd` (approved by Gokul): the 8 containers, the worker's data roles, app and worker; every new switch off; cost unchanged. `verify_features` 21 PASS, 1 WAIT (15, go-live); line 16 PASS.
+- **Option 3, Entra only (decision F5a, live):** for a plan a PMO or Operator confirmed, the agent revokes sessions, removes the TAP and group memberships and disables the account (`deploy_free.sh offboarding … on`, 2 new Graph permissions; inferred from the live run, the `--approved-by` output was not seen). Azure role assignments stay a leftover for the role assignment team (no Azure right). First run (live check T): Partially completed — revoke and disable refused while the new permissions reached the worker's token (F61); a late "still in" group read (F104) fixed in `7922922`, not deployed yet.
+- **Still off:** agent TAP mail (option 2, `TAP_MAIL_SENDER` unset: the ID team hands the pass over), the external upload API (needs hosting option B or C).
+- **Next:** `docs/NEXT_SESSION.md` (redeploy `7922922`, re-test offboarding after 24 h, register the Data Steward and the ProdApprover, people inventory upload).
+
 ## 12. Target architecture in the actual tenant (private endpoint only, design)
 
 Status: a design agreed on 23 Oct 2026; not built or deployed. Build tasks A10–A12 are in `docs/ENTERPRISE_CLAUDE_PROMPTS.md`; settings and *(verify)* items are in `docs/SECURE_HOSTING_AND_MAIL.md`.
@@ -314,7 +334,7 @@ There is one stack per tenant (PEST, Vestacy). Each stack lives in a subscriptio
 ### Pilot → target, component by component
 
 - **Website and API**
-  - Pilot: Static Web Apps Free with managed Functions (.NET 9).
+  - Pilot: Static Web Apps Free with managed Functions (.NET 10).
   - Target: **one App Service app** (Linux, .NET 10). A new host, `src/webhost`, serves the website and reuses `ApiHost`.
 - **Sign-in**
   - Pilot: the pre-configured provider, where any Microsoft account can sign in.

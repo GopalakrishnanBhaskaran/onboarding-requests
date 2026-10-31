@@ -104,6 +104,15 @@ public static class CosmosSchema
         (ContainerNames.ResponseDocument, "/projectId", []),
         (ContainerNames.Notifications, "/projectId", []),
         (ContainerNames.Issues, "/projectId", []),
+        // v1.1 (30 Oct 2026)
+        (ContainerNames.MappingVersions, "/projectId", []),
+        (ContainerNames.PeopleInventory, "/projectId", []),
+        (ContainerNames.InventoryVersions, "/projectId", []),
+        (ContainerNames.Escalations, "/projectId", []),
+        (ContainerNames.MappingQualityIssues, "/projectId", []),
+        (ContainerNames.GroupResolutions, "/projectId", []),
+        (ContainerNames.OffboardingRuns, "/projectId", []),
+        (ContainerNames.AuditEvents, "/projectId", []),
     ];
 
     /// <summary>v1 containers: declared in Bicep so nothing is ever removed, never read or written by v2.</summary>
@@ -158,7 +167,15 @@ public static class CosmosDataStores
             new CosmosDocumentStore<MappingRow>(db.GetContainer(ContainerNames.MappingSheet)),
             new CosmosDocumentStore<ResponseRecord>(db.GetContainer(ContainerNames.ResponseDocument)),
             new CosmosDocumentStore<Core.Workflow.Notification>(db.GetContainer(ContainerNames.Notifications)),
-            new CosmosDocumentStore<Core.Workflow.Issue>(db.GetContainer(ContainerNames.Issues)));
+            new CosmosDocumentStore<Core.Workflow.Issue>(db.GetContainer(ContainerNames.Issues)),
+            new CosmosDocumentStore<DataVersion>(db.GetContainer(ContainerNames.MappingVersions)),
+            new CosmosDocumentStore<Person>(db.GetContainer(ContainerNames.PeopleInventory)),
+            new CosmosDocumentStore<DataVersion>(db.GetContainer(ContainerNames.InventoryVersions)),
+            new CosmosDocumentStore<Escalation>(db.GetContainer(ContainerNames.Escalations)),
+            new CosmosDocumentStore<MappingQualityIssue>(db.GetContainer(ContainerNames.MappingQualityIssues)),
+            new CosmosDocumentStore<GroupResolution>(db.GetContainer(ContainerNames.GroupResolutions)),
+            new CosmosDocumentStore<OffboardingRun>(db.GetContainer(ContainerNames.OffboardingRuns)),
+            new CosmosDocumentStore<AuditEvent>(db.GetContainer(ContainerNames.AuditEvents)));
     }
 
     /// <summary>

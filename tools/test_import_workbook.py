@@ -127,6 +127,11 @@ def run(write_fixture: bool) -> None:
     ui = {**doc, "contacts": {"security": ["sec@company.invalid"]}, "contactsVersion": 2}
     assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid")["contacts"] == {"security": ["sec@company.invalid"]}
     assert iw.project_doc(data, ui, "", None, None, "Tester@Sample.invalid", True)["contacts"]["security"] == ["tester@sample.invalid"]
+    # v1.1 F5: production tenant flag — not given keeps the live value (never set = production, fails closed); yes/no sets it.
+    assert "isProductionTenant" not in doc
+    assert iw.project_doc(data, doc, "", None, None, None, production_tenant=False)["isProductionTenant"] is False
+    marked = iw.project_doc(data, None, "", None, None, None, production_tenant=True)
+    assert marked["isProductionTenant"] is True and iw.project_doc(data, marked, "", None, None, None)["isProductionTenant"] is True
     assert iw.users(["sample-user-1=Requester,Owner"], "PEST") == [
         {"id": "sample-user-1:PEST", "userId": "sample-user-1", "projectId": "PEST", "roles": ["Requester", "Owner"], "isSample": False, "schemaVersion": 1}]
     # By sign-in name: stored as "signin:<lower case mail>" (the API matches guest and live.com# forms of it).

@@ -10,21 +10,62 @@ namespace PmoReview.Adapters.Entra;
 
 /// <summary>
 /// Microsoft Graph v1.0, read only. The worker identity holds read permissions only (User.Read.All,
-/// GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All). The only non-GET call is the
-/// documented read action <c>checkMemberGroups</c>; there is no code path that writes to Entra.
+/// GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All). The only non-GET calls are the
+/// documented read actions <c>checkMemberGroups</c> and <c>getMemberGroups</c> (F5 plan, F77); there is no code path that
+/// writes to Entra.
 /// </summary>
-public sealed class GraphDirectoryReader(HttpClient http, TokenCredential credential) : IDirectoryReader
+public sealed class GraphDirectoryReader(HttpClient http, TokenCredential credential) : IDirectoryReader, IOffboardingReader
 {
+    /// <summary>
+    /// F5: every group (and directory role) the user is in, transitively (getMemberGroups, F77/F102), each with whether the
+    /// user is a direct member (direct members only, advanced query, F94). Dynamic and role-assignable groups and
+    /// anything that is not a group (a directory role) are marked not changeable: they are left to people. A directory role
+    /// or a role-assignable group also marks the account as a directory-role holder (the agent then changes nothing).
+    /// </summary>
+    public async Task<IReadOnlyList<GroupMembership>> MembershipsAsync(string userObjectId, CancellationToken ct)
+    {
+        var user = Guid(userObjectId);
+        using var doc = await SendAsync(HttpMethod.Post, $"{V1}users/{user}/getMemberGroups", "{\"securityEnabledOnly\":false}", ct)
+                        ?? throw new DirectoryReadException("GraphError");
+        var result = new List<GroupMembership>();
+        foreach (var id in Values(doc).Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString()!).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            using var g = await SendAsync(HttpMethod.Get, $"{V1}groups/{Guid(id)}?$select=id,displayName,groupTypes,isAssignableToRole", null, ct, notFoundIsNull: true);
+            if (g is null)
+            {
+                result.Add(new GroupMembership(id, id, true, "not a group (for example an Entra directory role): left to people", DirectoryRole: true));
+                continue;
+            }
+            var name = Str(g.RootElement, "displayName") ?? id;
+            var dynamic = g.RootElement.TryGetProperty("groupTypes", out var types) && types.ValueKind == JsonValueKind.Array
+                          && types.EnumerateArray().Any(t => t.ValueKind == JsonValueKind.String && t.GetString() == "DynamicMembership");
+            if (dynamic) { result.Add(new GroupMembership(id, name, true, "dynamic group (membership by rule; members cannot be removed, F102)")); continue; }
+            var filter = Q($"id eq '{user}'");
+            using var m = await SendAsync(HttpMethod.Get, $"{V1}groups/{Guid(id)}/members?$filter={filter}&$count=true&$select=id", null, ct, eventual: true);
+            var direct = m is not null && Values(m).Any();
+            var roleAssignable = Bool(g.RootElement, "isAssignableToRole") == true;
+            result.Add(new GroupMembership(id, name, direct,
+                direct && roleAssignable ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null, DirectoryRole: roleAssignable));
+        }
+        return result;
+    }
+
+    /// <summary>F5: ids of the user's Temporary Access Pass methods (authentication methods list, F79).</summary>
+    public async Task<IReadOnlyList<string>> TapMethodIdsAsync(string userObjectId, CancellationToken ct) =>
+        (await GetAllAsync($"{V1}users/{Guid(userObjectId)}/authentication/methods", ct))
+            .Where(m => string.Equals(Str(m, "@odata.type"), "#microsoft.graph.temporaryAccessPassAuthenticationMethod", StringComparison.OrdinalIgnoreCase))
+            .Select(m => Str(m, "id")).Where(x => x is not null).Select(x => x!).ToList();
+
     public const string Scope = "https://graph.microsoft.com/.default";
     private const string V1 = "https://graph.microsoft.com/v1.0/";
     private const int MaxPages = 20;
 
     public async Task<DirectoryUser?> FindUserAsync(string userPrincipalName, CancellationToken ct)
     {
-        using var doc = await GetAsync($"{V1}users?$filter={Q($"userPrincipalName eq '{Literal(userPrincipalName)}'")}&$select=id,userPrincipalName,userType,accountEnabled", ct);
+        using var doc = await GetAsync($"{V1}users?$filter={Q($"userPrincipalName eq '{Literal(userPrincipalName)}'")}&$select=id,userPrincipalName,userType,accountEnabled,mail", ct);
         var u = Values(doc).FirstOrDefault();
         return u.ValueKind == JsonValueKind.Undefined ? null
-            : new DirectoryUser(Str(u, "id") ?? "", Str(u, "userPrincipalName") ?? userPrincipalName, Str(u, "userType"), Bool(u, "accountEnabled") ?? true);
+            : new DirectoryUser(Str(u, "id") ?? "", Str(u, "userPrincipalName") ?? userPrincipalName, Str(u, "userType"), Bool(u, "accountEnabled") ?? true, Str(u, "mail"));
     }
 
     public async Task<IReadOnlyList<DirectoryGroup>> FindGroupsAsync(string displayName, CancellationToken ct)
@@ -96,11 +137,11 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
         return all;
     }
 
-    /// <summary>GET, or POST to checkMemberGroups only. 429 and 5xx are retried once; errors become categories.</summary>
-    private async Task<JsonDocument?> SendAsync(HttpMethod method, string url, string? body, CancellationToken ct, bool notFoundIsNull = false)
+    /// <summary>GET, or POST to the read actions checkMemberGroups / getMemberGroups only. 429 and 5xx are retried once; errors become categories.</summary>
+    private async Task<JsonDocument?> SendAsync(HttpMethod method, string url, string? body, CancellationToken ct, bool notFoundIsNull = false, bool eventual = false)
     {
         if (!url.StartsWith(V1, StringComparison.Ordinal)) throw new DirectoryReadException("GraphError");
-        if (method != HttpMethod.Get && !(method == HttpMethod.Post && url.EndsWith("/checkMemberGroups", StringComparison.Ordinal)))
+        if (method != HttpMethod.Get && !(method == HttpMethod.Post && (url.EndsWith("/checkMemberGroups", StringComparison.Ordinal) || url.EndsWith("/getMemberGroups", StringComparison.Ordinal))))
             throw new DirectoryReadException("WriteRefused");
         for (var attempt = 0; ; attempt++)
         {
@@ -111,6 +152,7 @@ public sealed class GraphDirectoryReader(HttpClient http, TokenCredential creden
                 using var req = new HttpRequestMessage(method, url);
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
                 req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                if (eventual) req.Headers.Add("ConsistencyLevel", "eventual"); // advanced query (F94)
                 if (body is not null) req.Content = new StringContent(body, Encoding.UTF8, "application/json");
                 res = await http.SendAsync(req, ct);
             }

@@ -81,29 +81,32 @@ public sealed class OutboxOnlySender : INotificationSender
 
 /// <summary>
 /// Sends one mail now instead of through the outbox, for content that must never be stored: the agent's sign-in details
-/// (initial password + TAP). Same sender and test redirect as <see cref="NotificationDispatcher"/>; the caller records a
-/// masked copy (<see cref="Notifier.RecordSentAsync"/>). Not retried: a failure goes to the ID team.
+/// (initial password + TAP). F2 (v1.1): exactly one recipient — the verified enterprise mail (<see cref="TapRecipient"/>) —
+/// no Cc or Bcc, **never redirected** (also not in a test environment), nothing stored. Not retried: a failure goes to the
+/// ID team.
 /// </summary>
 public interface IDirectMail
 {
-    /// <summary>False when nothing would be mailed (Outbox only): the agent then never issues a TAP itself.</summary>
+    /// <summary>False when nothing would be mailed (no TAP mail sender): the agent then never issues a TAP itself.</summary>
     bool Delivers { get; }
-    /// <returns>The addresses it was delivered to (the test address when redirected).</returns>
+    /// <returns>The one address it was delivered to.</returns>
     Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct);
 }
 
-/// <summary>The worker's <see cref="IDirectMail"/>: the configured sender, with the test-environment redirect.</summary>
-public sealed class DirectMail(INotificationSender sender, string? redirectTo = null, string environment = "pilot") : IDirectMail
+/// <summary>
+/// The worker's <see cref="IDirectMail"/>: Graph <c>sendMail</c> from the one <c>TAP_MAIL_SENDER</c> mailbox (F81, F96). Refuses
+/// anything but one plain recipient; it has no redirect.
+/// </summary>
+public sealed class DirectMail(INotificationSender sender) : IDirectMail
 {
     public bool Delivers => sender.Delivers;
 
     public async Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct)
     {
         if (!sender.Delivers) throw new OutboundException("NotDelivered");
-        var outgoing = NotificationDispatcher.Redirect(notification, redirectTo, environment);
-        if (outgoing.To.Count == 0) throw new OutboundException("NoRecipients");
-        await sender.SendAsync(outgoing, ct);
-        return outgoing.To;
+        if (notification.To.Count != 1 || MailAddresses.Normalize(notification.To[0]) != notification.To[0]) throw new OutboundException("NotOneRecipient");
+        await sender.SendAsync(notification, ct);
+        return notification.To;
     }
 }
 
@@ -251,7 +254,7 @@ public sealed class AdoSync(DataStores stores, IWorkItemTracker tracker, IssueLo
                 var flow = r.Flow;
                 if (flow is null) continue;
                 var ado = flow.Ado ?? new AdoLink();
-                var close = flow.Status is RequestStatus.Completed or RequestStatus.Rejected;
+                var close = flow.IsFinal;
                 if (ado.SyncedEvents >= flow.Events.Count && (!close || ado.Closed)) continue;
                 var key = Ids.Key(r.Id, "ado");
                 if (flow.AttemptsFor(key) >= maxAttempts) continue;
@@ -333,10 +336,15 @@ public sealed class DailySummaryJob(DataStores stores, Notifier notifier, IClock
 public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary);
 
 /// <summary>One worker cycle: agent steps for open requests, notifications, Azure DevOps, daily summary.</summary>
-public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily)
+public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null,
+    Offboarding.OffboardingJob? offboarding = null)
 {
     public async Task<WorkerSummary> RunOnceAsync(string correlationId, CancellationToken ct)
     {
+        // v1.1 (F1): group names resolved in Entra first, so the selector and the escalations are fresh.
+        if (groups is not null) await groups.RunOnceAsync(ct);
+        // v1.1 (F5): offboarding plans and confirmed runs, before the requests (it closes the person's open ones).
+        if (offboarding is not null) await offboarding.RunOnceAsync(ct);
         var advanced = await agent.RunOnceAsync(correlationId, ct);
         var sent = await notifications.RunOnceAsync(ct);
         var items = await ado.RunOnceAsync(ct);

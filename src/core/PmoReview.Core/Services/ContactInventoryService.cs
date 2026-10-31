@@ -17,6 +17,8 @@ public sealed record ContactInventoryInput
     public string? RoleTeam { get; init; }
     public string? Pmo { get; init; }
     public string? Operators { get; init; }
+    /// <summary>v1.1 (F3): where Prod escalation requests go. Optional; empty = the request reaches nobody (High issue).</summary>
+    public string? ProdApprovers { get; init; }
     public string? SecurityManager { get; init; }
     public string? IdTeamManager { get; init; }
     public string? RoleTeamManager { get; init; }
@@ -81,6 +83,7 @@ public sealed class ContactInventoryService(DataStores stores, Notifier notifier
             RoleTeam = List(input.RoleTeam, before.RoleTeam, "Role assignment team", true),
             Pmo = List(input.Pmo, before.Pmo, "PMO", false),
             Operators = List(input.Operators, before.Operators, "Operators", false),
+            ProdApprovers = List(input.ProdApprovers, before.ProdApprovers, "ProdApprovers", false),
             SecurityManager = One(input.SecurityManager, before.SecurityManager, "Security manager"),
             IdTeamManager = One(input.IdTeamManager, before.IdTeamManager, "ID team manager"),
             RoleTeamManager = One(input.RoleTeamManager, before.RoleTeamManager, "Role assignment team manager"),
@@ -150,6 +153,7 @@ public sealed class ContactInventoryService(DataStores stores, Notifier notifier
         ListChange("Role assignment team", a.RoleTeam, b.RoleTeam);
         ListChange("PMO", a.Pmo, b.Pmo);
         ListChange("Operators", a.Operators, b.Operators);
+        ListChange("ProdApprovers", a.ProdApprovers, b.ProdApprovers);
         OneChange("Security manager", a.SecurityManager, b.SecurityManager);
         OneChange("ID team manager", a.IdTeamManager, b.IdTeamManager);
         OneChange("Role assignment team manager", a.RoleTeamManager, b.RoleTeamManager);

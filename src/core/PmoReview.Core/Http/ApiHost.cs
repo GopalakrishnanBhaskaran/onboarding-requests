@@ -16,6 +16,13 @@ public sealed record ApiRequest(
 {
     public string? Header(string name) =>
         Headers.FirstOrDefault(h => string.Equals(h.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    /// <summary>The body as bytes (file uploads). Null when the transport only gave text: then <see cref="Body"/> as UTF-8.</summary>
+    public byte[]? RawBody { get; init; }
+
+    public byte[] Bytes => RawBody ?? (Body is null ? [] : System.Text.Encoding.UTF8.GetBytes(Body));
+
+    public int Size => RawBody?.Length ?? Body?.Length ?? 0;
 }
 
 public sealed record ApiResponse(int Status, object? Body, IReadOnlyDictionary<string, string>? Headers = null)
@@ -48,6 +55,13 @@ public sealed record RouteContext(
     }
 
     public string? IfMatch => Request.Header("If-Match")?.Trim();
+
+    /// <summary>Query string values by name (case-insensitive name; repeated names keep every value, in order).</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> Query { get; init; } = new Dictionary<string, IReadOnlyList<string>>();
+
+    public string? QueryValue(string name) => Query.TryGetValue(name, out var v) && v.Count > 0 ? v[0] : null;
+
+    public IReadOnlyList<string> QueryValues(string name) => Query.TryGetValue(name, out var v) ? v : [];
 }
 
 public delegate Task<ApiResponse> RouteHandler(RouteContext ctx);
@@ -59,14 +73,23 @@ public delegate Task<ApiResponse> RouteHandler(RouteContext ctx);
 public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<string> allowedProviders, ILogger<ApiHost> logger)
 {
     public const int MaxBodyBytes = 64 * 1024;
-    private readonly List<(string Method, string[] Segments, RouteHandler Handler)> _routes = [];
+    /// <summary>Largest body any route accepts (file uploads: MAX_UPLOAD_BYTES ≤ 25 MB plus the multipart framing; SWA allows 30 MB, F88).</summary>
+    public const int MaxUploadBodyBytes = 25 * 1024 * 1024 + 64 * 1024;
+    private readonly List<(string Method, string[] Segments, RouteHandler Handler, int MaxBody, bool AppToken)> _routes = [];
 
     /// <summary>"METHOD template" for every mapped route. Used by acceptance gates (no fulfilment routes).</summary>
     public IReadOnlyList<string> Routes => _routes.Select(r => $"{r.Method} {string.Join('/', r.Segments)}").ToList();
 
-    public ApiHost Map(string method, string template, RouteHandler handler)
+    public ApiHost Map(string method, string template, RouteHandler handler) => Map(method, template, handler, MaxBodyBytes, appToken: false);
+
+    /// <param name="maxBody">Largest body this route accepts (uploads only go above <see cref="MaxBodyBytes"/>).</param>
+    /// <param name="appToken">
+    /// The route authenticates the caller itself from a validated Entra application token (F4 external API) and gets no
+    /// signed-in user: the platform principal is not read, and the handler must not use <see cref="RouteContext.Caller"/>.
+    /// </param>
+    public ApiHost Map(string method, string template, RouteHandler handler, int maxBody, bool appToken)
     {
-        _routes.Add((method.ToUpperInvariant(), template.Trim('/').Split('/'), handler));
+        _routes.Add((method.ToUpperInvariant(), template.Trim('/').Split('/'), handler, Math.Min(maxBody, MaxUploadBodyBytes), appToken));
         return this;
     }
 
@@ -74,27 +97,26 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
     {
         try
         {
-            if (request.Body is { Length: > MaxBodyBytes })
+            var (pathOnly, query) = SplitQuery(request.Path);
+            var path = pathOnly.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var matches = _routes.Select(r => (Route: r, Values: TryMatch(r.Segments, path, out var v) ? v : null)).Where(m => m.Values is not null).ToList();
+            var match = matches.FirstOrDefault(m => m.Route.Method == request.Method.ToUpperInvariant());
+
+            if (request.Size > (match.Values is null ? MaxBodyBytes : match.Route.MaxBody))
                 throw new AppException(ErrorKind.PayloadTooLarge, "payload_too_large", "Request body is too large.");
 
-            var principal = ClientPrincipalParser.Parse(request.Header(ClientPrincipalParser.HeaderName), allowedProviders);
-            var caller = await access.ResolveAsync(principal, ct);
+            var caller = match.Values is not null && match.Route.AppToken
+                ? CallerContext.None
+                : await access.ResolveAsync(ClientPrincipalParser.Parse(request.Header(ClientPrincipalParser.HeaderName), allowedProviders), ct);
+            if (match.Values is null)
+                return Error(matches.Count > 0 ? 405 : 404, matches.Count > 0 ? "method_not_allowed" : "not_found",
+                    matches.Count > 0 ? "Method not allowed." : "Not found.", request.CorrelationId);
 
-            var path = request.Path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-            var pathMatched = false;
-            foreach (var (method, segments, handler) in _routes)
-            {
-                if (!TryMatch(segments, path, out var values)) continue;
-                pathMatched = true;
-                if (method != request.Method.ToUpperInvariant()) continue;
-
-                var response = await handler(new RouteContext(request, caller, values, ct));
-                logger.LogInformation("api {Method} {Template} -> {Status} cid={CorrelationId}",
-                    method, string.Join('/', segments), response.Status, request.CorrelationId);
-                return response;
-            }
-            return Error(pathMatched ? 405 : 404, pathMatched ? "method_not_allowed" : "not_found",
-                pathMatched ? "Method not allowed." : "Not found.", request.CorrelationId);
+            var (method, segments, handler, _, _) = match.Route;
+            var response = await handler(new RouteContext(request, caller, match.Values, ct) { Query = query });
+            logger.LogInformation("api {Method} {Template} -> {Status} cid={CorrelationId}",
+                method, string.Join('/', segments), response.Status, request.CorrelationId);
+            return response;
         }
         catch (AppException e)
         {
@@ -125,6 +147,26 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
     private static ApiResponse Error(int status, string code, string message, string cid, IReadOnlyList<string>? details = null) =>
         new(status, new { error = new ApiError(code, message, cid, details) });
 
+    /// <summary>"path?a=1&b=2&b=3" → the path and the decoded query values (at most 64 parameters, 2,000 characters each).</summary>
+    public static (string Path, IReadOnlyDictionary<string, IReadOnlyList<string>> Query) SplitQuery(string pathAndQuery)
+    {
+        var at = pathAndQuery.IndexOf('?');
+        var query = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        if (at < 0) return (pathAndQuery, query);
+        var lists = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in pathAndQuery[(at + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries).Take(64))
+        {
+            var eq = part.IndexOf('=');
+            var name = Uri.UnescapeDataString((eq < 0 ? part : part[..eq]).Replace('+', ' '));
+            var value = eq < 0 ? "" : Uri.UnescapeDataString(part[(eq + 1)..].Replace('+', ' '));
+            if (name.Length == 0 || value.Length > 2000) continue;
+            if (!lists.TryGetValue(name, out var list)) lists[name] = list = [];
+            list.Add(value);
+        }
+        foreach (var (k, v) in lists) query[k] = v;
+        return (pathAndQuery[..at], query);
+    }
+
     private static bool TryMatch(string[] template, string[] path, out Dictionary<string, string> values)
     {
         values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -135,8 +177,10 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
             if (t.StartsWith('{') && t.EndsWith('}'))
             {
                 var value = Uri.UnescapeDataString(path[i]);
-                if (!SafeId().IsMatch(value)) return false;
-                values[t[1..^1]] = value;
+                // "{name:upn}" (F5): a UPN, which may hold '@' and a guest's '#'; every other value is a plain id.
+                var upn = t.EndsWith(":upn}", StringComparison.Ordinal);
+                if (!(upn ? Upn() : SafeId()).IsMatch(value)) return false;
+                values[upn ? t[1..^5] : t[1..^1]] = value;
             }
             else if (!string.Equals(t, path[i], StringComparison.Ordinal))
             {
@@ -148,4 +192,7 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
 
     [GeneratedRegex("^[A-Za-z0-9_.:\\-]{1,128}$")]
     private static partial Regex SafeId();
+
+    [GeneratedRegex("^[A-Za-z0-9._%+'#-]{1,113}@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$")]
+    private static partial Regex Upn();
 }

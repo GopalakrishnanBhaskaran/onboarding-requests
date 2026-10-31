@@ -19,10 +19,12 @@ public sealed partial class ApiFunction(ApiHost api)
         CancellationToken ct)
     {
         var headers = req.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase);
-        var body = await ReadBodyAsync(req.Body, ct);
+        var bytes = await ReadBodyAsync(req.Body, ct);
         var cid = headers.TryGetValue("x-correlation-id", out var c) && SafeCid().IsMatch(c) ? c : Guid.NewGuid().ToString("n");
 
-        var result = await api.HandleAsync(new ApiRequest(req.Method, path ?? "", headers, body, cid), ct);
+        // JSON routes read Body (text); file uploads (F4) read RawBody. ApiHost refuses a body over the route's limit.
+        var body = bytes.Length == 0 || bytes.Length > ApiHost.MaxBodyBytes + 1 ? null : System.Text.Encoding.UTF8.GetString(bytes);
+        var result = await api.HandleAsync(new ApiRequest(req.Method, (path ?? "") + req.Url.Query, headers, body, cid) { RawBody = bytes.Length == 0 ? null : bytes }, ct);
 
         var res = req.CreateResponse((HttpStatusCode)result.Status);
         res.Headers.Add("x-correlation-id", cid);
@@ -37,19 +39,15 @@ public sealed partial class ApiFunction(ApiHost api)
         return res;
     }
 
-    /// <summary>Reads at most one byte more than the limit so ApiHost can reject oversized bodies.</summary>
-    private static async Task<string?> ReadBodyAsync(Stream body, CancellationToken ct)
+    /// <summary>Reads at most one byte more than the largest route limit so ApiHost can reject oversized bodies.</summary>
+    private static async Task<byte[]> ReadBodyAsync(Stream body, CancellationToken ct)
     {
-        using var reader = new StreamReader(body);
-        var buffer = new char[ApiHost.MaxBodyBytes + 1];
-        var read = 0;
-        while (read < buffer.Length)
-        {
-            var n = await reader.ReadAsync(buffer.AsMemory(read), ct);
-            if (n == 0) break;
-            read += n;
-        }
-        return read == 0 ? null : new string(buffer, 0, read);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int n;
+        while (buffer.Length <= ApiHost.MaxUploadBodyBytes && (n = await body.ReadAsync(chunk, ct)) > 0)
+            buffer.Write(chunk, 0, (int)Math.Min(n, ApiHost.MaxUploadBodyBytes + 1 - buffer.Length));
+        return buffer.ToArray();
     }
 
     [GeneratedRegex("^[A-Za-z0-9-]{1,64}$")]

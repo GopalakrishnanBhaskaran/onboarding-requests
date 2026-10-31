@@ -17,7 +17,7 @@ export const FLOW_OVERVIEW = [
   '1. Requester submits the request',
   '2. AI review (mapping sheet + response document)',
   '3. Owner approval',
-  '4. Security approval',
+  '4. Security approval (Prod above Read: then a ProdApprover)',
   '5. ID team creates user/group (+ TAP)',
   '6. Role assignment team assigns roles',
   '7. AI verifies the access, notifies the requester (Completed), audit',

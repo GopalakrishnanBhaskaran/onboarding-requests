@@ -30,6 +30,8 @@ public sealed record ProjectContacts
     public IReadOnlyList<string> IdTeam { get; init; } = [];
     public IReadOnlyList<string> RoleTeam { get; init; } = [];
     public IReadOnlyList<string> Operators { get; init; } = [];
+    /// <summary>v1.1 (F3): ProdApprovers' mail (Prod escalation requests). Who may decide stays the ProdApprover role in userAccess.</summary>
+    public IReadOnlyList<string> ProdApprovers { get; init; } = [];
     /// <summary>Escalation past SLA (the approver's or team's manager).</summary>
     public string? SecurityManager { get; init; }
     public string? IdTeamManager { get; init; }
@@ -64,6 +66,13 @@ public sealed record Project : IDocument
     public ProjectContacts Contacts { get; init; } = new();
     /// <summary>Contact inventory version: 0 = never saved in the app (seeded or imported), +1 on every saved change.</summary>
     public int ContactsVersion { get; init; }
+    /// <summary>
+    /// v1.1: the tenant is production. Offboarding there needs a second person to confirm (requester ≠ confirmer).
+    /// Not set (null) counts as production (fails closed, REVIEW finding 2); only an explicit false (SAMPLE and test
+    /// tenants, <c>import_workbook.py --production-tenant no</c>) lets one person plan and confirm. Independent of a
+    /// request's environment (Dev/Test/UAT/PreProd/Prod), which decides the Prod read-only rule.
+    /// </summary>
+    public bool? IsProductionTenant { get; init; }
     /// <summary>Who saved the contact inventory last (sign-in name) and when.</summary>
     public string? ContactsUpdatedBy { get; init; }
     public DateTimeOffset? ContactsUpdatedAt { get; init; }
@@ -142,6 +151,23 @@ public sealed record MappingRow : IDocument
     public bool SensitiveResource { get; init; }
     public bool Deprecated { get; init; }
     public GroupState GroupState { get; init; } = GroupState.Exists;
+    // v1.1 mapping sheet columns (I1; uploaded by the Data Steward). Optional on rows imported before 30 Oct 2026.
+    /// <summary>I1 TenantId: must equal the project's tenant on upload.</summary>
+    public string? TenantId { get; init; }
+    /// <summary>I1 Domain (business domain, e.g. Finance). A Resource* option.</summary>
+    public string? Domain { get; init; }
+    /// <summary>I1 ResourceGroupType: Domain | PH | ACQ (<see cref="ResourceGroupTypes"/>).</summary>
+    public string? ResourceGroupType { get; init; }
+    /// <summary>I1 Owner of the mapping (sign-in name).</summary>
+    public string? Owner { get; init; }
+    public DateOnly? EffectiveFrom { get; init; }
+    public DateOnly? EffectiveTo { get; init; }
+    /// <summary>Retired by an upload with "Retire missing rows" (kept, never deleted; never offered or granted).</summary>
+    public bool Retired { get; init; }
+    /// <summary>The mapping version (upload) that last changed this row.</summary>
+    public int? MappingVersion { get; init; }
+    /// <summary>Row number in the uploaded file (for mapping quality messages).</summary>
+    public int? SheetRow { get; init; }
     public required string SourceReference { get; init; }
     public required int Version { get; init; }
     public required string UpdatedBy { get; init; }
@@ -267,6 +293,8 @@ public sealed record AccessRequest : IDocument
     public string? Owner { get; init; }
     /// <summary>External (guest) user. A risk flag for approvers.</summary>
     public bool Guest { get; init; }
+    /// <summary>v1.1 (F1): requests submitted together from one Resource* selection share this id (one request per resolved group).</summary>
+    public string? BundleId { get; init; }
     public required string CreatedBy { get; init; }
     /// <summary>Requester's sign-in name (notifications).</summary>
     public string? CreatedByName { get; init; }

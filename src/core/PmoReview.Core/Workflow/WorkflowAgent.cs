@@ -138,8 +138,10 @@ public sealed partial class WorkflowAgent(
             RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault()?.Step ?? "submit", cid, ct),
             RequestStatus.AiReview => await AfterReviewAsync(r, cid, ct),
             RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
-            RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await IdTeamAsync(r, ct),
-            RequestStatus.WithRoleTeam => await MappingChangedAsync(r, ct) ?? await RoleTeamAsync(r, ct),
+            RequestStatus.AwaitingProdApproval => await MappingChangedAsync(r, ct) ?? await ProdApprovalAsync(r, ct),
+            // F3: the Prod guard runs before anything at the granting stages.
+            RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await IdTeamAsync(r, cid, ct),
+            RequestStatus.WithRoleTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await RoleTeamAsync(r, ct),
             RequestStatus.Verifying => await FinalAsync(r, ct),
             _ => null,
         };
@@ -298,6 +300,7 @@ public sealed partial class WorkflowAgent(
     {
         RequestStatus.AwaitingOwner => WaitingOn.Owner,
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
+        RequestStatus.AwaitingProdApproval => WaitingOn.ProdApprover,
         RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.IdTeam,
         RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
         _ => WaitingOn.Agent, // Verifying included: the agent checks the access itself, nobody else is waited on
@@ -366,7 +369,8 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         if (flow.Scope is null) return null;
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
-        if (MappingSheet.Fingerprint(sheet, r.Resource) == flow.Scope.SheetFingerprint) return null;
+        // Also when the reviewed row is retired or has passed its I1 end date since the review: nothing is granted from it.
+        if (MappingSheet.AsReviewed(sheet, r.Resource, flow.Scope.SheetFingerprint, flow.Scope.MappingRowId, clock.UtcNow)) return null;
         var from = flow.Status;
         var next = (flow with { ResumeStatus = from, ReviewRunId = null })
             .To(RequestStatus.AiReview, WaitingOn.Agent, clock.UtcNow, Agent, "mapping-changed",
@@ -462,7 +466,7 @@ public sealed partial class WorkflowAgent(
         SinceAt = clock.UtcNow,
     };
 
-    private async Task<Step?> IdTeamAsync(AccessRequest r, CancellationToken ct)
+    private async Task<Step?> IdTeamAsync(AccessRequest r, string cid, CancellationToken ct)
     {
         var flow = r.Flow!;
         var task = flow.IdTeamTask;
@@ -482,7 +486,7 @@ public sealed partial class WorkflowAgent(
             return new Step(r with { Flow = next }, [c => notifier.EnqueueAsync(r.ProjectId, r.Id, created.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), taskSubject, taskBody, c)]);
         }
         if (ProvisioningPending(task, flow.Scope))
-            return writer is null || directory is null ? null : await ProvisionAsync(r, task, ct); // only the worker holds the writer
+            return writer is null || directory is null ? null : await ProvisionAsync(r, task, cid, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
 

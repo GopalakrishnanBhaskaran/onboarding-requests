@@ -5,7 +5,7 @@ import {
 } from '@fluentui/react-components';
 import { api } from './lib/api';
 import { href, useRoute, type Route } from './lib/router';
-import type { Me, ProjectSummary } from './lib/types';
+import type { AppRole, Me, ProjectSummary } from './lib/types';
 import { ErrorBar, Loading } from './components/common';
 import { RequestsPage } from './pages/RequestsPage';
 import { RequestFormPage } from './pages/RequestFormPage';
@@ -14,6 +14,11 @@ import { QueuePage } from './pages/QueuePage';
 import { MappingSheetPage } from './pages/MappingSheetPage';
 import { ContactsPage } from './pages/ContactsPage';
 import { OperatorPage } from './pages/OperatorPage';
+import { EscalationsPage } from './pages/EscalationsPage';
+import { DataUploadsPage } from './pages/DataUploadsPage';
+
+/** Roles that handle escalations (v1.1): ProdApprovers decide the Prod ones; the others read them. */
+const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataSteward'];
 import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
 const PROJECT_KEY = 'pmo-review.project';
@@ -135,7 +140,13 @@ function Shell() {
           <Link href={href({ page: 'requests' })}>Requests</Link>
           <Link href={href({ page: 'queue' })}>My actions</Link>
           <Link href={href({ page: 'sheet' })}>Mapping sheet</Link>
-          <Link href={href({ page: 'contacts' })}>Contact inventory</Link>
+          <Link href={href({ page: 'contacts' })}>Team contacts</Link>
+          {ESCALATION_ROLES.some((r) => project.roles.includes(r)) && (
+            <Link href={href({ page: 'escalations' })}>Escalations</Link>
+          )}
+          {(project.roles.includes('DataSteward') || project.roles.includes('PMO')) && (
+            <Link href={href({ page: 'uploads' })}>Data uploads</Link>
+          )}
           {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (
             <Link href={href({ page: 'operator' })}>Issues and reports</Link>
           )}
@@ -175,6 +186,10 @@ function Page({ route, project, projects, onOpenProject, agent, tap, privileged 
       return <MappingSheetPage key={project.projectId} project={project} />;
     case 'contacts':
       return <ContactsPage key={project.projectId} project={project} />;
+    case 'escalations':
+      return <EscalationsPage key={project.projectId} project={project} />;
+    case 'uploads':
+      return <DataUploadsPage key={project.projectId} project={project} />;
     case 'operator':
       return <OperatorPage project={project} />;
     default:

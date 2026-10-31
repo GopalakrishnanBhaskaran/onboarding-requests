@@ -56,6 +56,15 @@
 #       or Key Vault Data Access Administrator. Settings only (AGENT_PRIVILEGED); the roles still need the allow-list
 #       (provisioning ... on <scope> <roleIds>). "on" is a security change: dry run without --approved-by. "off" any time.
 #
+#   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--delete-user] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh offboarding <subscriptionId> off|delete-off     (always allowed)
+#       v1.1 F5, option 3 "Entra only" (Gokul, 30 Oct 2026): for a plan a PMO or Operator confirmed, the agent revokes the
+#       sessions, removes the TAP and the group memberships, disables the account, verifies and mails the PMO. "on": Graph
+#       User.RevokeSessions.All + User.EnableDisableAccount.All (F71, F74; the rest is held) + worker AGENT_OFFBOARDING=true,
+#       OFFBOARD_SUBSCRIPTIONS (default: this subscription), SWA AGENT_OFFBOARDING=true. No Azure right: the Azure role
+#       assignments stay with the role assignment team (a leftover in every run, so no completion mail). Security change:
+#       dry run without --approved-by. "off": AGENT_OFFBOARDING=false at once; the permissions stay (removal needs approval).
+#
 #   tools/deploy_free.sh environment <subscriptionId> <pilot|dev|test|prod> [--redirect <mail>]
 #       Settings only (worker + SWA): APP_ENVIRONMENT, NOTIFY_REDIRECT_TO (test environments: every mail goes to that
 #       one address, naming the intended recipients), AGENT_TENANT_ID (tenant separation). prod refuses a redirect.
@@ -68,7 +77,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -91,7 +100,7 @@ policy_allows_worker() {
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
 worker_setting() { az functionapp config appsettings list -g "$RG_DEFAULT" -n "$1" --query "[?name=='$2'].value | [0]" -o tsv 2>/dev/null || true; }
 
-# global.json needs the .NET 10 SDK (the worker targets net10.0; the API's net9.0 builds with it too).
+# global.json needs the .NET 10 SDK (the worker and the API target net10.0).
 # Azure Cloud Shell ships .NET 9 only, so install 10 into ~/.dotnet with Microsoft's script (user folder, no admin).
 # Ephemeral Cloud Shell sessions lose it; this re-installs on the next run (about 1-2 minutes).
 ensure_dotnet10() {
@@ -162,7 +171,8 @@ grant_graph() {
       echo "Already granted: $perm -> $name"
     fi
   done
-  echo "Graph permissions now held by $name (expected read-only: ${GRAPH_READ_ROLES[*]}):"
+  echo "Graph permissions now held by $name (read: ${GRAPH_READ_ROLES[*]}; only where approved and switched on:" \
+    "provisioning ${GRAPH_PROVISION_ROLES[*]}, agent TAP $GRAPH_TAP_ROLE):"
   local held; held=$(list_graph_roles "$mi"); echo "$held"
   if echo "$held" | grep -qxE "$(IFS='|'; echo "${GRAPH_RETIRED_ROLES[*]}")"; then
     echo "WARNING: the worker still holds retired Phase 2b/2c permissions. After approval run:"
@@ -331,7 +341,7 @@ tap_policy() {
 }
 
 agent_tap() {
-  local mode="$1" lifetime="${2:-480}" name mi swa graph role assignment policy max sender prov
+  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" name mi swa graph role assignment policy max prov appid mailsend
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -349,11 +359,18 @@ agent_tap() {
   fi
 
   [[ "$lifetime" =~ ^[0-9]+$ ]] || { echo "--lifetime must be minutes"; return 1; }
-  prov=$(worker_setting "$name" AGENT_PROVISIONING); sender=$(worker_setting "$name" NOTIFY_SENDER)
+  # v1.1 F2 (decision 19): the pass goes only through Graph sendMail from one mailbox (TAP_MAIL_SENDER), Application Mail.Send
+  # scoped to it by Exchange RBAC for Applications (F81), to the people inventory's verified address; never redirected.
+  tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
+  [[ "$tap_sender" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "--sender <mailbox> is required: the shared mailbox the TAP mail is sent from (TAP_MAIL_SENDER)."; return 1; }
+  prov=$(worker_setting "$name" AGENT_PROVISIONING)
+  appid=$(az ad sp show --id "$mi" --query appId -o tsv)
+  mailsend=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[?appRoleId=='$(graph_role_id Mail.Send)'].id | [0]" -o tsv)
   echo "Checks:"
   echo "  Agent provisioning: ${prov:-false} (must be true: the agent mails passes only for accounts it creates)"
-  echo "  Mail sender: ${sender:-Outbox} (must be AcsEmail or GraphMail: with Outbox the agent never issues a pass)"
-  echo "  Test redirect: $(worker_setting "$name" NOTIFY_REDIRECT_TO || true) (empty = mail goes to the joiner's Enterprise ID mail)"
+  echo "  TAP sender mailbox: $tap_sender (Graph sendMail; the TAP mail is never redirected, also not in test)"
+  echo "  Recipient: the people inventory's EnterpriseEmail of the new account, equal to its Entra mail or UPN; otherwise an escalation"
+  [[ -z "$mailsend" ]] || echo "  WARNING: the worker holds Graph Mail.Send in Entra: it adds up with the Exchange scope and makes it useless (F81). Remove it."
   policy=$(tap_policy)
   if [[ -n "$policy" ]]; then
     echo "  Tenant TAP policy: $(tr -d '\n ' <<<"$policy")"
@@ -365,17 +382,22 @@ agent_tap() {
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
   [[ "$lifetime" -ge 60 ]] || { echo "Lifetime must be at least 60 minutes (the joiner reads it from mail)."; return 1; }
-  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
-  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime; SWA: AGENT_TAP=true"
-  echo "  Risk: the permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
-  echo "  request after both approvals, mails it once to that request's Enterprise ID mail and keeps no copy."
+  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAIL_SENDER=$tap_sender; SWA: AGENT_TAP=true"
+  echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
+  echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
+  echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
+  echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
+  echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
+  echo "  Risk: the TAP permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
+  echo "  request after both approvals, mails it once to the verified enterprise mail and keeps no copy (audit: masked recipient only)."
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
   fi
   [[ "$prov" == "true" ]] || { echo "Switch agent provisioning on first (tools/deploy_free.sh provisioning ...)."; return 1; }
-  [[ "$sender" == "AcsEmail" || "$sender" == "GraphMail" ]] || { echo "Switch mail on first (tools/deploy_free.sh email ...)."; return 1; }
+  [[ -z "$mailsend" ]] || { echo "Remove the Entra Mail.Send grant first (F81)."; return 1; }
   graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
   if [[ -z "$assignment" ]]; then
     az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
@@ -384,10 +406,11 @@ agent_tap() {
   else
     echo "Already granted: $GRAPH_TAP_ROLE"
   fi
-  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime"
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender"
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true -o none
   echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
+  echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
 }
 
 # Agent privileged rows (requested by Gokul 22 Oct 2026, approval-gated): a setting only. What the agent may assign stays
@@ -428,6 +451,85 @@ agent_privileged() {
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_PRIVILEGED=true -o none
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_PRIVILEGED=true -o none
   echo "Agent privileged rows on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
+}
+
+# v1.1 F5 option 3, Entra steps only (Gokul, 30 Oct 2026). Graph application permissions the offboarding writes need (F71,
+# F74) and the ones it reuses (reads; group membership removal from v2.1 provisioning; TAP removal from the agent TAP).
+GRAPH_OFFBOARD_NEW=(User.RevokeSessions.All User.EnableDisableAccount.All)
+GRAPH_OFFBOARD_REUSED=(User.Read.All GroupMember.Read.All UserAuthenticationMethod.Read.All GroupMember.ReadWrite.All UserAuthMethod-TAP.ReadWrite.All)
+# Only with --delete-user (Gokul, 30 Oct 2026): soft-delete the leaver after disabling (OFFBOARD_DELETE_USER, F75). Graph has
+# no narrower application permission for DELETE /users/{id}; it is tenant-wide read and write of every user's profile.
+GRAPH_OFFBOARD_DELETE=(User.ReadWrite.All)
+
+agent_offboarding() {
+  local mode="$1" subs="${2:-}" delete="${3:-no}" name mi swa graph perm role held s del missing=() perms=()
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_OFFBOARDING=false OFFBOARD_DELETE_USER=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=false -o none
+    echo "Agent offboarding switched off on $name and $swa: plans still show what would change; the teams do it by hand."
+    echo "Its Graph permissions stay; removing them is a permission change (approval)."
+    return 0
+  fi
+  if [[ "$mode" == "delete-off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings OFFBOARD_DELETE_USER=false -o none
+    echo "Account deletion switched off on $name: offboarding disables the account and keeps it (new plans; a confirmed plan"
+    echo "with a delete step leaves it as a leftover). ${GRAPH_OFFBOARD_DELETE[*]} stays; removing it is a permission change (approval)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "offboarding on|off|delete-off"; return 1; }
+  # Explicit subscriptions: with none listed the agent could see no subscription and report nothing left in Azure.
+  subs="${subs:-$SUB}"
+  for s in ${subs//,/ }; do
+    [[ "$s" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || { echo "--subscriptions takes subscription ids, comma-separated."; return 1; }
+  done
+  del=false; perms=("${GRAPH_OFFBOARD_NEW[@]}" "${GRAPH_OFFBOARD_REUSED[@]}")
+  if [[ "$delete" == "yes" ]]; then del=true; perms+=("${GRAPH_OFFBOARD_DELETE[@]}")
+  elif [[ "$(worker_setting "$name" OFFBOARD_DELETE_USER)" == "true" ]]; then
+    echo "OFFBOARD_DELETE_USER is true on $name now: this run sets it to false (add --delete-user to keep deleting)."
+  fi
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  held=$(list_graph_roles "$mi")
+  echo "Plan for $name (managed identity $mi), expected cost 0:"
+  for perm in "${perms[@]}"; do
+    if grep -qx "$perm" <<<"$held"; then echo "  Graph application permission: $perm (already held)"
+    else echo "  Graph application permission: $perm (NEW, tenant-wide; the code uses it only for a confirmed leaver)"; missing+=("$perm"); fi
+  done
+  echo "  Worker settings: AGENT_OFFBOARDING=true OFFBOARD_SUBSCRIPTIONS=$subs OFFBOARD_DELETE_USER=$del; SWA: AGENT_OFFBOARDING=true"
+  echo "  Azure: no new right (Entra only). The agent removes the leaver's own role assignments in $subs only where a right it"
+  echo "  already holds allows it (provisioning: allow-listed roles on its resource group); any other is a leftover for the"
+  echo "  role assignment team (Partially completed + escalation, no PMO completion mail)."
+  echo "  What the agent does, only for a plan a PMO or Operator confirmed (a second person in a production tenant), only for"
+  echo "  the project's own people in a project that names this tenant: revoke sessions, remove the TAP, remove group"
+  echo "  memberships (never dynamic, role-assignable or synced groups), disable the account, mark the people inventory Leaver,"
+  echo "  close open requests, verify, audit, mail the PMO. A directory-role holder is left to people."
+  if [[ "$del" == "true" ]]; then
+    echo "  Delete (--delete-user): after disabling, DELETE /users/{id} soft-deletes the account. It stays restorable for 30 days"
+    echo "  (Entra admin center > Deleted users; its groups come back, the ones the agent removed do not), then Entra deletes it"
+    echo "  for good (F75). ${GRAPH_OFFBOARD_DELETE[*]} is tenant-wide: it lets the worker read and change every user's"
+    echo "  profile; the code calls only DELETE /users/{id} of a confirmed leaver. Entra refuses it for a privileged"
+    echo "  administrator role holder. A refused delete is a leftover (Partially completed, no PMO completion mail)."
+  else
+    echo "  Never deletes the account (OFFBOARD_DELETE_USER=false; --delete-user to delete it after disabling)."
+  fi
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
+  for perm in ${missing[@]+"${missing[@]}"}; do
+    role=$(graph_role_id "$perm")
+    [[ -n "$role" ]] || { echo "Could not find $perm on Microsoft Graph."; return 1; }
+    az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
+      --headers "Content-Type=application/json" --body "{\"principalId\":\"$mi\",\"resourceId\":\"$graph\",\"appRoleId\":\"$role\"}" -o none
+    echo "Granted $perm (approved by $APPROVED_BY)"
+  done
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_OFFBOARDING=true "OFFBOARD_SUBSCRIPTIONS=$subs" "OFFBOARD_DELETE_USER=$del"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_OFFBOARDING=true -o none
+  echo "Agent offboarding on (approved by $APPROVED_BY). A new Graph permission can take up to ~24 h to reach the worker's"
+  echo "token (F61): a step refused before then fails, and the run ends Partially completed naming it. Graph permissions now held:"
+  list_graph_roles "$mi"
 }
 
 # Per-environment settings (no resource or permission change). A test environment may send every mail to one address.
@@ -532,16 +634,17 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv
+  local env sender redirect tenant tap priv offb
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
+  offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -562,8 +665,10 @@ case "$CMD" in
       --result-format FullResourcePayloads | tee "$ROOT/.local/whatif.txt"
     echo
     echo "Expected resources: resource group, policy assignment, budget, Cosmos DB account (free tier) + 1 database"
-    echo "  + 13 containers (8 used by v2: projects, requests, reviewRuns, userAccess, mappingSheet, responseDocument,"
-    echo "  notifications, issues; 5 legacy v1 kept untouched), Static Web App (Free)."
+    echo "  + 21 containers (8 used by v2: projects, requests, reviewRuns, userAccess, mappingSheet, responseDocument,"
+    echo "  notifications, issues; 8 new in v1.1: mappingVersions, peopleInventory, inventoryVersions, escalations,"
+    echo "  mappingQualityIssues, groupResolutions, offboardingRuns, auditEvents; 5 legacy v1 kept untouched), Static Web App (Free)."
+    echo "  21 of the 25 containers a shared-throughput free-tier database allows (F90)."
     echo "Expected cost: ₹0 while within free limits (SWA Free plan; Cosmos free tier 1000 RU/s + 25 GB; policy and budgets are free)."
     if handoff_enabled && ! worker_enabled; then
       echo "STAGE A (enableHandoff=true, deployWorker=false): policy allows the worker types, budget ₹2,000 with 50/80/100% alerts. Creates nothing paid."
@@ -571,14 +676,37 @@ case "$CMD" in
     if worker_enabled; then
       echo "STAGE B / v2 worker (paid from credits): Flex Consumption plan + Function App (system identity) + storage account"
       echo "  (Standard_LRS, no shared keys) + Storage Blob Data Owner + Cosmos data roles scoped to requests, reviewRuns, mappingSheet,"
-      echo "  responseDocument, notifications, issues (+ read on projects). App settings: WORKFLOW_SCHEDULE, NOTIFY_SENDER,"
-      echo "  ROLE_READER, ADO_*, TAP_MAX_LIFETIME_MINUTES; retired ENTRA_AUTO_ASSIGN / ENTRA_PROVISION_JOINERS forced false."
+      echo "  responseDocument, notifications, issues and (v1.1) peopleInventory, escalations, mappingQualityIssues, groupResolutions,"
+      echo "  offboardingRuns, auditEvents (+ read on projects; never userAccess or the upload versions). App settings: WORKFLOW_SCHEDULE,"
+      echo "  NOTIFY_SENDER, ROLE_READER, ADO_*, TAP_MAX_LIFETIME_MINUTES; v1.1 AGENT_OFFBOARDING=false, OFFBOARD_DELETE_USER=false,"
+      echo "  OFFBOARD_SUBSCRIPTIONS empty; retired ENTRA_AUTO_ASSIGN / ENTRA_PROVISION_JOINERS forced false."
       echo "  Expected cost: roughly ₹50-300/month (unchanged). After apply: grant-graph (read-only), then revoke-graph-writes after approval."
       WLOC=$(python3 -c "import json,sys;p=json.load(open(sys.argv[1]))['parameters'];print(p.get('workerLocation',p['location'])['value'])" "$PARAMS")
       echo "== Flex Consumption availability for $WLOC =="
       az functionapp list-flexconsumption-locations --query "[].name" -o tsv | tr -d ' ' | grep -ix "$WLOC" \
         || echo "WARNING: $WLOC is not listed for Flex Consumption. Pick another region for the worker before approving."
       az functionapp list-flexconsumption-runtimes -l "$WLOC" --runtime dotnet-isolated -o table || true
+    fi
+    # The worker's app settings are not in the what-if (Azure does not return them), and the template replaces all of
+    # them: name every live setting the apply would remove or reset, so nothing set by another command is lost silently.
+    W=$(worker_name 2>/dev/null || true)
+    if [[ -n "$W" ]]; then
+      LIVE=$(az functionapp config appsettings list -g "$RG_DEFAULT" -n "$W" -o json 2>/dev/null || echo "[]")
+      python3 - "$LIVE" "$ROOT/infra/modules/worker.bicep" "$PARAMS" <<'PY' | tee -a "$ROOT/.local/whatif.txt"
+import json, re, sys
+live = {s["name"]: s.get("value") or "" for s in json.loads(sys.argv[1] or "[]")}
+block = open(sys.argv[2]).read().split("appSettings: [", 1)[1].split("]", 1)[0]
+template = set(re.findall(r"\{ name: '([^']+)'", block))
+params = {k: v.get("value") for k, v in json.load(open(sys.argv[3]))["parameters"].items()}
+removed = sorted(n for n in live if n not in template and not n.startswith(("WEBSITE_", "FUNCTIONS_", "SCM_", "APPLICATIONINSIGHTS_")))
+reset = [f"{n} ({live[n]!r} -> {params.get(p, '')!r})" for n, p in (("ROLE_READER", "roleReader"), ("ADO_ORG_URL", "adoOrgUrl"), ("ADO_PROJECT", "adoProject"))
+         if live.get(n, "") not in ("", "None") and live.get(n, "") != (params.get(p) or "")]
+print("== Worker app settings (not shown above; the apply replaces all of them) ==")
+print("  removed by the apply:", ", ".join(removed) or "none")
+print("  reset by the apply:  ", ", ".join(reset) or "none")
+if removed or reset:
+    print("  STOP: add them to .local/params.json (or the template) before approving, or accept the change in writing.")
+PY
     fi
     echo "Send .local/whatif.txt to Gokul and wait for 'approved'."
     ;;
@@ -673,7 +801,12 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      # Mail and environment as they are live (deploy_free.sh email / environment).
      "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
      "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
-     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", ""))}
+     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", "")),
+     # v1.1 as it is live: offboarding switches (approved separately), the TAP mail sender, the mail limits.
+     "agentOffboarding": v(live.get("AGENT_OFFBOARDING", "").lower() == "true"),
+     "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
+     "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
+     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", ""))}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
@@ -707,15 +840,16 @@ PY
     provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
     ;;
   tap)
-    MODE="${3:?on|off}"; shift 3; LIFETIME=480
+    MODE="${3:?on|off}"; shift 3; LIFETIME=480; TAP_SENDER=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --lifetime) LIFETIME="${2:?minutes}"; shift 2 ;;
+        --sender) TAP_SENDER="${2:?sender mailbox}"; shift 2 ;;
         --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (tap $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
         *) echo "unknown argument $1"; exit 1 ;;
       esac
     done
-    agent_tap "$MODE" "$LIFETIME"
+    agent_tap "$MODE" "$LIFETIME" "$TAP_SENDER"
     ;;
   privileged)
     MODE="${3:?on|off}"
@@ -723,6 +857,18 @@ PY
       APPROVED_BY="$5"; echo "Approval recorded (privileged $MODE): $5" | tee -a "$ROOT/.local/approval.txt"
     fi
     agent_privileged "$MODE"
+    ;;
+  offboarding)
+    MODE="${3:?on|off|delete-off}"; shift 3; OFF_SUBS=""; OFF_DELETE=no
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --subscriptions) OFF_SUBS="${2:?subscription ids}"; shift 2 ;;
+        --delete-user) OFF_DELETE=yes; shift ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (offboarding $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    agent_offboarding "$MODE" "$OFF_SUBS" "$OFF_DELETE"
     ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""
@@ -757,5 +903,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email ..."; exit 1 ;;
 esac

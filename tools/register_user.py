@@ -52,7 +52,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--project", required=True, help="project id, e.g. PEST or VESTACY")
     ap.add_argument("--user", help="sign-in name (jane@contoso.com) or app user id")
-    ap.add_argument("--roles", default="", help="comma-separated: Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator")
+    ap.add_argument("--roles", default="", help="comma-separated: Requester, Owner, Security, IdTeam, RoleTeam, PMO, Operator, ProdApprover, DataSteward (replaces the person's roles)")
     ap.add_argument("--remove", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--database", default=os.environ.get("COSMOS_DATABASE", "pmoreview"))

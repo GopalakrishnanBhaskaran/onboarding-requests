@@ -10,18 +10,23 @@ public enum RequestStatus
     Returned,
     AwaitingOwner,
     AwaitingSecurity,
+    /// <summary>v1.1 (F3): Prod above Read after both approvals: waits for a ProdApprover's decision on the ProdWrite escalation.</summary>
+    AwaitingProdApproval,
     Rejected,
     WithIdTeam,
     WithRoleTeam,
     Verifying,
     Completed,
     FailedNeedsDev,
+    /// <summary>v1.1 (F5): the person was offboarded; the request was closed without granting anything further.</summary>
+    Closed,
 }
 
 /// <summary>Who the request is waiting on right now.</summary>
-public enum WaitingOn { None, Agent, Requester, Owner, Security, IdTeam, RoleTeam, User, Developer }
+public enum WaitingOn { None, Agent, Requester, Owner, Security, IdTeam, RoleTeam, User, Developer, ProdApprover }
 
-public enum ApprovalStage { Owner, Security }
+/// <summary>Owner, then Security; Prod (v1.1, F3) only for Prod above Read, after both, from a ProdApprover.</summary>
+public enum ApprovalStage { Owner, Security, Prod }
 
 public enum ApprovalDecision { Approved, Rejected }
 
@@ -171,8 +176,10 @@ public sealed record AgentWork
     /// <summary>Agent TAP: when the one-time pass the agent created starts and expires (metadata only; never the pass).</summary>
     public DateTimeOffset? TapIssuedAt { get; init; }
     public DateTimeOffset? TapExpiresAt { get; init; }
-    /// <summary>Agent TAP: when the sign-in details mail went to the Enterprise ID mail (sent once, never stored).</summary>
+    /// <summary>Agent TAP: when the sign-in details mail went to the verified enterprise mail (sent once, never stored).</summary>
     public DateTimeOffset? SignInDetailsSentAt { get; init; }
+    /// <summary>F2: where it went, masked (<see cref="TapRecipient.Masked"/>): the people inventory's EnterpriseEmail, checked against Entra.</summary>
+    public string? SignInDetailsSentTo { get; init; }
     /// <summary>The initial password was in that mail (the account was created in the same run).</summary>
     public bool PasswordMailed { get; init; }
     /// <summary>Agent TAP: why the pass was left to the ID team (the rest of the agent's work still counts).</summary>
@@ -223,7 +230,10 @@ public sealed record WorkflowState
     public IReadOnlyList<WorkflowEvent> Events { get; init; } = [];
     public DateTimeOffset? CompletedAt { get; init; }
 
-    public bool IsOpen => Status is not (RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.FailedNeedsDev or RequestStatus.Returned);
+    public bool IsOpen => Status is not (RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.FailedNeedsDev or RequestStatus.Returned or RequestStatus.Closed);
+
+    /// <summary>Nothing more will happen to it (F5 closes every request that is not).</summary>
+    public bool IsFinal => Status is RequestStatus.Completed or RequestStatus.Rejected or RequestStatus.Closed;
 
     public DateTimeOffset StageSince => Stages.Count > 0 ? Stages[^1].EnteredAt : DateTimeOffset.MinValue;
 
@@ -287,12 +297,14 @@ public static class StatusText
         RequestStatus.Returned => "Returned",
         RequestStatus.AwaitingOwner => "Awaiting Owner",
         RequestStatus.AwaitingSecurity => "Awaiting Security",
+        RequestStatus.AwaitingProdApproval => "Awaiting Prod approval",
         RequestStatus.Rejected => "Rejected",
         RequestStatus.WithIdTeam => "With ID Team",
         RequestStatus.WithRoleTeam => "With Role Team",
         RequestStatus.Verifying => "Verifying",
         RequestStatus.Completed => "Completed",
         RequestStatus.FailedNeedsDev => "Failed-Needs-Dev",
+        RequestStatus.Closed => "Closed – offboarded",
         _ => s.ToString(),
     };
 
@@ -303,6 +315,7 @@ public static class StatusText
         WaitingOn.IdTeam => "ID team",
         WaitingOn.RoleTeam => "Role team",
         WaitingOn.User => "New user",
+        WaitingOn.ProdApprover => "ProdApprover",
         _ => w.ToString(),
     };
 
@@ -312,7 +325,7 @@ public static class StatusText
         "1. Requester submits the request",
         "2. AI review (mapping sheet + response document)",
         "3. Owner approval",
-        "4. Security approval",
+        "4. Security approval (Prod above Read: then a ProdApprover)",
         "5. ID team creates user/group (+ TAP)",
         "6. Role assignment team assigns roles",
         "7. AI verifies the access, notifies the requester (Completed), audit",

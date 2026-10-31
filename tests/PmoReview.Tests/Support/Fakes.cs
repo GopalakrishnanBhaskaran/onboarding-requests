@@ -37,9 +37,9 @@ public sealed class FakeDirectory : IDirectoryReader
         return d;
     }
 
-    public DirectoryUser AddUser(string upn, bool guest = false)
+    public DirectoryUser AddUser(string upn, bool guest = false, string? mail = null)
     {
-        var u = new DirectoryUser(Guid.NewGuid().ToString("D"), upn, guest ? "Guest" : "Member", true);
+        var u = new DirectoryUser(Guid.NewGuid().ToString("D"), upn, guest ? "Guest" : "Member", true, mail);
         _users[upn] = u;
         _methods[upn] = (["password"], null);
         return u;
@@ -77,6 +77,17 @@ public sealed class FakeDirectory : IDirectoryReader
     public void SignInNow(string upn, DateTimeOffset at) => _signIns[upn] = at;
 
     public void SetManager(string upn, string manager) => _managers[upn] = manager;
+
+    /// <summary>F5: the account is enabled or disabled (Entra <c>accountEnabled</c>).</summary>
+    public void SetEnabled(string upn, bool enabled) => _users[upn] = _users[upn] with { AccountEnabled = enabled };
+
+    /// <summary>F5: the account is (soft-)deleted.</summary>
+    public void RemoveUser(string upn) => _users.TryRemove(upn, out _);
+
+    public DirectoryUser? User(string upn) => _users.TryGetValue(upn, out var u) ? u : null;
+
+    /// <summary>Groups the user is a direct member of (names).</summary>
+    public IReadOnlyList<string> GroupsOf(string upn) => _members.Where(m => m.Value.Contains(upn)).Select(m => m.Key).ToList();
 
     public string? GroupNameOf(string objectId) => _groups.FirstOrDefault(g => g.Value.Any(x => x.ObjectId == objectId)).Key;
 
@@ -201,13 +212,15 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory, Func<DateTimeOf
     public string? TapFailOnce { get; set; }
     /// <summary>The passes handed out, in order (each replaces the previous one on the account).</summary>
     public List<string> Passes { get; } = [];
+    /// <summary>The Entra <c>mail</c> a created account comes back with (F2 cross-check), by UPN; none by default.</summary>
+    public Dictionary<string, string> MailOf { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Task<DirectoryUser> CreateUserAsync(NewUser user, Secret initialPassword, CancellationToken ct)
     {
         Write($"create-user {user.UserPrincipalName}");
         Users.Add(user);
         Passwords.Add(initialPassword.Reveal());
-        return Task.FromResult(directory.AddUser(user.UserPrincipalName));
+        return Task.FromResult(directory.AddUser(user.UserPrincipalName, mail: MailOf.GetValueOrDefault(user.UserPrincipalName)));
     }
 
     public Task<bool> CanIssueTapAsync(CancellationToken ct) => Task.FromResult(TapPermission);
@@ -272,18 +285,144 @@ public sealed class FakeRoleWriter(FakeRoles roles) : IRoleAssignmentWriter
     }
 }
 
-/// <summary>Mail stand-in for the agent's sign-in details: keeps what was "sent" (tests only), or fails on demand.</summary>
-public sealed class FakeDirectMail(string? redirectTo = null) : IDirectMail
+/// <summary>
+/// Mail stand-in for the agent's sign-in details: the real <see cref="DirectMail"/> rules (one plain recipient, no redirect)
+/// over a sender that keeps what was "sent" (tests only), or fails on demand.
+/// </summary>
+public sealed class FakeDirectMail : IDirectMail, INotificationSender
 {
+    private readonly DirectMail inner;
+    public FakeDirectMail() => inner = new DirectMail(this);
+
+    public string Name => "FakeTapMail";
     public bool Delivers { get; set; } = true;
     public string? FailWith { get; set; }
     public List<Notification> Sent { get; } = [];
 
-    public Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct)
+    public Task<IReadOnlyList<string>> SendNowAsync(Notification notification, CancellationToken ct) => inner.SendNowAsync(notification, ct);
+
+    public Task SendAsync(Notification notification, CancellationToken ct)
     {
         if (FailWith is { } f) throw new OutboundException(f);
-        var outgoing = NotificationDispatcher.Redirect(notification, redirectTo, "test");
-        Sent.Add(outgoing);
-        return Task.FromResult(outgoing.To);
+        Sent.Add(notification);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// F5 offboarding stand-in for Graph and ARM (reads and writes): state lives in the fake directory (memberships, enabled)
+/// and here (TAPs, nested and dynamic groups, directory roles, role assignments per subscription). Every write is recorded.
+/// </summary>
+public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReader, IOffboardingWriter, IRoleAssignmentLister, IRoleAssignmentRemover
+{
+    public List<string> Calls { get; } = [];
+    /// <summary>Groups whose membership is by rule (F102): listed, never removable.</summary>
+    public HashSet<string> Dynamic { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> RoleAssignable { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Groups a user is in only through another group (upn → group names).</summary>
+    public Dictionary<string, List<string>> Nested { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Ids that are not groups (e.g. an Entra directory role), per upn.</summary>
+    public Dictionary<string, List<string>> Roles { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<string>> Taps { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<RoleAssignmentRef>> Assignments { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> Unreadable { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Role assignment ids Azure refuses to delete (no RBAC rights there).</summary>
+    public HashSet<string> DeleteForbidden { get; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The next write whose call text starts with this fails once with GraphUnavailable.</summary>
+    public string? FailOnce { get; set; }
+    public string? ForbidAll { get; set; }
+    /// <summary>Entra replication (F104): a removed membership still shows in this many membership reads after the removal.</summary>
+    public int LagReads { get; set; }
+    private readonly Dictionary<(string Upn, string Group), int> lag = [];
+
+    private string Upn(string objectId) => directory.UpnOf(objectId) ?? throw new DirectoryReadException("GraphNotFound");
+
+    public RoleAssignmentRef Assign(string subscription, string principalObjectId, string roleId = FakeRoleWriter.Reader, string? scope = null, string type = "User")
+    {
+        scope ??= $"/subscriptions/{subscription}/resourceGroups/rg-sample-access";
+        var a = new RoleAssignmentRef($"{scope}/providers/Microsoft.Authorization/roleAssignments/{Guid.NewGuid():D}", scope, roleId, principalObjectId, type);
+        if (!Assignments.TryGetValue(subscription, out var list)) Assignments[subscription] = list = [];
+        list.Add(a);
+        return a;
+    }
+
+    public Task<IReadOnlyList<GroupMembership>> MembershipsAsync(string userObjectId, CancellationToken ct)
+    {
+        var upn = Upn(userObjectId);
+        var list = directory.GroupsOf(upn).Select(g => new GroupMembership(directory.GroupId(g), g, true,
+            Dynamic.Contains(g) ? "dynamic group (membership by rule; members cannot be removed, F102)"
+            : RoleAssignable.Contains(g) ? "role-assignable group (needs RoleManagement.ReadWrite.Directory, not granted)" : null, RoleAssignable.Contains(g))).ToList();
+        list.AddRange(Nested.GetValueOrDefault(upn, []).Select(g => new GroupMembership(directory.GroupId(g), g, false)));
+        list.AddRange(Roles.GetValueOrDefault(upn, []).Select(r => new GroupMembership(r, r, true, "not a group (for example an Entra directory role): left to people", true)));
+        foreach (var key in lag.Keys.Where(k => k.Upn == upn && lag[k] > 0).ToList())
+        {
+            list.Add(new GroupMembership(directory.GroupId(key.Group), key.Group, true));
+            lag[key]--;
+        }
+        return Task.FromResult<IReadOnlyList<GroupMembership>>(list);
+    }
+
+    public Task<IReadOnlyList<string>> TapMethodIdsAsync(string userObjectId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<string>>([.. Taps.GetValueOrDefault(Upn(userObjectId), [])]);
+
+    public Task<IReadOnlyList<string>> SubscriptionsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>(Assignments.Keys.Concat(Unreadable).Distinct().ToList());
+
+    public Task<IReadOnlyList<RoleAssignmentRef>?> AssignmentsInSubscriptionAsync(string subscriptionId, string principalObjectId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<RoleAssignmentRef>?>(Unreadable.Contains(subscriptionId) ? null
+            : Assignments.GetValueOrDefault(subscriptionId, []).Where(a => a.PrincipalId == principalObjectId).ToList());
+
+    public Task RevokeSessionsAsync(string userObjectId, CancellationToken ct) { Write($"revoke {Upn(userObjectId)}"); return Task.CompletedTask; }
+
+    public Task DeleteTapAsync(string userObjectId, string methodId, CancellationToken ct)
+    {
+        var upn = Upn(userObjectId);
+        Write($"delete-tap {upn} {methodId}");
+        Taps.GetValueOrDefault(upn, []).Remove(methodId);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveMemberAsync(string groupObjectId, string userObjectId, CancellationToken ct)
+    {
+        var (group, upn) = (directory.GroupNameOf(groupObjectId)!, Upn(userObjectId));
+        Write($"remove-member {upn} {group}");
+        directory.RemoveMember(group, upn);
+        if (LagReads > 0) lag[(upn, group)] = LagReads;
+        return Task.CompletedTask;
+    }
+
+    public Task DisableAsync(string userObjectId, CancellationToken ct)
+    {
+        var upn = Upn(userObjectId);
+        Write($"disable {upn}");
+        directory.SetEnabled(upn, false);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteUserAsync(string userObjectId, CancellationToken ct)
+    {
+        var upn = Upn(userObjectId);
+        Write($"delete-user {upn}");
+        directory.RemoveUser(upn);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(RoleAssignmentRef assignment, string principalObjectId, CancellationToken ct)
+    {
+        if (assignment.PrincipalId != principalObjectId || assignment.PrincipalType != "User") throw new DirectoryWriteException("WriteRefused");
+        if (DeleteForbidden.Contains(assignment.Id)) throw new DirectoryWriteException("ArmForbidden");
+        Write($"delete-role {assignment.Id}");
+        foreach (var list in Assignments.Values) list.RemoveAll(a => a.Id == assignment.Id);
+        return Task.CompletedTask;
+    }
+
+    private void Write(string call)
+    {
+        if (ForbidAll is { } f && call.StartsWith(f, StringComparison.Ordinal)) throw new DirectoryWriteException("GraphForbidden");
+        if (FailOnce is { } once && call.StartsWith(once, StringComparison.Ordinal))
+        {
+            FailOnce = null;
+            throw new DirectoryWriteException("GraphUnavailable");
+        }
+        Calls.Add(call);
     }
 }

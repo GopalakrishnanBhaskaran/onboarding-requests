@@ -20,14 +20,22 @@ var stores = InMemoryDataStores.Create();
 var accessScope = Environment.GetEnvironmentVariable("SAMPLE_ACCESS_SCOPE") ?? "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-pmo-sample-access";
 await SampleDataLoader.SeedAsync(stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), accessScope));
 var settings = PilotSettings.FromEnvironment(Environment.GetEnvironmentVariable);
+// Locally the SAMPLE projects that name no tenant are the agent's own SAMPLE tenant (AGENT_TENANT_ID from run_local.sh), as a
+// live project imported with --tenant-id is: v1.1 offboarding only runs for a project that names the agent's tenant.
+if (settings.Workflow.AgentTenantId is { Length: > 0 } agentTenant)
+    foreach (var p in (await stores.Projects.ListAllAsync(CancellationToken.None)).Where(p => p.Value.IsSample && string.IsNullOrWhiteSpace(p.Value.TenantId)))
+        await stores.Projects.ReplaceAsync(p.Value with { TenantId = agentTenant }, p.ETag, CancellationToken.None);
 var api = PilotApp.Build(stores, settings, new SystemClock(), app.Services.GetRequiredService<ILoggerFactory>());
 
 app.Map("/api/{**path}", async (HttpContext ctx, string? path) =>
 {
     var headers = ctx.Request.Headers.ToDictionary(h => h.Key, h => h.Value.ToString(), StringComparer.OrdinalIgnoreCase);
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
-    var result = await api.HandleAsync(new ApiRequest(ctx.Request.Method, path ?? "", headers, body.Length == 0 ? null : body, Guid.NewGuid().ToString("n")), ctx.RequestAborted);
+    using var buffer = new MemoryStream();
+    await ctx.Request.Body.CopyToAsync(buffer, ctx.RequestAborted);
+    var bytes = buffer.ToArray();
+    var body = bytes.Length == 0 || bytes.Length > ApiHost.MaxBodyBytes + 1 ? null : System.Text.Encoding.UTF8.GetString(bytes);
+    var result = await api.HandleAsync(new ApiRequest(ctx.Request.Method, (path ?? "") + ctx.Request.QueryString, headers, body, Guid.NewGuid().ToString("n"))
+        { RawBody = bytes.Length == 0 ? null : bytes }, ctx.RequestAborted);
 
     ctx.Response.StatusCode = result.Status;
     ctx.Response.Headers.CacheControl = "no-store";

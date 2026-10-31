@@ -1,15 +1,18 @@
 using Microsoft.Extensions.Logging;
 using PmoReview.Adapters.Dispatch;
 using PmoReview.Adapters.Review;
+using PmoReview.Adapters.Uploads;
 using PmoReview.Core.Common;
 using PmoReview.Core.Directory;
 using PmoReview.Core.Http;
+using PmoReview.Core.Offboarding;
 using PmoReview.Core.Processing;
 using PmoReview.Core.Review;
 using PmoReview.Core.Security;
 using PmoReview.Core.Services;
 using PmoReview.Core.Sources;
 using PmoReview.Core.Storage;
+using PmoReview.Core.Uploads;
 using PmoReview.Core.Workflow;
 
 namespace PmoReview.Adapters;
@@ -56,6 +59,13 @@ public sealed record PilotSettings
         if (redirect is not null && !System.Text.RegularExpressions.Regex.IsMatch(redirect, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))
             throw new InvalidOperationException("NOTIFY_REDIRECT_TO must be one mail address.");
         var tenant = get("AGENT_TENANT_ID")?.Trim();
+        static string? Mailbox(string? value, string name)
+        {
+            var v = value?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(v)) return null;
+            return System.Text.RegularExpressions.Regex.IsMatch(v, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$") ? v
+                : throw new InvalidOperationException($"{name} must be one mail address.");
+        }
         return new PilotSettings
         {
             AllowPaidServices = On("ALLOW_PAID_SERVICES"),
@@ -96,6 +106,14 @@ public sealed record PilotSettings
                 MailLimits = new MailLimits(
                     Math.Clamp(int.TryParse(get("MAIL_MAX_PER_MINUTE"), out var mpm) ? mpm : MailLimits.AzureManagedDomain.PerMinute, 1, 100_000),
                     Math.Clamp(int.TryParse(get("MAIL_MAX_PER_HOUR"), out var mph) ? mph : MailLimits.AzureManagedDomain.PerHour, 1, 1_000_000)),
+                // v1.1 (30 Oct 2026): every switch off by default.
+                AgentOffboarding = On("AGENT_OFFBOARDING"),
+                OffboardDeleteUser = On("OFFBOARD_DELETE_USER"),
+                OffboardSubscriptions = List("OFFBOARD_SUBSCRIPTIONS").Where(x => Guid.TryParse(x, out _)).Select(x => Guid.Parse(x).ToString("D")).Distinct().ToList(),
+                TapMailSender = Mailbox(get("TAP_MAIL_SENDER"), "TAP_MAIL_SENDER"),
+                MaxUploadBytes = Math.Clamp(int.TryParse(get("MAX_UPLOAD_BYTES"), out var mub) ? mub : 5 * 1024 * 1024, 1024, 25 * 1024 * 1024),
+                ExternalUploadApiEnabled = On("EXTERNAL_UPLOAD_API_ENABLED"),
+                ExternalUploadAudience = Guid.TryParse(get("EXTERNAL_UPLOAD_AUDIENCE"), out var aud) ? aud.ToString("D") : null,
             },
         };
     }
@@ -112,7 +130,11 @@ public sealed record WorkflowParts(
     MappingSheetService MappingSheet,
     Notifier Notifier,
     IssueLog Issues,
-    ContactInventoryService Contacts);
+    ContactInventoryService Contacts,
+    ResourceService Resources,
+    RequestBundleService Bundles,
+    UploadService Uploads,
+    OffboardingService Offboarding);
 
 /// <summary>Composition root shared by the Functions hosts and the tests, so tests exercise the real wiring.</summary>
 public static class PilotApp
@@ -121,13 +143,24 @@ public static class PilotApp
     /// <param name="queue">Paid environment only.</param>
     /// <param name="directory">Read-only Entra reader. None in the SWA-managed API (no managed identity): the worker has it.</param>
     /// <remarks>The API never gets a directory or role writer: only the worker provisions (v2.1).</remarks>
+    /// <param name="signingKeys">F4 external API: the tenants' token signing keys (test seam; default: Entra's public OpenID metadata).</param>
     public static ApiHost Build(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
-        IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null)
+        IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null,
+        ISigningKeys? signingKeys = null)
     {
         var parts = BuildWorkflow(stores, settings, clock, loggers, model, queue, directory, roles);
         var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
         host.MapCore(stores, parts.Service, parts.MappingSheet, parts.Contacts);
         host.MapRuns(parts.Runs);
+        host.MapV11(parts.Service, parts.Resources, parts.Bundles);
+        // F4: the Data uploads page, and the external upload API (404 unless EXTERNAL_UPLOAD_API_ENABLED=true).
+        var tokens = settings.Workflow.ExternalUploadApiEnabled
+            ? new UploadTokenValidator(signingKeys ?? new OpenIdSigningKeys(new HttpClient { Timeout = TimeSpan.FromSeconds(10) }, clock), settings.Workflow.ExternalUploadAudience, clock,
+                async (tid, ct) => (await stores.Projects.ListAllAsync(ct)).Any(p => string.Equals(p.Value.TenantId?.Trim(), tid, StringComparison.OrdinalIgnoreCase)))
+            : null;
+        host.MapUploads(parts.Uploads, stores, tokens, settings.Workflow);
+        host.MapOffboarding(parts.Offboarding); // F5: plans and confirmations only; the worker reads and writes Entra / Azure
+
         return host;
     }
 
@@ -153,7 +186,9 @@ public static class PilotApp
             loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
+        var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
-            new ContactInventoryService(stores, notifier, clock));
+            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service), new UploadService(stores, clock, settings.Workflow),
+            new OffboardingService(stores, clock, settings.Workflow));
     }
 }

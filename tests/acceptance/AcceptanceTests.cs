@@ -338,10 +338,11 @@ public class AcceptanceTests
         var src = Directory.GetFiles(Path.Combine(PmoReview.Tests.Contract.GraphDirectoryReaderTests.Repo(), "src"), "*.cs", SearchOption.AllDirectories)
             .Select(File.ReadAllText).ToList();
         var writes = src.Count(s => System.Text.RegularExpressions.Regex.IsMatch(s, @"\b(assignmentRequests|assignLicense)\b"));
-        // The agent TAP's one create call (approval-gated, worker only) is in a single file: the Graph writer.
+        // The agent TAP's one create call (approval-gated, worker only) is in the Graph writer; the v1.1 F5 offboarding
+        // TAP delete (approval-gated, worker only) in the offboarding writer. Two files, both worker-only.
         var tap = src.Count(s => System.Text.RegularExpressions.Regex.IsMatch(s, @"\btemporaryAccessPassMethods\b"));
-        Evidence.Record("AC23", $"{routes.Count} routes, none grant/assign/provision; package/licence write calls in source: {writes}; TAP create call sites: {tap} (worker's Graph writer)");
-        Assert.Equal((0, 1), (writes, tap));
+        Evidence.Record("AC23", $"{routes.Count} routes, none grant/assign/provision; package/licence write calls in source: {writes}; TAP call sites: {tap} (worker's Graph writer: create; offboarding writer: delete)");
+        Assert.Equal((0, 2), (writes, tap));
         Assert.DoesNotContain(routes, r => r.Contains("assign", StringComparison.OrdinalIgnoreCase) || r.Contains("provision", StringComparison.OrdinalIgnoreCase));
         await Task.CompletedTask;
     }

@@ -68,6 +68,29 @@ public static class MappingSheet
     public static IReadOnlyList<MappingRow> ForResource(IEnumerable<MappingRow> rows, string? resource) =>
         resource is null ? [] : rows.Where(r => Same(r.Resource, resource)).OrderBy(r => r.RowId, StringComparer.Ordinal).ToList();
 
+    /// <summary>I1 effective dates: the row applies on <paramref name="day"/> (no dates = always).</summary>
+    public static bool Effective(MappingRow r, DateOnly day) =>
+        (r.EffectiveFrom is null || r.EffectiveFrom <= day) && (r.EffectiveTo is null || r.EffectiveTo >= day);
+
+    /// <summary>
+    /// v1.1: the row may be reviewed and granted on <paramref name="day"/>: not retired (F4 "Retire missing rows", rollback)
+    /// and within its I1 effective dates. Retiring a row or changing its dates changes the fingerprint, so requests on it
+    /// are reviewed again and never granted from it.
+    /// </summary>
+    public static bool Usable(MappingRow r, DateOnly day) => !r.Retired && Effective(r, day);
+
+    /// <summary>
+    /// The sheet still says what the review saw: same fingerprint for the resource, and the reviewed row still usable on
+    /// <paramref name="now"/> (a row whose end date passed since the review changes no field, so the date is checked too).
+    /// Every grant point asks this before it continues (approvals, the ProdApprover decision, the agent).
+    /// </summary>
+    public static bool AsReviewed(IReadOnlyList<MappingRow> sheet, string? resource, string sheetFingerprint, string mappingRowId, DateTimeOffset now)
+    {
+        if (Fingerprint(sheet, resource) != sheetFingerprint) return false;
+        var row = sheet.FirstOrDefault(x => x.RowId == mappingRowId);
+        return row is null || Usable(row, DateOnly.FromDateTime(now.UtcDateTime)); // a row that is gone already changed the fingerprint
+    }
+
     /// <summary>
     /// SHA-256 over the rows for the resource (every field a review reads, fixed order). Any change to those rows,
     /// including a new duplicate or a deprecation, changes the fingerprint and sends the request back to AI review.
@@ -98,6 +121,10 @@ public static class MappingSheet
                 if (r.Environment is not null) w.WriteString("environment", Normalize(r.Environment).ToLowerInvariant());
                 if (r.GroupObjectId is not null) w.WriteString("groupObjectId", r.GroupObjectId.ToLowerInvariant());
                 if (r.Flag != RowFlag.None) w.WriteString("flag", r.Flag.ToString());
+                // v1.1 (I1) effective dates and retired, written only when set: changing them re-reviews the requests on the row.
+                if (r.EffectiveFrom is not null) w.WriteString("effectiveFrom", r.EffectiveFrom.Value.ToString("O"));
+                if (r.EffectiveTo is not null) w.WriteString("effectiveTo", r.EffectiveTo.Value.ToString("O"));
+                if (r.Retired) w.WriteBoolean("retired", true);
                 if (r.AzureRoles.Count > 0)
                 {
                     w.WriteStartArray("azureRoles");

@@ -1,7 +1,8 @@
 // The AI agent's background worker (Phase 2 resources, paid from Azure credits, approved by Gokul 16 Oct 2026).
 // Flex Consumption Function App + its storage account. Managed identity only: no keys, no secrets.
 //   Worker -> Cosmos: data-plane RBAC scoped to the containers it uses (requests, reviewRuns, mappingSheet,
-//             responseDocument, notifications, issues) and read-only on projects.
+//             responseDocument, notifications, issues; v1.1: peopleInventory, escalations, mappingQualityIssues,
+//             groupResolutions, offboardingRuns, auditEvents) and read-only on projects. Never userAccess or the upload versions.
 //   Worker -> Storage: Storage Blob Data Owner (host locks + deployment package).
 //   Worker -> Microsoft Graph: READ ONLY (User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All,
 //             AuditLog.Read.All), granted by tools/deploy_free.sh grant-graph, not ARM. The AI agent never approves,
@@ -76,6 +77,22 @@ param agentTapLifetimeMinutes int = 480
 @description('Agent privileged rows: also provision rows flagged privileged after both approvals (never privileged administrator roles). Approval-gated.')
 param agentPrivileged bool = false
 
+@description('v1.1 F5: the worker executes confirmed offboarding plans (revoke, remove, disable). Off until its permissions are approved.')
+param agentOffboarding bool = false
+
+@description('v1.1 F5: after disabling, soft-delete the account (restorable 30 days). Off by default; needs User.ReadWrite.All (not granted).')
+param offboardDeleteUser bool = false
+
+@description('v1.1 F5: comma-separated subscription ids whose Azure role assignments offboarding removes (empty = every subscription the worker can list).')
+param offboardSubscriptions string = ''
+
+@description('v1.1 F2: the agent TAP mail sender mailbox (TAP_MAIL_SENDER). Kept here so a redeploy never drops it: the settings below replace all of the worker\'s app settings.')
+param tapMailSender string = ''
+
+@description('MAIL_MAX_PER_MINUTE / MAIL_MAX_PER_HOUR (empty = defaults, F70).')
+param mailMaxPerMinute string = ''
+param mailMaxPerHour string = ''
+
 @description('Comma-separated Azure scopes (prefixes) where the agent may assign roles.')
 param roleAssignScopes string = ''
 
@@ -96,6 +113,13 @@ var writableContainers = [
   'responseDocument'
   'notifications'
   'issues'
+  // v1.1: TAP recipient and leavers, escalations, mapping quality, group resolutions, offboarding, audit.
+  'peopleInventory'
+  'escalations'
+  'mappingQualityIssues'
+  'groupResolutions'
+  'offboardingRuns'
+  'auditEvents'
 ]
 
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = {
@@ -186,6 +210,12 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_TAP', value: agentTap ? 'true' : 'false' }
         { name: 'AGENT_TAP_LIFETIME_MINUTES', value: string(agentTapLifetimeMinutes) }
         { name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }
+        { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
+        { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
+        { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }
+        { name: 'TAP_MAIL_SENDER', value: tapMailSender }
+        { name: 'MAIL_MAX_PER_MINUTE', value: mailMaxPerMinute }
+        { name: 'MAIL_MAX_PER_HOUR', value: mailMaxPerHour }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.
         { name: 'ENTRA_AUTO_ASSIGN', value: 'false' }
         { name: 'ENTRA_PROVISION_JOINERS', value: 'false' }

@@ -1,10 +1,11 @@
 // Mirrors the API contracts in src/core. Server is the authority for every value here.
 
-export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'PMO' | 'Operator' | 'Reviewer' | 'Maintainer';
+export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'PMO' | 'Operator' | 'Reviewer' | 'Maintainer'
+  | 'ProdApprover' | 'DataSteward';
 export type RequestStatus =
-  | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'Rejected'
-  | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev';
-export type WaitingOn = 'None' | 'Agent' | 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'User' | 'Developer';
+  | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'AwaitingProdApproval' | 'Rejected'
+  | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev' | 'Closed';
+export type WaitingOn = 'None' | 'Agent' | 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'User' | 'Developer' | 'ProdApprover';
 export type ProcessingStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Superseded';
 export type ReviewOutcome = 'Pass' | 'Fail' | 'Pending';
 export type CheckStatus = 'Pass' | 'Fail' | 'Pending' | 'NotApplicable' | 'Flagged';
@@ -78,7 +79,7 @@ export interface CheckResult {
 }
 
 export interface Approval {
-  stage: 'Owner' | 'Security';
+  stage: 'Owner' | 'Security' | 'Prod';
   decision: 'Approved' | 'Rejected';
   by: string;
   byName: string;
@@ -230,7 +231,7 @@ export interface Timings {
 export type NotificationKind =
   | 'FlowOverview' | 'ReviewReturned' | 'ApprovalRequested' | 'Reminder' | 'Escalation' | 'Rejected' | 'TeamTask' | 'TaskReturned'
   | 'TapCleanupNeeded' | 'AccessReady' | 'CompletionSummary' | 'PmoInformed' | 'Closure' | 'SecurityAlert' | 'DailySummary' | 'DeveloperReport'
-  | 'ProvisioningSummary' | 'SignInDetails';
+  | 'ProvisioningSummary' | 'SignInDetails' | 'OffboardingCompleted';
 
 export interface Notification {
   id: string;
@@ -254,6 +255,8 @@ export interface ProjectContacts {
   idTeam: string[];
   roleTeam: string[];
   operators: string[];
+  /** v1.1 (F3): where Prod escalation requests go. */
+  prodApprovers?: string[];
   securityManager?: string | null;
   idTeamManager?: string | null;
   roleTeamManager?: string | null;
@@ -280,6 +283,7 @@ export interface ContactInventoryInput {
   roleTeam: string;
   pmo: string;
   operators: string;
+  prodApprovers: string;
   securityManager: string;
   idTeamManager: string;
   roleTeamManager: string;
@@ -375,6 +379,14 @@ export interface MappingRow {
   sensitiveResource: boolean;
   deprecated: boolean;
   groupState: GroupState;
+  // v1.1 mapping sheet columns (I1).
+  tenantId?: string | null;
+  domain?: string | null;
+  resourceGroupType?: 'Domain' | 'PH' | 'ACQ' | null;
+  owner?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  retired?: boolean;
   sourceReference: string;
   version: number;
   updatedBy: string;
@@ -419,4 +431,186 @@ export interface DeveloperReport {
   requests: { requestId: string; reason: string | null; report: string }[];
   openIssues: Issue[];
   text: string;
+}
+
+// ---- v1.1 (30 Oct 2026) ----------------------------------------------------------------------------------------
+
+/** F1: the Resource* options of one tenant. */
+export interface ResourceOptions {
+  tenantId: string;
+  environment: string;
+  options: string[];
+  allOption: string;
+}
+
+/** F1 output contract item. */
+export interface ResolvedAccess {
+  groupObjectId: string;
+  groupName: string;
+  accessLevel: string;
+  sources: string[];
+  status: 'Auto' | 'NeedsHumanApproval' | 'Unresolved';
+}
+
+export interface MappingQualityNote {
+  variantName: string;
+  canonicalName: string;
+  sheetRow: number;
+  reason: string;
+}
+
+/** F1 output contract (GET /api/resources/resolve). */
+export interface ResolveResult {
+  tenantId: string;
+  environment: string;
+  selectedResources: string[];
+  resolvedAccess: ResolvedAccess[];
+  mappingQualityIssues: MappingQualityNote[];
+  mappingVersion: string;
+}
+
+export interface BundleInput {
+  enterpriseId: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  environment: string | null;
+  justification: string | null;
+  owner: string | null;
+  guest: boolean;
+  selectedResources: string[];
+  groups: string[];
+}
+
+export interface BundleResult {
+  bundleId: string;
+  requests: { requestId: string; groupName: string; accessLevel: string; resolveStatus: string; status: StatusLine }[];
+  skipped: { groupName: string; reason: string }[];
+}
+
+export type EscalationKind = 'ProdWrite' | 'UnresolvedGroup' | 'TapRecipientMismatch' | 'OffboardingLeftover';
+export type EscalationStatus = 'Open' | 'Approved' | 'Rejected';
+
+/** F1/F2/F3/F5: a decision a person must take. */
+export interface Escalation {
+  id: string;
+  projectId: string;
+  kind: EscalationKind;
+  requestId?: string | null;
+  requestRevision?: number | null;
+  user?: string | null;
+  group?: string | null;
+  level?: string | null;
+  environment?: string | null;
+  reason: string;
+  requestedBy: string;
+  createdAt: string;
+  status: EscalationStatus;
+  decidedBy?: string | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  remarks?: string | null;
+}
+
+// ---- v1.1 F4: Data uploads --------------------------------------------------------------------------------------------
+
+export type DataKind = 'Mapping' | 'Inventory';
+/** Route segment of an upload kind. */
+export type UploadKind = 'mapping' | 'inventory';
+
+/** One validation finding (row 0 = the file as a whole). */
+export interface UploadError {
+  row: number;
+  column: string;
+  code: string;
+  message: string;
+}
+
+export interface UploadCounts {
+  added: number;
+  updated: number;
+  unchanged: number;
+  retired: number;
+}
+
+/** F4 output contract (same as the external upload API). */
+export interface UploadResult {
+  uploadId: string;
+  mode: 'validate' | 'apply';
+  status: 'Valid' | 'Invalid' | 'Applied';
+  version: string | null;
+  counts: UploadCounts;
+  errors: UploadError[];
+}
+
+export interface UploadDiffRow {
+  row: number;
+  change: 'Added' | 'Updated' | 'Unchanged' | 'Missing' | 'Retired';
+  label: string;
+  fields: string[];
+}
+
+/** What the Data uploads page gets back: the contract, the version it was checked against and the diff. */
+export interface UploadView {
+  upload: UploadResult;
+  baseVersion: number;
+  missing: number;
+  diff: UploadDiffRow[];
+  fileName?: string | null;
+}
+
+export interface DataVersionView {
+  version: string;
+  number: number;
+  state: 'Applied' | 'RolledBack';
+  uploadedBy?: string | null;
+  uploadedAt: string;
+  fileName?: string | null;
+  fileHash?: string | null;
+  counts: UploadCounts & { missing: number };
+  diffSummary?: string | null;
+  retireMissing: boolean;
+  channel: string;
+  rollbackOf?: number | null;
+  rolledBackBy?: string | null;
+  rolledBackAt?: string | null;
+}
+
+export interface UploadHistory {
+  kind: DataKind;
+  current: number;
+  columns: string[];
+  versions: DataVersionView[];
+}
+
+export interface UploadsOverview {
+  mapping: UploadHistory;
+  inventory: UploadHistory;
+  maxUploadBytes: number;
+  externalApiEnabled: boolean;
+}
+
+// ---- v1.1 F5: offboarding ----------------------------------------------------------------------------------------------
+
+export type OffboardingStatus = 'Planning' | 'Planned' | 'Executing' | 'Completed' | 'PartiallyCompleted' | 'Failed';
+
+export interface OffboardingStep {
+  name: string;
+  target: string;
+  action: string;
+  result: 'Planned' | 'Done' | 'Skipped' | 'Failed';
+  detail: string;
+}
+
+/** F5 output contract (POST /api/offboarding/{enterpriseId}?mode=plan|execute). */
+export interface OffboardingView {
+  offboardingId: string;
+  enterpriseId: string;
+  objectId: string;
+  mode: 'plan' | 'execute';
+  status: OffboardingStatus;
+  steps: OffboardingStep[];
+  leftovers: string[];
+  notCovered: string[];
+  pmoNotified: boolean;
+  correlationId: string;
 }
