@@ -20,3 +20,4 @@ Helper scripts Claude Code and operators run (v2 onboarding flow).
 | `run_acceptance.sh` / `export_pilot_report.py` | Run the acceptance suite (AC01–AC27) and write `docs/PILOT_REPORT.md`. |
 | `check_free_tier.sh` | Subscription has no other Cosmos free-tier account; SWA Free quota available. |
 | `cost_check.sh` | Resources in the RG, non-allowed types flagged, current-month cost. |
+| `databricks/entra_scim_setup.sh` | Separate from the onboarding app: account-level SCIM from Entra ID to Azure Databricks. `plan` (read-only) · `apply --approved-by` (enterprise app from the gallery, job, credentials, groups, start) · `status` · `pause` · `self-test` (offline, mocked). Guide: `docs/DATABRICKS_SCIM.md`. |
