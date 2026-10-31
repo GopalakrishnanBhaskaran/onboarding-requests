@@ -97,6 +97,17 @@ policy_allows_worker() {
     --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Web/sites"
 }
 
+# app / worker are code-only (no approval needed, CLAUDE.md rule 4). --approved-by "<name> <date>" is optional and only
+# recorded, so the pasted output names who asked for the deploy (logged in docs/DEPLOYMENT_LOG.md).
+note_approval() {
+  if [[ "${2:-}" == "--approved-by" ]]; then
+    [[ -n "${3:-}" ]] || { echo "--approved-by needs a name and date"; exit 1; }
+    APPROVED_BY="$3"; echo "Approval recorded ($1): $3" | tee -a "$ROOT/.local/approval.txt"
+  elif [[ -n "${2:-}" ]]; then
+    echo "Unknown option for $1: $2 (only --approved-by \"<name> <date>\")"; exit 1
+  fi
+}
+
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
 worker_setting() { az functionapp config appsettings list -g "$RG_DEFAULT" -n "$1" --query "[?name=='$2'].value | [0]" -o tsv 2>/dev/null || true; }
 
@@ -813,6 +824,7 @@ print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "|
 PY
     ;;
   worker)
+    note_approval worker "${3:-}" "${4:-}"
     deploy_worker
     ;;
   grant-graph)
@@ -888,6 +900,7 @@ PY
     ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
+    note_approval app "${3:-}" "${4:-}"
     RG="rg-pmo-review-pilot"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
     COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)
@@ -899,7 +912,7 @@ PY
       COSMOS_CONNECTION_STRING="$CS" "$PYTHON" "$ROOT/tools/seed_sample_data.py"
       unset CS
     fi
-    echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
+    echo "Deployed commit $(git -C "$ROOT" rev-parse --short HEAD) to https://$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)${APPROVED_BY:+ (approved by $APPROVED_BY)}"
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
