@@ -159,7 +159,7 @@ plan_or_apply() {
   local groups=()
   for g in "${GROUP_ARGS[@]}"; do groups+=("$(entra_group "$g")"); done
 
-  say ""; say "Workspace $WORKSPACE (id $ws), groups as $PERMISSION:"
+  [[ "$mode" == plan ]] && { say ""; say "Workspace $WORKSPACE (id $ws), groups as $PERMISSION:"; }
   for line in ${groups[@]+"${groups[@]}"}; do
     oid=${line%%$'\t'*}; name=${line#*$'\t'}
     perms=$(awk -F'\t' -v n="$name" '$2 == n {print $3}' <<<"$current")
