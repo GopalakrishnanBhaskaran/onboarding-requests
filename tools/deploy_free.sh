@@ -65,10 +65,17 @@
 #       (pay per mail, from credits) + one role for the worker on that resource: dry run (plan + what-if) without
 #       --approved-by. Approved: policy stage A (allow the 3 types), wait for it, create the resources, switch the worker
 #       to NOTIFY_SENDER=AcsEmail.
+#
+#   tools/deploy_free.sh databricks <subscriptionId> [--location <region>] [--approved-by "<name> <date>"]
+#       One SERVERLESS Azure Databricks workspace (Premium; no managed resource group, VNet, NAT gateway or storage account;
+#       pay per DBU only while serverless compute runs, F71-F76). New resource: dry run (plan + what-if) without
+#       --approved-by. Approved: register the Microsoft.Databricks provider if needed, policy stage A (allow
+#       Microsoft.Databricks/workspaces), wait for it, create the workspace. Then add the Entra groups to it with
+#       tools/databricks_setup.py (dry run, then approval; automatic identity management keeps membership in sync).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email|databricks}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -502,6 +509,61 @@ PY
   echo "Then run: tools/deploy_free.sh app <subscriptionId> (the website shows 'mailed')."
 }
 
+policy_allows_databricks() {
+  az policy assignment show -g "$RG_DEFAULT" -n pmo-pilot-allowed-types \
+    --query "parameters.listOfResourceTypesAllowed.value" -o tsv 2>/dev/null | grep -qx "Microsoft.Databricks/workspaces"
+}
+
+# One serverless Azure Databricks workspace (VERIFIED_FACTS F71-F76). New resource: approval-gated, dry run first.
+databricks_setup() {
+  local location="${1:-centralindia}" provider existing out
+  [[ -f "$ROOT/.local/params.json" ]] || { echo "Run tools/deploy_free.sh params <subscriptionId> first."; return 1; }
+  python3 - "$ROOT/.local/params.json" "$ROOT/.local/params-databricks.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["parameters"]["enableDatabricks"] = {"value": True}
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PY
+  provider=$(az provider show -n Microsoft.Databricks --query registrationState -o tsv 2>/dev/null || echo NotRegistered)
+  existing=$(az resource list -g "$RG_DEFAULT" --resource-type Microsoft.Databricks/workspaces --query "[].name" -o tsv)
+  if [[ -n "$existing" ]]; then echo "A workspace already exists in $RG_DEFAULT: $existing (one only, CLAUDE.md rule 1)."; fi
+  local tags="{\"workload\":\"pmo-review-pilot\",\"costProfile\":\"databricks-serverless-pay-per-dbu\"}"
+  echo "Plan (Databricks), expected cost: nothing while idle; DBUs (Premium, serverless) only while a notebook, job or SQL"
+  echo "warehouse runs, billed on the workspace resource inside the ₹2,000 budget (F76). Stop compute after each test."
+  echo "  Provider: Microsoft.Databricks is $provider on the subscription$([[ "$provider" == Registered ]] || echo " (will be registered, free)")"
+  echo "  Policy (stage A): allow Microsoft.Databricks/workspaces in $RG_DEFAULT"
+  echo "  Create: Azure Databricks workspace dbw-pmo-<suffix> ($location, Premium, computeMode Serverless, public network access)"
+  echo "  Not created: managed resource group, VNet, NAT gateway, public IP, storage account, access connector (serverless, F71)"
+  echo "  Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group>... (dry run, then --approved-by)"
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "== what-if (policy change) =="
+    az deployment sub what-if --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" \
+      --parameters "@$ROOT/.local/params-databricks.json" --result-format ResourceIdOnly | tee "$ROOT/.local/whatif-databricks.txt" || true
+    echo "== what-if (workspace) =="
+    az deployment group what-if -g "$RG_DEFAULT" --template-file "$ROOT/infra/modules/databricks.bicep" \
+      --parameters "location=$location" "tags=$tags" --result-format FullResourcePayloads | tee -a "$ROOT/.local/whatif-databricks.txt" || true
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  if [[ "$provider" != "Registered" ]]; then
+    az provider register -n Microsoft.Databricks --wait -o none
+    echo "Provider Microsoft.Databricks registered (approved by $APPROVED_BY)."
+  fi
+  if ! policy_allows_databricks; then
+    az deployment sub create --name "$DEPLOYMENT" --location centralindia --template-file "$ROOT/infra/main.bicep" --parameters "@$ROOT/.local/params-databricks.json" -o none
+    echo "Policy updated (approved by $APPROVED_BY). Waiting for it to take effect (up to 30 minutes)..."
+    local i; for i in $(seq 1 30); do policy_allows_databricks && break; sleep 60; done
+    sleep 120 # the assignment reads as updated before the deny evaluation follows
+  fi
+  cp "$ROOT/.local/params-databricks.json" "$ROOT/.local/params.json" # later deployments keep the type allowed
+  out=$(az deployment group create -g "$RG_DEFAULT" -n pmo-review-databricks --template-file "$ROOT/infra/modules/databricks.bicep" \
+    --parameters "location=$location" "tags=$tags" --query properties.outputs -o json)
+  echo "$out" > "$ROOT/.local/databricks.json"
+  python3 -c "import json,sys;o=json.load(sys.stdin);print('Databricks workspace on (approved by '+sys.argv[1]+'):',o['workspaceName']['value'],'https://'+o['workspaceUrl']['value'],'(workspace id',str(o['workspaceId']['value'])+')')" "$APPROVED_BY" <<<"$out"
+  echo "Next: open the workspace URL once as the deploying admin (becomes workspace admin), then sign in to"
+  echo "https://accounts.azuredatabricks.net as an Entra Global Administrator (first account admin) and copy the account id."
+  echo "Then: python3 tools/databricks_setup.py --account-id <id> --group <Entra group> (dry run) → … --approved-by \"<name> <date>\""
+}
+
 # API + SPA build and SWA upload. The API runtime comes from staticwebapp.config.json (single source of truth;
 # InfraConsistencyTests checks it matches the API project's TargetFramework).
 deploy_app() {
@@ -631,6 +693,9 @@ case "$CMD" in
     for c in mappingSheet responseDocument notifications issues; do
       ok "Cosmos container '$c' exists (v2)" "az cosmosdb sql container show -g $RG -a $COSMOS -d pmoreview -n $c"
     done
+    echo "== Databricks (optional, deploy_free.sh databricks) =="
+    ok "policy allows Microsoft.Databricks/workspaces" policy_allows_databricks
+    echo "  workspace: $(az resource list -g "$RG" --resource-type Microsoft.Databricks/workspaces --query "[0].name" -o tsv 2>/dev/null || true)"
     echo "== Worker =="
     W=$(worker_name); echo "  worker: ${W:-not deployed}"
     SWA=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv)
@@ -651,7 +716,8 @@ case "$CMD" in
     HOST=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].defaultHostname" -o tsv 2>/dev/null)
     W=$(worker_name 2>/dev/null || true)
     LIVE=$([[ -n "$W" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$W" -o json 2>/dev/null || echo "[]")
-    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" "$LIVE" <<'PY'
+    DBX=$(policy_allows_databricks && echo true || echo false)
+    python3 - "$B" "$ROOT/.local/params.json" "${HOST:-}" "$LIVE" "$DBX" <<'PY'
 import json, sys
 b, out, host = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
 live = {s["name"]: s.get("value") or "" for s in json.loads(sys.argv[4] or "[]")}
@@ -673,7 +739,9 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      # Mail and environment as they are live (deploy_free.sh email / environment).
      "notifySender": v(live.get("NOTIFY_SENDER") or "Outbox"), "notifyFrom": v(live.get("NOTIFY_FROM", "")),
      "acsEndpoint": v(live.get("ACS_ENDPOINT", "")), "enableEmail": v(live.get("NOTIFY_SENDER") == "AcsEmail"),
-     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", ""))}
+     "appEnvironment": v(live.get("APP_ENVIRONMENT") or "pilot"), "notifyRedirectTo": v(live.get("NOTIFY_REDIRECT_TO", "")),
+     # Databricks policy type as it is live (deploy_free.sh databricks, approved separately).
+     "enableDatabricks": v(sys.argv[5] == "true")}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
@@ -740,6 +808,17 @@ PY
     done
     email_setup "$REDIRECT"
     ;;
+  databricks)
+    shift 2; DBX_LOCATION="centralindia"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --location) DBX_LOCATION="${2:?region}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (databricks): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    databricks_setup "$DBX_LOCATION"
+    ;;
   app)
     # Redeploy the app only (no infrastructure change). Use after a failed upload or a code change.
     RG="rg-pmo-review-pilot"
@@ -757,5 +836,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|environment|email|databricks ..."; exit 1 ;;
 esac

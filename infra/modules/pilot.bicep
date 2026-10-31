@@ -9,6 +9,8 @@ param tags object
 param enableHandoff bool = false
 @description('Mail stage A (approval-gated): also allow the Azure Communication Services Email types. Creates nothing.')
 param enableEmail bool = false
+@description('Databricks stage A (approval-gated): also allow one serverless Azure Databricks workspace type. Creates nothing.')
+param enableDatabricks bool = false
 
 var suffix = uniqueString(resourceGroup().id)
 var cosmosName = 'cosmos-pmo-pilot-${suffix}'
@@ -55,6 +57,13 @@ var emailResourceTypes = [
   'Microsoft.Communication/emailServices/domains'
 ]
 
+// Databricks (approval-gated, deploy_free.sh databricks): one SERVERLESS workspace. Serverless compute and default storage
+// run in the Databricks account, so no managed resource group, VNet, NAT gateway or storage account is created
+// (VERIFIED_FACTS F71-F72). Pay per DBU only while serverless compute runs; nothing is created until the databricks deployment.
+var databricksResourceTypes = [
+  'Microsoft.Databricks/workspaces'
+]
+
 resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
   name: 'pmo-pilot-allowed-types'
   properties: {
@@ -66,7 +75,7 @@ resource allowedTypes 'Microsoft.Authorization/policyAssignments@2024-04-01' = {
     enforcementMode: 'Default'
     parameters: {
       listOfResourceTypesAllowed: {
-        value: concat(allowedResourceTypes, enableHandoff ? handoffResourceTypes : [], enableEmail ? emailResourceTypes : [])
+        value: concat(allowedResourceTypes, enableHandoff ? handoffResourceTypes : [], enableEmail ? emailResourceTypes : [], enableDatabricks ? databricksResourceTypes : [])
       }
     }
   }

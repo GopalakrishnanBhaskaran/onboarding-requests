@@ -11,14 +11,19 @@ ALLOWED='^Microsoft\.(Web/staticSites|DocumentDB/databaseAccounts)$'
 PHASE2='^Microsoft\.(Web/serverFarms|Web/sites|Storage/storageAccounts)$'
 # Mail (approved 21 Oct 2026, deploy_free.sh email): exactly one Communication Services, one Email Communication Service and its one Azure-managed domain.
 EMAIL='^Microsoft\.Communication/(CommunicationServices|EmailServices|EmailServices/Domains)$'
+# Databricks (deploy_free.sh databricks, approval-gated): exactly one serverless workspace; no managed resource group (F71).
+DATABRICKS='^Microsoft\.Databricks/workspaces$'
 
 echo "== Resources in $RG =="
 az resource list -g "$RG" --query "[].{type:type, name:name, sku:sku.name, location:location}" -o table
 TYPES=$(az resource list -g "$RG" --query "[].type" -o tsv)
-BAD=$(echo "$TYPES" | grep -Ev "$ALLOWED" | grep -Eiv "$PHASE2" | grep -Eiv "$EMAIL" || true)
+BAD=$(echo "$TYPES" | grep -Ev "$ALLOWED" | grep -Eiv "$PHASE2" | grep -Eiv "$EMAIL" | grep -Eiv "$DATABRICKS" || true)
 if [[ -n "$BAD" ]]; then echo "FLAG: non-allowed resource types:"; echo "$BAD"; else echo "OK: only allowed resource types."; fi
-MORE=$(echo "$TYPES" | grep -Ei "$PHASE2|$EMAIL" | sort -f | uniq -ci | awk '$1>1' || true)
+MORE=$(echo "$TYPES" | grep -Ei "$PHASE2|$EMAIL|$DATABRICKS" | sort -f | uniq -ci | awk '$1>1' || true)
 if [[ -n "$MORE" ]]; then echo "FLAG: more than one Phase 2 resource of a type (approved: one each):"; echo "$MORE"; fi
+for w in $(az resource list -g "$RG" --resource-type Microsoft.Databricks/workspaces --query "[].name" -o tsv 2>/dev/null); do
+  echo "Databricks $w: $(az resource show -g "$RG" -n "$w" --resource-type Microsoft.Databricks/workspaces --query "[sku.name, properties.computeMode]" -o tsv 2>/dev/null | tr '\n' ' ')(expected: premium Serverless)"
+done
 for p in $(az functionapp plan list -g "$RG" --query "[?sku.name!='FC1'].name" -o tsv 2>/dev/null); do echo "FLAG: plan $p is not Flex Consumption (FC1)"; done
 
 echo "== SKU / free-tier checks =="

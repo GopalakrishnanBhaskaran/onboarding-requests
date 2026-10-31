@@ -217,6 +217,37 @@ public partial class InfraConsistencyTests
     }
 
     [Fact]
+    public void Databricks_is_one_serverless_premium_workspace_off_by_default_and_its_group_tools_never_remove_or_lower()
+    {
+        Assert.Contains("param enableDatabricks bool = false", MainBicep());
+        Assert.Contains("enableDatabricks ? databricksResourceTypes : []", Pilot());
+        Assert.DoesNotContain("databricks.bicep", MainBicep()); // created only by deploy_free.sh databricks after approval
+
+        // Serverless (F71): nothing in the subscription but the workspace itself; no VNet, storage or managed resource group.
+        var bicep = Read("infra", "modules", "databricks.bicep");
+        Assert.Equal(["Microsoft.Databricks/workspaces"], ResourceType().Matches(bicep).Select(m => m.Groups[1].Value).Distinct());
+        Assert.Contains("computeMode: 'Serverless'", bicep);
+        Assert.Contains("name: 'premium'", bicep);
+        Assert.DoesNotMatch(new Regex(@"^\s*(managedResourceGroupId|parameters|customVirtualNetworkId|storageAccountName|natGatewayName|accessConnector|enableNoPublicIp)\s*:", RegexOptions.Multiline), bicep);
+
+        var deploy = Read("tools", "deploy_free.sh");
+        Assert.Contains("databricks_setup \"$DBX_LOCATION\"", deploy);
+        Assert.Contains("\"enableDatabricks\": v(sys.argv[5] == \"true\")", deploy); // params keeps the live policy type allowed
+        Assert.Contains("DATABRICKS='^Microsoft\\.Databricks/workspaces$'", Read("tools", "cost_check.sh"));
+
+        // Group tools: read-only without --approved-by; one kind of write each; never delete, patch or give Fabric Admin.
+        var dbx = Read("tools", "databricks_setup.py");
+        Assert.Single(Regex.Matches(dbx, @"http\(""PUT"""));
+        Assert.Contains("if not a.approved_by:", dbx);
+        var fabric = Read("tools", "fabric_groups.py");
+        Assert.Single(Regex.Matches(fabric, @"http\(""POST"""));
+        Assert.Contains("ROLES = (\"Viewer\", \"Contributor\", \"Member\")", fabric);
+        foreach (var py in new[] { dbx, fabric, Read("tools", "entra_rest.py") })
+            foreach (var verb in new[] { "\"DELETE\"", "\"PATCH\"" })
+                Assert.DoesNotContain(verb, py);
+    }
+
+    [Fact]
     public void Budget_is_the_approved_cap_with_staged_alerts()
     {
         var bicep = MainBicep() + Pilot();

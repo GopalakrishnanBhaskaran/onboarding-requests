@@ -47,6 +47,9 @@ param notifyFrom string = ''
 @description('Mail stage A: allow the Azure Communication Services Email types in the policy (approval-gated, creates nothing).')
 param enableEmail bool = false
 
+@description('Databricks stage A: allow one serverless Azure Databricks workspace in the policy (approval-gated, creates nothing; deploy_free.sh databricks).')
+param enableDatabricks bool = false
+
 @description('Azure Communication Services endpoint for AcsEmail (https://<name>.communication.azure.com).')
 param acsEndpoint string = ''
 
@@ -125,6 +128,7 @@ module pilot 'modules/pilot.bicep' = {
     tags: tags
     enableHandoff: enableHandoff
     enableEmail: enableEmail
+    enableDatabricks: enableDatabricks
   }
 }
 

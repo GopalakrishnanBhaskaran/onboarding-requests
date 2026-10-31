@@ -1,4 +1,21 @@
-# Next session — handoff (updated 22 Oct 2026, evening: go-live release)
+# Next session — handoff (updated 31 Oct 2026: Databricks + Fabric with Entra groups)
+
+## 31 Oct 2026 — Databricks + Fabric (code only, nothing deployed, nothing approved)
+Branch **`claude/gifted-wozniak-7woywt`** (on top of `2e512fe`, main after PR 3). Runbook: `docs/DATABRICKS_FABRIC.md`; facts F71–F79.
+- **Databricks:** `tools/deploy_free.sh databricks $SUB` (dry run: plan + what-if) → after "approved" `… --approved-by "<name> <date>"`. It registers `Microsoft.Databricks`, adds `Microsoft.Databricks/workspaces` to the policy (`enableDatabricks`, stage A), waits, then creates one **serverless** Premium workspace (`infra/modules/databricks.bicep`). No managed resource group, VNet or storage account, so it fits rules 1–2 once approved. `params` keeps the policy type, and `cost_check.sh` allows exactly one workspace.
+- **Entra groups → Databricks:** after the first account admin (an Entra Global Administrator signs in at accounts.azuredatabricks.net) and the account id: `python3 tools/databricks_setup.py --account-id <id> --group <group>` (dry run) → `--approved-by`. Automatic identity management syncs membership at sign-in; per joiner only the Entra membership is needed.
+- **Fabric:** trial capacity, no Azure resource. Tenant settings, trial and workspace in the portal, then `python3 tools/fabric_groups.py --workspace "<name>" --group <group>[=Contributor]` (dry run) → `--approved-by`.
+- **Tests:**
+  - .NET: 382 (381 pass, 1 opt-in skip), including a new infra test.
+  - `python3 tools/test_platform_groups.py`, both `--self-test`s.
+  - `bicep build` of `main.bicep` and `databricks.bicep`: exit 0 (only the old BCP187 warning).
+  - Not run against Azure: no credentials in the build session.
+- **Open:**
+  - DBU rates and default-storage billing not read (F76): check the pricing page before approval.
+  - Az CLI token for the Fabric API is only seen in search results (F78).
+  - Databricks and Fabric rows still go to the role team (possible later change: "granted by group").
+
+# Previous handoff (22 Oct 2026, evening: go-live release)
 
 Read first: `docs/GO_LIVE.md` (steps for 23 Oct), `CLAUDE.md`, `SCOPE.md` (22 Oct go-live additions), `workflows/09-onboarding-flow-v2.md` (section *Notifications and the contact inventory*), last rows of `docs/DEPLOYMENT_LOG.md`.
 Branch **`claude/eager-ride-lx6he8`** (on top of `13ca4b9` from `claude/great-goodall-j4ozev`), pushed. No PR.

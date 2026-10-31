@@ -18,6 +18,8 @@ v2 replaces the Phase 1 readiness review and the Phase 2/2b/2c Entra hand-off. T
 - **No sign-in step:** step 7 verifies the account, the membership and the exact roles once and completes; it no longer waits for the joiner's first sign-in, a permanent method or the TAP removal.
 - **Contact inventory:** Security, ID team, role assignment team, PMO and Operators mail lists (plus escalation managers) per tenant, edited in the app, addresses separated by semicolons; PMO and Operators save; versioned; each change mailed to Security and PMO. Routes mail only, never approval rights.
 - **Mail limit (F70):** sent within the ACS limit (Azure-managed domain 10 an hour), most urgent first; over the limit mails wait, never fail; a backlog over an hour is an issue. A verified custom domain (approval) raises the limit.
+
+**31 Oct 2026, Databricks and Fabric (code; each Azure change needs approval):** one serverless Azure Databricks workspace in the pilot resource group (no managed resource group, VNet or storage account) and the Fabric trial capacity (no Azure resource). Entra groups are put on the Databricks workspace (automatic identity management) and on a Fabric workspace (workspace role) once, by an admin with approval; after that the joiner's Entra group membership from this flow is the access. The agent gets no Databricks or Fabric rights. `docs/DATABRICKS_FABRIC.md`.
 History (v1 + Phase 2 hand-off): `docs/DEPLOYMENT_LOG.md`, `workflows/08-entra-handoff.md` (superseded).
 
 ## Flow overview (stated to every requester upfront)
