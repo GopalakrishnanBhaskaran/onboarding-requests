@@ -313,8 +313,8 @@ public partial class InfraConsistencyTests
     }
 
     /// <summary>
-    /// The SWA managed API runtime and the API project must agree (VERIFIED_FACTS F21). dotnet-isolated:10.0 needs SWA CLI
-    /// 2.1.0 or later (2.0.10 rejects it), and no project stays on .NET 9 (end of support 10 Nov 2026).
+    /// The SWA managed API runtime and the API project must agree (VERIFIED_FACTS F21), and the libraries the API uses
+    /// must build for it. The API is back on dotnet-isolated:9.0 (31 Oct 2026: the live 10.0 deploy did not start).
     /// </summary>
     [Fact]
     public void Api_target_framework_matches_swa_api_runtime()
@@ -323,12 +323,12 @@ public partial class InfraConsistencyTests
         var runtime = config.RootElement.GetProperty("platform").GetProperty("apiRuntime").GetString()!;
         var tfm = Regex.Match(Read("src", "api", "PmoReview.Api", "PmoReview.Api.csproj"), "<TargetFramework>net(?<v>[0-9.]+)</TargetFramework>").Groups["v"].Value;
         Assert.Equal($"dotnet-isolated:{tfm}", runtime);
-        Assert.Equal("10.0", tfm);
+        Assert.Contains(tfm, new[] { "9.0", "10.0" });
         var cli = JsonDocument.Parse(Read("src", "web", "package.json")).RootElement.GetProperty("devDependencies").GetProperty("@azure/static-web-apps-cli").GetString()!;
-        Assert.True(Version.Parse(cli) >= new Version(2, 1, 0), $"SWA CLI {cli} rejects {runtime} (F21)");
-        foreach (var project in Regex.Matches(Read("PmoReview.slnx"), "Path=\"(?<p>[^\"]+\\.csproj)\"").Select(m => m.Groups["p"].Value))
-            Assert.DoesNotContain("net9.0", Read(project.Split('/')));
-        Assert.DoesNotContain("net9.0", Read("Directory.Build.props"));
+        Assert.True(Version.Parse(cli) >= new Version(2, 1, 0), $"SWA CLI {cli} rejects dotnet-isolated:10.0 (F21)");
+        if (tfm != "10.0")
+            foreach (var library in new[] { Read("src", "core", "PmoReview.Core", "PmoReview.Core.csproj"), Read("src", "adapters", "PmoReview.Adapters", "PmoReview.Adapters.csproj") })
+                Assert.Contains($"net{tfm};", library);
     }
 
     /// <summary>Handoff task 3: sign-out must land on a public page, or the 401 override signs the user straight back in.</summary>

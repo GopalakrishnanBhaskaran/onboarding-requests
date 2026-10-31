@@ -100,7 +100,7 @@ policy_allows_worker() {
 worker_name() { az functionapp list -g "$RG_DEFAULT" --query "[?starts_with(name,'func-pmo-worker-')].name | [0]" -o tsv; }
 worker_setting() { az functionapp config appsettings list -g "$RG_DEFAULT" -n "$1" --query "[?name=='$2'].value | [0]" -o tsv 2>/dev/null || true; }
 
-# global.json needs the .NET 10 SDK (the worker and the API target net10.0).
+# global.json needs the .NET 10 SDK (the worker targets net10.0; the API's net9.0 builds with it too, F21).
 # Azure Cloud Shell ships .NET 9 only, so install 10 into ~/.dotnet with Microsoft's script (user folder, no admin).
 # Ephemeral Cloud Shell sessions lose it; this re-installs on the next run (about 1-2 minutes).
 ensure_dotnet10() {
