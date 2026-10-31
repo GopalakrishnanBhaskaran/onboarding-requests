@@ -74,6 +74,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Go live (mail to the real people) | Contact inventory page filled per tenant (PMO) → `tools/deploy_free.sh environment <subscriptionId> prod` (settings only, no redirect) → `verify_features.sh` lines 6c, 14, 15 (`docs/GO_LIVE.md`) |
 | Mail limit after a custom mail domain (settings only) | `az functionapp config appsettings set -g rg-pmo-review-pilot -n <worker> --settings MAIL_MAX_PER_MINUTE=30 MAIL_MAX_PER_HOUR=100` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
+| Databricks AIM (separate tool, preferred over SCIM) | `bash tools/databricks/aim_setup.sh plan --account-id <id>` → console toggle (no API, F110) → `… plan/apply --workspace <ws> --group <g> [--admin] --approved-by "<name> <date>"`; `status`; `self-test` (`docs/DATABRICKS_AIM.md`) |
 | Databricks SCIM from Entra (separate tool, no Azure resource) | `bash tools/databricks/entra_scim_setup.sh plan --scim-url <Account SCIM URL> --group <group>` → `… apply … --approved-by "<name> <date>"`; `status`; `pause`; `self-test` (`docs/DATABRICKS_SCIM.md`; AIM first, F106) |
 
 ## Security rules for API code
