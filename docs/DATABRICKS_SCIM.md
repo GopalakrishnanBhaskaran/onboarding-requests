@@ -2,6 +2,8 @@
 
 Script: `tools/databricks/entra_scim_setup.sh`. It is separate from the PMO onboarding app: it creates no Azure resource and costs nothing. Written 31 Oct 2026; facts F105–F109 in `docs/VERIFIED_FACTS.md`, read on Microsoft Learn that day.
 
+**Prefer automatic identity management:** `tools/databricks/aim_setup.sh`, guide `docs/DATABRICKS_AIM.md`.
+
 ## Decide first: SCIM or automatic identity management (F106)
 
 Databricks recommends **automatic identity management (AIM)** over SCIM. AIM is **on by default for accounts created after 1 Aug 2025**. It syncs users, groups, nested groups and service principals with no Entra app.
