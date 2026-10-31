@@ -318,7 +318,7 @@ test('unregistered user sees their id and no data', async ({ browser }) => {
   await ctx.close();
 });
 
-test('Data uploads: the DataMaintainer checks a mapping file, sees the diff, applies it and rolls it back', async ({ browser }) => {
+test('Data uploads: the Data Steward checks a mapping file, sees the diff, applies it and rolls it back', async ({ browser }) => {
   const tenant = '00000000-0000-4000-8000-0000000000a1'; // tools/run_local.sh AGENT_TENANT_ID
   const group = `SAMPLE-E2E-UPLOAD-${Date.now().toString(36).toUpperCase()}`; // the local store outlives a run
   const header = 'TenantId,Domain,ResourceGroupType,Environment,AccessLevel,EntraGroupName,EntraGroupObjectId,Owner,EffectiveFrom,EffectiveTo';
@@ -352,10 +352,10 @@ test('Data uploads: the DataMaintainer checks a mapping file, sees the diff, app
   await expect(mapping.getByRole('table', { name: 'PMO mapping sheet versions' })).toContainText('rolled back');
   await dana.ctx.close();
 
-  // PMO reads the page; only the DataMaintainer uploads.
+  // PMO reads the page; only the Data Steward uploads.
   const paul = await as(browser, 'sample-user-paul');
   await paul.page.goto('/#/uploads');
-  await expect(paul.page.getByText('Read only: uploads are made by the DataMaintainer.')).toBeVisible();
+  await expect(paul.page.getByText('Read only: uploads are made by the Data Steward.')).toBeVisible();
   await expect(paul.page.getByRole('button', { name: 'Upload PMO mapping sheet' })).toHaveCount(0);
   await paul.ctx.close();
 });

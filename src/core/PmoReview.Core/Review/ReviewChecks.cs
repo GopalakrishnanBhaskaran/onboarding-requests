@@ -148,7 +148,7 @@ public static partial class ReviewChecks
 
             Add(CheckCodes.MapNotDeprecated, CheckGroups.MappingSheet, row.Deprecated || !MappingSheet.Usable(row, Day(s)) ? CheckStatus.Fail : CheckStatus.Pass,
                 row.Deprecated ? $"Row {row.RowId} is marked deprecated. PMO must point this resource and access level to a current row."
-                : row.Retired ? $"Row {row.RowId} is retired (removed by a mapping upload). PMO or the DataMaintainer must point this resource and access level to a current row."
+                : row.Retired ? $"Row {row.RowId} is retired (removed by a mapping upload). PMO or the Data Steward must point this resource and access level to a current row."
                 : !MappingSheet.Effective(row, Day(s)) ? $"Row {row.RowId} is not in effect on {Day(s):yyyy-MM-dd} (effective {row.EffectiveFrom?.ToString("yyyy-MM-dd") ?? "…"} to {row.EffectiveTo?.ToString("yyyy-MM-dd") ?? "…"})."
                 : $"Row {row.RowId} is current (not deprecated, not retired, in effect).");
 

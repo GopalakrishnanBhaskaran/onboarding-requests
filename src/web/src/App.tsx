@@ -18,7 +18,7 @@ import { EscalationsPage } from './pages/EscalationsPage';
 import { DataUploadsPage } from './pages/DataUploadsPage';
 
 /** Roles that handle escalations (v1.1): ProdApprovers decide the Prod ones; the others read them. */
-const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataMaintainer'];
+const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataSteward'];
 import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
 const PROJECT_KEY = 'pmo-review.project';
@@ -144,7 +144,7 @@ function Shell() {
           {ESCALATION_ROLES.some((r) => project.roles.includes(r)) && (
             <Link href={href({ page: 'escalations' })}>Escalations</Link>
           )}
-          {(project.roles.includes('DataMaintainer') || project.roles.includes('PMO')) && (
+          {(project.roles.includes('DataSteward') || project.roles.includes('PMO')) && (
             <Link href={href({ page: 'uploads' })}>Data uploads</Link>
           )}
           {(project.roles.includes('Operator') || project.roles.includes('Security') || project.roles.includes('PMO')) && (

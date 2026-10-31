@@ -87,20 +87,20 @@ public class DataModelV11Tests
     }
 
     [Fact]
-    public void ProdApprover_only_decides_prod_escalations_and_DataMaintainer_only_uploads()
+    public void ProdApprover_only_decides_prod_escalations_and_DataSteward_only_uploads()
     {
         var all = Enum.GetValues<AppRole>();
         foreach (var role in all)
         {
             Assert.Equal(role == AppRole.ProdApprover, AccessPolicy.Allows([role], Permission.DecideProdEscalation));
-            Assert.Equal(role == AppRole.DataMaintainer, AccessPolicy.Allows([role], Permission.UploadData));
+            Assert.Equal(role == AppRole.DataSteward, AccessPolicy.Allows([role], Permission.UploadData));
             Assert.Equal(role is AppRole.PMO or AppRole.Operator, AccessPolicy.Allows([role], Permission.Offboard));
         }
         // Neither new role approves a request stage or works a team task.
         foreach (var p in new[] { Permission.ApproveAsOwner, Permission.ApproveAsSecurity, Permission.WorkIdTeamTasks, Permission.WorkRoleTeamTasks, Permission.EditMappingSheet })
         {
             Assert.False(AccessPolicy.Allows([AppRole.ProdApprover], p));
-            Assert.False(AccessPolicy.Allows([AppRole.DataMaintainer], p));
+            Assert.False(AccessPolicy.Allows([AppRole.DataSteward], p));
         }
     }
 
@@ -183,5 +183,26 @@ public class DataModelV11Tests
         var dana = await new AccessService(app.Stores).ResolveAsync(new ClientPrincipal("aad", "sample-user-dana", "sample-user-dana@sample.invalid", ["authenticated"]), default);
         Assert.True(dana.Has(TestApp.Alpha, Permission.UploadData));
         Assert.False(dana.Has(TestApp.Beta, Permission.UploadData)); // no role in Beta
+    }
+
+    /// <summary>
+    /// DataMaintainer was renamed DataSteward (Gokul, 31 Oct 2026): a person saved under the old name still loads and is read
+    /// as a Data Steward (same rights, nothing more); the old name grants nothing on its own.
+    /// </summary>
+    [Fact]
+    public async Task A_role_saved_as_DataMaintainer_is_read_as_DataSteward()
+    {
+        var app = TestApp.Create();
+        const string user = "sample-user-legacy";
+        await app.Stores.UserAccess.CreateAsync(new UserAccess
+        {
+            Id = UserAccess.MakeId(user, TestApp.Alpha), UserId = user, ProjectId = TestApp.Alpha, Roles = [AppRole.DataMaintainer], IsSample = true,
+        });
+        var legacy = await new AccessService(app.Stores).ResolveAsync(new ClientPrincipal("aad", user, "sample-user-legacy@sample.invalid", ["authenticated"]), default);
+        Assert.True(legacy.Has(TestApp.Alpha, Permission.UploadData));
+        Assert.False(legacy.Has(TestApp.Alpha, Permission.EditMappingSheet));
+        Assert.DoesNotContain(Enum.GetValues<Permission>(), p => AccessPolicy.Allows([AppRole.DataMaintainer], p));
+        var json = System.Text.Json.JsonSerializer.Serialize(AppRole.DataSteward, PmoReview.Core.Common.AppJson.Options);
+        Assert.Equal("\"DataSteward\"", json); // stored and sent to the website under the new name
     }
 }

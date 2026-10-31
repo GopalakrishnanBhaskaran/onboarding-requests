@@ -22,12 +22,13 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - **SWA API on .NET 10** (`2ccb5f1`, F21): SWA CLI 2.1.0 accepts `dotnet-isolated:10.0` and Learn lists it; .NET 9 support ends **10 Nov**. Needs `app`. Live proof = the deploy ends "Deployed commit …" and the site answers. Rollback: check out `a88e69a`, `app` (.NET 9).
   - **Account deletion switch** (`163a9ed`, decision F5b; Gokul asked "make it on"): `offboarding $SUB on --delete-user` adds Graph `User.ReadWrite.All` (F75, the only option, tenant-wide) and `OFFBOARD_DELETE_USER=true` — soft delete after disabling, restorable 30 days. Dry run → "approved" → `--approved-by`. `delete-off` switches it off. Fix with it: a refused or skipped planned delete is a leftover (was Completed + PMO mail, REVIEW 25).
   - `verify_features` line 17 now also checks deletion; line 16 no longer counts it as unapproved.
+  - **Role renamed:** DataMaintainer → **DataSteward** (Data Steward), Gokul 31 Oct. Rows saved under the old name still load and are read as DataSteward; the tools register only the new name. Needs `app` before registering it.
 - **Code not yet deployed** (unless Gokul ran `worker` + `app` after `7922922`; `verify_features` line 1 tells):
   - worker: a run that sees no subscription is never Completed; verify looks again before a removal of its own counts as a leftover; a 403 names the token delay;
   - app: the switched-off message is information, not an error; the website follows the worker's `AGENT_OFFBOARDING` on every `app` deploy.
 - **Agent TAP:** `AGENT_TAP=true` live, but `TAP_MAIL_SENDER` is not set, so the v1.1 worker mails no pass and the ID team hands it over. Line 5b reads WAIT with the new checker.
 - **Mail:** ACS, environment *test*, every mail redirected to the test mailbox.
-- **People:** each project has the Gmail tester (Requester, Owner, IdTeam, RoleTeam, PMO, Operator) and the pilot admin (Security). DataMaintainer and ProdApprover not registered yet (output not seen). No people inventory uploaded yet.
+- **People:** each project has the Gmail tester (Requester, Owner, IdTeam, RoleTeam, PMO, Operator) and the pilot admin (Security). Data Steward and ProdApprover not registered yet (output not seen). No people inventory uploaded yet.
 
 ## Next steps (in order)
 1. **Fresh Cloud Shell** (`docs/V1_1_DEPLOY.md`): clone the branch, then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval). The `app` deploy now ships the **.NET 10 API**: it must end "Deployed commit …"; then sign in and open a request. If it fails with "Function language info isn't provided", roll back (`git checkout a88e69a && tools/deploy_free.sh app $SUB`) and log it under F21. Check the offboarding settings (read-only):
@@ -41,8 +42,8 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
    - Expected: revoke and disable Done, status **Completed**, one mail to the PMO (redirected to the test mailbox).
    - If a removal shows late, the run stays *Executing* for up to ~10 minutes, then completes.
 5. **Runbook steps 6–7.**
-   - DataMaintainer: the Gmail tester on PEST and VESTACY. Give the full role list, because registering replaces a person's roles.
-   - ProdApprover: a third account, to be created in Entra, signed in once, then registered.
+   - **Data Steward** (role `DataSteward`, renamed from DataMaintainer on 31 Oct; needs the `app` deploy of step 1 first): the Gmail tester on PEST and VESTACY. Give the full role list, because registering replaces a person's roles.
+   - **ProdApprover:** a third account, `pmo.prodapprover@gopalakrishnanbaskarangmail.onmicrosoft.com` (display name *PMO Prod Approver (pilot)*), created in the Entra admin center with an auto-generated password, signed in once, then registered on PEST and VESTACY with `--roles ProdApprover` only.
    - Then the people inventory upload on the Data uploads page (validate → diff → apply).
 6. **Quality before more changes.**
    - Re-check 5 is done (REVIEW.md), but **not independent** (same session as the code). A separate reviewer should re-read findings 25–27 and the `--delete-user` switch.

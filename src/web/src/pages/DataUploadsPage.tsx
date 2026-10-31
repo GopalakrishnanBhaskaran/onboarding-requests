@@ -10,7 +10,7 @@ import type { ProjectSummary, UploadHistory, UploadKind, UploadView, UploadsOver
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 
 /**
- * v1.1 F4: the Data uploads page. The DataMaintainer uploads the PMO mapping sheet or the people inventory (.xlsx or .csv),
+ * v1.1 F4: the Data uploads page. The Data Steward uploads the PMO mapping sheet or the people inventory (.xlsx or .csv),
  * sees the validation and the diff against the current version, applies it (upsert by key; rows missing from the file
  * stay unless "Retire missing rows" is ticked) and can roll back the current version. PMO can read it.
  */
@@ -18,7 +18,7 @@ export function DataUploadsPage({ project }: { project: ProjectSummary }) {
   const s = useStyles();
   const [overview, setOverview] = useState<UploadsOverview | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const canUpload = project.roles.includes('DataMaintainer');
+  const canUpload = project.roles.includes('DataSteward');
 
   const load = useCallback(() => {
     setError(null);
@@ -35,7 +35,7 @@ export function DataUploadsPage({ project }: { project: ProjectSummary }) {
         {Math.round(overview.maxUploadBytes / 1024).toLocaleString()} KB. The file is checked first and nothing changes until you apply it.
         Rows are merged by key; rows missing from the file are kept unless you tick &quot;Retire missing rows&quot;. Every apply is a new version that can be rolled back.
       </Body1>
-      {!canUpload && <MessageBar intent="info"><MessageBarBody>Read only: uploads are made by the DataMaintainer.</MessageBarBody></MessageBar>}
+      {!canUpload && <MessageBar intent="info"><MessageBarBody>Read only: uploads are made by the Data Steward.</MessageBarBody></MessageBar>}
       <ErrorBar error={error} />
       {UPLOADS.map((u) => (
         <UploadSection key={u.kind} project={project} kind={u.kind} button={u.button} title={u.title} keyText={u.key}

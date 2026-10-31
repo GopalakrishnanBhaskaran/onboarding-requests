@@ -77,7 +77,7 @@ public sealed record DataVersion : IDocument
 public enum PersonStatus { Active, Leaver }
 
 /// <summary>
-/// One person of the people inventory (I2, uploaded by the DataMaintainer). The only source of the TAP recipient (F2):
+/// One person of the people inventory (I2, uploaded by the Data Steward). The only source of the TAP recipient (F2):
 /// <see cref="EnterpriseEmail"/>, after a cross-check with the Entra user. <see cref="AlternateEmail"/> is never used for a TAP.
 /// </summary>
 public sealed record Person : IDocument

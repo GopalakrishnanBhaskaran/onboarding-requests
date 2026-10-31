@@ -115,20 +115,20 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
 
     /// <summary>
     /// v1.1 F5: a person the people inventory marks Leaver (offboarded) gets no new access: a new or corrected request is
-    /// refused until the DataMaintainer marks the person Active again (a rehire).
+    /// refused until the Data Steward marks the person Active again (a rehire).
     /// </summary>
     private async Task RefuseLeaverAsync(string projectId, string domainId, CancellationToken ct)
     {
         var person = (await stores.PeopleInventory.GetAsync(projectId, Person.MakeId(domainId), ct))?.Value;
         if (person is { Status: PersonStatus.Leaver, Retired: false })
             throw AppException.Conflict("person_is_leaver",
-                $"{domainId} is marked as a leaver (offboarded) in the people inventory. A rehire is marked Active again by the DataMaintainer first.");
+                $"{domainId} is marked as a leaver (offboarded) in the people inventory. A rehire is marked Active again by the Data Steward first.");
         // Offboarded in this project and not (or no longer) in the people inventory as Active: the same, until a rehire is added.
         if (person is not { Status: PersonStatus.Active, Retired: false }
             && (await stores.OffboardingRuns.ListAsync(projectId, ct)).Any(r => string.Equals(r.Value.EnterpriseId, domainId, StringComparison.OrdinalIgnoreCase)
                                                                              && r.Value.Status is OffboardingStatus.Completed or OffboardingStatus.PartiallyCompleted))
             throw AppException.Conflict("person_is_leaver",
-                $"{domainId} was offboarded in this project. A rehire is added to the people inventory as Active by the DataMaintainer first.");
+                $"{domainId} was offboarded in this project. A rehire is added to the people inventory as Active by the Data Steward first.");
     }
 
     /// <summary>Edits a Returned request and submits it again (new revision, back to AI review).</summary>

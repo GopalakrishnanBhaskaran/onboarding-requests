@@ -7,7 +7,7 @@ namespace PmoReview.Core.Resources;
 /// <summary>F1 output contract item (GET /api/resources/resolve).</summary>
 public sealed record ResolvedAccess(string GroupObjectId, string GroupName, string AccessLevel, IReadOnlyList<string> Sources, string Status);
 
-/// <summary>F1 output contract: a mapping quality note for the DataMaintainer.</summary>
+/// <summary>F1 output contract: a mapping quality note for the Data Steward.</summary>
 public sealed record MappingQualityNote(string VariantName, string CanonicalName, int SheetRow, string Reason);
 
 /// <summary>F1 output contract (GET /api/resources/resolve). Field names and types are the contract: do not add fields.</summary>
@@ -203,7 +203,7 @@ public static class ResourceResolver
 
         // 2. One entry per key: the sheet's object id, else the id Entra resolved for the name, else the normalised name.
         //    The same group spelled the same way (case and spacing aside) via several resources is listed once with every
-        //    source; another spelling of the same key is a variant: hidden, never merged silently, noted for the DataMaintainer.
+        //    source; another spelling of the same key is a variant: hidden, never merged silently, noted for the Data Steward.
         string KeyOf(MappingRow r, GroupLookup l) =>
             Guid.TryParse(r.GroupObjectId, out var g) ? g.ToString("D") : l.Resolved && Guid.TryParse(l.ObjectId, out var h) ? h.ToString("D") : "name:" + Normalise(r.EntraGroup);
         string Spelling(MappingRow r) => Label(r.EntraGroup).ToLowerInvariant();
@@ -254,7 +254,7 @@ public static class ResourceResolver
                 {
                     if (!noted.Add(ordered[j].Key)) continue; // one note per name is enough (keeps the list linear on big sheets)
                     // Two real groups (different object ids) with similar names, e.g. domain codes "ph" / "hr": neither is
-                    // "the one that resolves", so neither is hidden; the DataMaintainer is told to check the names.
+                    // "the one that resolves", so neither is hidden; the Data Steward is told to check the names.
                     notes.Add(new MappingQualityNote(variant, shown, ordered[j].Row.SheetRow ?? 0,
                         $"Similar group names (normalised edit distance {d}) that are two different Entra groups: both are shown. Check the mapping sheet."));
                     continue;

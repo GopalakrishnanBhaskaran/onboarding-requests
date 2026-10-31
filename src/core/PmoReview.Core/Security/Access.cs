@@ -32,7 +32,7 @@ public enum Permission
     ViewEscalations,
     /// <summary>F3: approve or reject a Prod escalation. ProdApprover only; never the requester or an approver of the same request.</summary>
     DecideProdEscalation,
-    /// <summary>F4: validate, apply and roll back mapping sheet and people inventory uploads. DataMaintainer only.</summary>
+    /// <summary>F4: validate, apply and roll back mapping sheet and people inventory uploads. Data Steward only.</summary>
     UploadData,
     /// <summary>F4: see upload versions and diffs.</summary>
     ViewUploads,
@@ -62,11 +62,13 @@ public static class AccessPolicy
             Permission.ViewEscalations, Permission.ViewPeopleInventory, Permission.Offboard],
         // v1.1: Prod escalations (F3) and data uploads (F4). Neither approves anything else.
         [AppRole.ProdApprover] = [.. Read, Permission.ViewEscalations, Permission.DecideProdEscalation],
-        [AppRole.DataMaintainer] = [.. Read, Permission.UploadData, Permission.ViewUploads, Permission.ViewMappingQuality, Permission.ViewPeopleInventory,
+        [AppRole.DataSteward] = [.. Read, Permission.UploadData, Permission.ViewUploads, Permission.ViewMappingQuality, Permission.ViewPeopleInventory,
             Permission.ViewEscalations],
-        // Legacy v1 roles grant nothing (Maintainer is not the v1.1 DataMaintainer: old rows must not gain upload rights).
+        // Legacy v1 roles grant nothing (Maintainer is not the v1.1 Data Steward: old rows must not gain upload rights).
         [AppRole.Reviewer] = [],
         [AppRole.Maintainer] = [],
+        // The Data Steward's earlier name grants nothing itself: AccessService reads it as DataSteward.
+        [AppRole.DataMaintainer] = [],
     };
 
     public static bool Allows(IEnumerable<AppRole> roles, Permission permission) =>
@@ -156,8 +158,11 @@ public sealed class AccessService(DataStores stores)
             .GroupBy(r => r.ProjectId, StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
-                g => (IReadOnlySet<AppRole>)g.SelectMany(r => r.Roles).ToHashSet(),
+                g => (IReadOnlySet<AppRole>)g.SelectMany(r => r.Roles).Select(Current).ToHashSet(),
                 StringComparer.Ordinal);
         return new CallerContext(principal.UserId, principal.UserDetails, grants);
     }
+
+    /// <summary>A role saved under an earlier name, read as today's role (DataMaintainer → DataSteward, 31 Oct 2026).</summary>
+    public static AppRole Current(AppRole role) => role == AppRole.DataMaintainer ? AppRole.DataSteward : role;
 }

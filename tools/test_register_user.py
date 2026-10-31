@@ -66,9 +66,15 @@ def run() -> None:
         "0123abcd0123abcd0123abcd0123abcd: Security", "signin:jane.doe@sample.invalid: Requester, Owner"]
     ru.register(db, "PEST", "jane.doe@sample.invalid", ["Security"], False, False)  # again: replaces the roles
     assert db.c["userAccess"].docs["signin:jane.doe@sample.invalid:PEST"]["roles"] == ["Security"]
-    # v1.1: the ProdApprover (F3) and DataMaintainer (F4) roles can be registered; a role the app does not know cannot.
-    ru.register(db, "PEST", "jane.doe@sample.invalid", ["ProdApprover", "DataMaintainer"], False, False)
-    assert db.c["userAccess"].docs["signin:jane.doe@sample.invalid:PEST"]["roles"] == ["ProdApprover", "DataMaintainer"]
+    # v1.1: the ProdApprover (F3) and DataSteward (F4) roles can be registered; a role the app does not know cannot, and the
+    # earlier name DataMaintainer (until 31 Oct 2026) is refused with the new name.
+    ru.register(db, "PEST", "jane.doe@sample.invalid", ["ProdApprover", "DataSteward"], False, False)
+    assert db.c["userAccess"].docs["signin:jane.doe@sample.invalid:PEST"]["roles"] == ["ProdApprover", "DataSteward"]
+    try:
+        ru.register(db, "PEST", "jane.doe@sample.invalid", ["DataMaintainer"], False, False)
+        raise AssertionError("DataMaintainer was registered")
+    except SystemExit as e:
+        assert "now DataSteward" in str(e), e
     for bad in (["Maintainer"], ["Reviewer"], ["Approver"]):
         try:
             ru.register(db, "PEST", "jane.doe@sample.invalid", bad, False, False)

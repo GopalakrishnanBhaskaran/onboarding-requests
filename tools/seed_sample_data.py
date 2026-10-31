@@ -49,7 +49,7 @@ PARTITION_FIELD = {"projects": "projectId", "mappingSheet": "projectId", "respon
                    "peopleInventory": "projectId"}
 # Created only when missing (live edits win); the others are upserted.
 CREATE_ONLY = {"mappingSheet", "responseDocument", "peopleInventory"}
-ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataMaintainer"}
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataSteward"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 DOMAIN_SUFFIX = re.compile(r"^@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 ACCESS_SCOPE = re.compile(r"^/subscriptions/[0-9a-fA-F-]{36}/resourceGroups/[A-Za-z0-9._()-]{1,90}$")

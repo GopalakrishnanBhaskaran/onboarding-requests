@@ -30,7 +30,12 @@ public enum AppRole
     /// approvals. Never the requester, the Owner approver or the Security approver of the same request.
     /// </summary>
     ProdApprover,
-    /// <summary>v1.1 (F4): uploads the PMO mapping sheet and the people inventory, sees diffs, rolls back, sees mapping quality issues.</summary>
+    /// <summary>
+    /// v1.1 (F4): the Data Steward uploads the PMO mapping sheet and the people inventory, sees diffs, rolls back, sees mapping
+    /// quality issues. Named DataMaintainer until 31 Oct 2026 (Gokul).
+    /// </summary>
+    DataSteward,
+    /// <summary>Earlier name of <see cref="DataSteward"/> (until 31 Oct 2026). Kept so rows saved under it still load; read as DataSteward.</summary>
     DataMaintainer,
 }
 

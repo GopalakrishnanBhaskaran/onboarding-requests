@@ -409,7 +409,7 @@ public class F5OffboardingTests
         await Execute(app, IdOf(j), joiner);
         await app.RunWorker();
         Assert.False(app.Directory.User(joiner)!.AccountEnabled);
-        // Offboarded without a people inventory entry: no new request until the DataMaintainer adds a rehire as Active.
+        // Offboarded without a people inventory entry: no new request until the Data Steward adds a rehire as Active.
         var again = await app.Submit(TestApp.Intake(enterpriseId: "sample.joiner@company.example"));
         Assert.Equal((409, "person_is_leaver"), (again.Status, again.ErrorCode));
 
@@ -445,7 +445,7 @@ public class F5OffboardingTests
         await app.RunWorker();
         Assert.Empty(app.Offboarding.Calls);
         Assert.True(app.Directory.User(Upn)!.AccountEnabled);
-        // BETA releases the person (its DataMaintainer marks them Leaver): ALPHA offboards them.
+        // BETA releases the person (its Data Steward marks them Leaver): ALPHA offboards them.
         var b = (await app.Stores.PeopleInventory.GetAsync(TestApp.Beta, Person.MakeId(Upn)))!;
         await app.Stores.PeopleInventory.ReplaceAsync(b.Value with { Status = PersonStatus.Leaver }, b.ETag);
         var planned = await Planned(app);
@@ -469,7 +469,7 @@ public class F5OffboardingTests
         var held = await Plan(app, upn, TestApp.Bella, TestApp.Beta);
         Assert.Equal((409, "person_in_other_project"), (held.Status, held.ErrorCode));
         Assert.Contains("Leaver", held.Json.GetProperty("error").GetProperty("message").GetString());
-        // ALPHA's DataMaintainer lists the person as Leaver: released, although the Completed request stays as it is.
+        // ALPHA's Data Steward lists the person as Leaver: released, although the Completed request stays as it is.
         await app.Stores.PeopleInventory.ReplaceAsync(listed.Value with { Retired = false, Status = PersonStatus.Leaver }, listed.ETag);
         Assert.Equal(RequestStatus.Completed, (await app.Request(completed)).Flow!.Status);
         Assert.Equal(202, (await Plan(app, upn, TestApp.Bella, TestApp.Beta)).Status);
@@ -577,7 +577,7 @@ public class F5OffboardingTests
         Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains($"request {late} was opened after the plan"));
         Assert.Equal(RequestStatus.Closed, (await app.Request(planRequest)).Flow!.Status);
         Assert.Empty(await OffboardingMails(app));
-        // Now a leaver: no new request is taken for the person until the DataMaintainer marks them Active again.
+        // Now a leaver: no new request is taken for the person until the Data Steward marks them Active again.
         var again = await app.Submit(TestApp.Intake(enterpriseId: "sample.leaver@company.example"));
         Assert.Equal((409, "person_is_leaver"), (again.Status, again.ErrorCode));
     }

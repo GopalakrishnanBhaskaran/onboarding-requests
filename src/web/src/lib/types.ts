@@ -1,7 +1,7 @@
 // Mirrors the API contracts in src/core. Server is the authority for every value here.
 
 export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'PMO' | 'Operator' | 'Reviewer' | 'Maintainer'
-  | 'ProdApprover' | 'DataMaintainer';
+  | 'ProdApprover' | 'DataSteward';
 export type RequestStatus =
   | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'AwaitingProdApproval' | 'Rejected'
   | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev' | 'Closed';

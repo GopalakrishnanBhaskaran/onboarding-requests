@@ -30,11 +30,11 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
 5. **Tenant id and production flag per tenant.** Re-run the import with the same workbook files. Without `--update`, existing rows are kept.
    `COSMOS_CONNECTION_STRING=… python3 tools/import_workbook.py --tenant PEST --project PEST --classification <xlsx> --response <xlsx> --tenant-id <PEST tenant guid> --production-tenant yes --apply`
    Do the same for Vestacy. A tenant left without the flag counts as production, so a second person confirms offboarding there (12a). Offboarding works only for a project that names the agent's own tenant (13a).
-6. **People.** Registering **replaces** that person's roles on the project, so first list them (`register_user.py --project PEST --list`) and give the full list plus the new role, e.g. `--roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,DataMaintainer`. Per project:
-   `python3 tools/register_user.py --project PEST --user <mail> --roles ProdApprover` (a person with no other role there)
-   `python3 tools/register_user.py --project PEST --user <mail> --roles <their roles>,DataMaintainer`
+6. **People.** Registering **replaces** that person's roles on the project, so first list them (`register_user.py --project PEST --list`) and give the full list plus the new role, e.g. `--roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,DataSteward`. Deploy `app` and `worker` of `7de7d25` or later first: older code does not know the name `DataSteward`. Per project:
+   `python3 tools/register_user.py --project PEST --user <mail> --roles ProdApprover` (a person with no other role there; pilot: a new Entra account `pmo.prodapprover@gopalakrishnanbaskarangmail.onmicrosoft.com`, display name *PMO Prod Approver (pilot)*)
+   `python3 tools/register_user.py --project PEST --user <mail> --roles <their roles>,DataSteward` (the Data Steward; `DataMaintainer` until 31 Oct 2026, now refused by the tools with the new name)
    The ProdApprover must not be a usual requester or approver of the same requests, because the app refuses those people at the Prod stage.
-7. **People inventory (I2).** The DataMaintainer opens the Data uploads page: *People inventory* → validate → check the diff → apply. The TAP mail (option 2) and offboarding read it.
+7. **People inventory (I2).** The Data Steward opens the Data uploads page: *People inventory* → validate → check the diff → apply. The TAP mail (option 2) and offboarding read it.
 8. **Check.** Run `bash tools/verify_features.sh <subscriptionId> | tee .local/verify.txt`.
    - Line 16 should be **PASS**: the containers are present, the new switches are off, and every project has its tenant id and production flag.
    - Lines 1–15 should read as before the deploy.

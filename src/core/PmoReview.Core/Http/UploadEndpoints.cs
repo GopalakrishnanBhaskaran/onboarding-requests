@@ -11,7 +11,7 @@ namespace PmoReview.Core.Http;
 public sealed record RollbackInput(int Version);
 
 /// <summary>
-/// F4 routes. The Data uploads page (signed-in DataMaintainer, SWA principal) and the external upload API (Entra app token
+/// F4 routes. The Data uploads page (signed-in Data Steward, SWA principal) and the external upload API (Entra app token
 /// with <see cref="UploadTokenValidator.Role"/>, off unless <c>EXTERNAL_UPLOAD_API_ENABLED</c>) call the same
 /// <see cref="UploadService"/> pipeline.
 /// </summary>

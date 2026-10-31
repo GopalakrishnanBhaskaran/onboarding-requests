@@ -12,7 +12,7 @@ namespace PmoReview.Core.Workflow;
 /// F1, worker only (the API cannot read Entra): reads each mapping group name of the agent's own tenant in Entra
 /// (read-only, <see cref="IDirectoryReader.FindGroupsAsync"/>) and records the result; raises one UnresolvedGroup
 /// escalation per group that does not resolve to an object id (never granted); and keeps the near-duplicate group names
-/// as mapping quality issues for the DataMaintainer. Projects in another tenant are not read (tenant separation): there a
+/// as mapping quality issues for the Data Steward. Projects in another tenant are not read (tenant separation): there a
 /// group resolves only by the object id on the sheet.
 /// </summary>
 public sealed class GroupResolutionJob(DataStores stores, IDirectoryReader? directory, IClock clock, ILogger<GroupResolutionJob> logger, string? agentTenantId,

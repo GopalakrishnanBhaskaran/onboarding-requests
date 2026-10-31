@@ -12,13 +12,13 @@ using Xunit;
 namespace PmoReview.Tests.Unit;
 
 /// <summary>
-/// v1.1 F4: the Data uploads page (DataMaintainer) and the external upload API (app token, off by default) — validate,
+/// v1.1 F4: the Data uploads page (Data Steward) and the external upload API (app token, off by default) — validate,
 /// diff, upsert by key, versions, rollback — with one pipeline. Each F4 edge case of the feature pack (B.8) is one test.
 /// </summary>
 public class F4UploadTests
 {
     internal const string T = TestTokens.Tenant;
-    internal const string Dana = "sample-user-dana"; // DataMaintainer (SAMPLE-ALPHA, SAMPLE-PEST)
+    internal const string Dana = "sample-user-dana"; // DataSteward (SAMPLE-ALPHA, SAMPLE-PEST)
     internal const string Owner = "sample-user-olivia@sample.invalid";
     internal static readonly DateOnly From = new(2026, 10, 1); // before the test clock (17 Oct 2026): offered at once
 
@@ -385,7 +385,7 @@ public class F4UploadTests
     }
 
     [Fact]
-    public async Task F4_Only_the_DataMaintainer_uploads_and_only_in_their_own_projects()
+    public async Task F4_Only_the_Data_Steward_uploads_and_only_in_their_own_projects()
     {
         var (app, _) = await App();
         var file = MappingCsv(Row("SAMPLE-FIN-READERS"));

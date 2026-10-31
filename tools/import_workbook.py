@@ -269,8 +269,10 @@ def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, not
     }
 
 
-# The app's roles (AppRole); v1.1 adds ProdApprover (F3) and DataMaintainer (F4). The retired Reviewer / Maintainer grant nothing.
-ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataMaintainer"}
+# The app's roles (AppRole); v1.1 adds ProdApprover (F3) and DataSteward (F4; named DataMaintainer until 31 Oct 2026, a name the
+# app still reads but no longer registers). The retired Reviewer / Maintainer grant nothing.
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataSteward"}
+RENAMED = {"DataMaintainer": "DataSteward"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 MAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 CONTACT_LISTS = ("pmo", "security", "idTeam", "roleTeam", "operators")
@@ -295,6 +297,8 @@ def user_key(user: str) -> str:
 
 
 def user_doc(user: str, project: str, roles: list[str]) -> dict:
+    if old := sorted(set(roles) & RENAMED.keys()):
+        raise SystemExit(f"{', '.join(old)} is now {', '.join(RENAMED[o] for o in old)}: register that name")
     if not roles or set(roles) - ROLES:
         raise SystemExit(f"roles must be from {sorted(ROLES)}")
     key = user_key(user)

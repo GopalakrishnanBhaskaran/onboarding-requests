@@ -69,7 +69,7 @@ public sealed class UploadService(DataStores stores, IClock clock, WorkflowSetti
 
     public int MaxUploadBytes => settings.MaxUploadBytes;
 
-    // ---- page (signed-in DataMaintainer) ---------------------------------------------------------------------------
+    // ---- page (signed-in Data Steward) ---------------------------------------------------------------------------
 
     public async Task<UploadsOverview> OverviewAsync(CallerContext caller, string projectId, CancellationToken ct)
     {

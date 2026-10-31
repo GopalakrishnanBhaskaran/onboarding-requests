@@ -151,7 +151,7 @@ public sealed record MappingRow : IDocument
     public bool SensitiveResource { get; init; }
     public bool Deprecated { get; init; }
     public GroupState GroupState { get; init; } = GroupState.Exists;
-    // v1.1 mapping sheet columns (I1; uploaded by the DataMaintainer). Optional on rows imported before 30 Oct 2026.
+    // v1.1 mapping sheet columns (I1; uploaded by the Data Steward). Optional on rows imported before 30 Oct 2026.
     /// <summary>I1 TenantId: must equal the project's tenant on upload.</summary>
     public string? TenantId { get; init; }
     /// <summary>I1 Domain (business domain, e.g. Finance). A Resource* option.</summary>
