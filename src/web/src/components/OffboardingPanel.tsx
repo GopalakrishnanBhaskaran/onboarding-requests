@@ -111,6 +111,11 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
           <Checkbox label={`I checked the plan: ${changes(run)} change(s) for ${run.enterpriseId}`} checked={checked} onChange={(_, d) => setChecked(!!d.checked)} />
           <Button appearance="primary" disabled={busy || !canConfirm(run, checked)}
             onClick={() => void act(() => api.confirmOffboarding(project.projectId, enterpriseId, run.offboardingId))}>Confirm offboarding</Button>
+          <Button disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId, true))}>Make a new plan</Button>
+          <Caption1 block>
+            Plans keep the settings and the Entra state of the moment they were made. After a change (for example account deletion switched on), make a
+            new plan: this one is closed unconfirmed and the AI agent reads Entra and Azure again.
+          </Caption1>
         </div>
       )}
       {run && (run.status === 'Completed' || run.status === 'PartiallyCompleted') && (

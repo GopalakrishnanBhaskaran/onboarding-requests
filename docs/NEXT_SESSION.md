@@ -1,10 +1,35 @@
-# Next session — handoff (updated 31 Oct 2026: API on .NET 10 and account deletion switch, both code only; v1.1 live, agent offboarding switched on)
+# Next session — handoff (updated 31 Oct 2026: API back on .NET 9, offboarding "Make a new plan", Databricks + Fabric merged — code only; v1.1 live, agent offboarding and account deletion switched on)
+
+## 31 Oct 2026 — Databricks + Fabric
+**Live (31 Oct, approved by Gokul):** serverless workspace `dbw-pmo-pkt2ofpqmlf3e`; Databricks account admin: the pilot admin and Gokul; the Dev data engineers group on the workspace as USER (automatic identity management) with WRITE on `dbw_pmo_pkt2ofpqmlf3e.default` (Unity Catalog grants, PASS). Open: member test on the SAMPLE table `sample_access_test`, then drop it and stop the SQL warehouse; `cost_check.sh`; the Dev Support Reader group does not exist in the pilot tenant yet (create it through the onboarding flow, then re-run `aim_setup.sh apply` + `grants` with `=READ`).
+
+Build notes (code):
+Built on branch `claude/gifted-wozniak-7woywt`; merged into **`claude/nifty-bardeen-j0pqm3`** (PR 4) on 31 Oct 2026, facts renumbered F114–F122. Runbook: `docs/DATABRICKS_FABRIC.md`; facts F114–F122.
+- **Databricks:** `tools/deploy_free.sh databricks $SUB` (dry run: plan + what-if) → after "approved" `… --approved-by "<name> <date>"`. It registers `Microsoft.Databricks`, adds `Microsoft.Databricks/workspaces` to the policy (`enableDatabricks`, stage A), waits, then creates one **serverless** Premium workspace (`infra/modules/databricks.bicep`). No managed resource group, VNet or storage account, so it fits rules 1–2 once approved. `params` keeps the policy type, and `cost_check.sh` allows exactly one workspace.
+- **Entra groups → Databricks:** after the first account admin (an Entra Global Administrator signs in at accounts.azuredatabricks.net) and the account id: `bash tools/databricks/aim_setup.sh plan … --workspace <ws> --group <group>` → `apply … --approved-by`, then data access with `aim_setup.sh grants --workspace <ws> --catalog <c> --schema <s> --group <group>[=WRITE]` → `--approved-by` (31 Oct: `databricks_setup.py` removed, one tool). Automatic identity management syncs membership at sign-in; per joiner only the Entra membership is needed.
+- **Fabric:** trial capacity, no Azure resource. Tenant settings, trial and workspace in the portal, then `python3 tools/fabric_groups.py --workspace "<name>" --group <group>[=Contributor]` (dry run) → `--approved-by`.
+- **Tests:**
+  - .NET: 382 (381 pass, 1 opt-in skip), including a new infra test.
+  - `python3 tools/test_platform_groups.py`, both `--self-test`s.
+  - `bicep build` of `main.bicep` and `databricks.bicep`: exit 0 (only the old BCP187 warning).
+  - Not run against Azure: no credentials in the build session.
+- **Open:**
+  - Default storage **is billed** (Learn, 11 Sep 2026: storage space + API operations, DSUs; F119), unlike the branch's earlier note: the workspace is not free while it holds data. DBU and DSU rates not read: check the pricing pages before approval.
+  - Az CLI token for the Fabric API is only seen in search results (F121).
+  - Databricks and Fabric rows still go to the role team (possible later change: "granted by group").
+
 
 **Start the next session with:**
-> Continue the PMO Access Portal v1.1 rollout on branch `claude/elegant-darwin-nfot4p`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
+> Continue the PMO Access Portal v1.1 rollout on branch `claude/nifty-bardeen-j0pqm3` (PR 4). Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
 
 Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
 Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
+
+## 31 Oct 2026 (later): live app broken by the .NET 10 API, fixed in code on `claude/nifty-bardeen-j0pqm3`
+- After the `app` deploy of `ef9fc7b` (00:46 UTC, first on `dotnet-isolated:10.0`) every page shows *Unexpected token 'B', "Backend call failure" is not valid JSON*: the API does not start. Settings checked and valid.
+- Branch `claude/nifty-bardeen-j0pqm3` = `claude/elegant-darwin-nfot4p` + API back on .NET 9 + clear SPA message for a gateway reply. **Deploy it:** `git fetch origin && git checkout claude/nifty-bardeen-j0pqm3 && tools/deploy_free.sh app $SUB` (code only, no approval), then reload the app and run `verify_features.sh` line 1. Worker unchanged.
+- Then: retry .NET 10 before **10 Nov 2026** (.NET 9 end of support), with a way to see the API start-up error first (F21).
+- Offboarding account deletion is on (approved, 31 Oct). Plans made before that keep *Delete — off*: after the `app` redeploy use **Make a new plan** on such a run (worker unchanged). `workflow_diag.sh` lists the runs with their plan time and delete step.
 
 ## Live state (evidence in `DEPLOYMENT_LOG.md`, 30 Oct 2026)
 - **v1.1 option 1 applied** (~16:40 UTC, `apply` of `9105ddd`, approved by Gokul): 8 new Cosmos containers, worker data roles, app + worker deployed, cost unchanged (budget ₹2,000, spent ₹12.57).
@@ -104,6 +129,7 @@ Without `--update`, existing rows are kept. Never type a literal `<…>` placeho
 - Cloud Shell is reset after a short idle time. It loses only the clone, `.local/` (params, workbooks, deploy stamps) and `~/.dotnet`; Azure keeps everything.
 
 ## Working rules
+- **Cloud Shell is ephemeral:** every command for Gokul comes as the full block from `docs/RUNBOOK.md` *Pilot session start* (subscription, clean-up, shallow clone or checkout, command, clean-up). Never assume anything survived.
 - Any Azure resource or permission change: show the what-if or dry run and wait for an explicit "approved".
   - Such changes: `provisioning … on`, `tap … on`, `privileged … on`, `offboarding … on`, `revoke-graph-writes`, `email`, `apply`.
   - No approval needed: `app`, `worker`, `environment`, imports, registrations, any `… off`.

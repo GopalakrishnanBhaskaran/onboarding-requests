@@ -377,13 +377,18 @@ wait until it is started again</td>
 </table>
 <h2 id="pilot-session-start-azure-cloud-shell-bash">Pilot session start
 (Azure Cloud Shell, Bash)</h2>
-<p>Cloud Shell's home folder is reset after a short idle time. Start
-every session with:</p>
-<div class="sourceCode" id="cb1"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="va">SUB</span><span class="op">=</span>5b9f9810-0512-49e5-b7f7-0159bc488570<span class="kw">;</span> <span class="ex">az</span> account set <span class="at">--subscription</span> <span class="va">$SUB</span></span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="bu">cd</span> ~/onboarding-requests <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">||</span> <span class="kw">{</span> <span class="bu">cd</span> ~ <span class="kw">&amp;&amp;</span> <span class="fu">git</span> clone <span class="at">-q</span> <span class="at">-b</span> claude/eager-ride-lx6he8 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> onboarding-requests<span class="kw">;</span> <span class="kw">}</span></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> fetch <span class="at">-q</span> origin claude/eager-ride-lx6he8 <span class="kw">&amp;&amp;</span> <span class="fu">git</span> checkout <span class="at">-q</span> claude/eager-ride-lx6he8 <span class="kw">&amp;&amp;</span> <span class="fu">git</span> pull <span class="at">-q</span> origin claude/eager-ride-lx6he8   <span class="co"># an old clone gets the latest code</span></span>
-<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> log <span class="at">--oneline</span> <span class="at">-1</span></span></code></pre></div>
+<p>Cloud Shell is ephemeral: the clone, <code>.local/</code>, <code>~/.dotnet</code>, uploaded files and shell variables can be gone at any time, and the disk is small. Run this whole block every time, with the command in the middle (<code>BR</code> = the branch of the current handoff; <code>main</code> once it is merged). Commands carry <code>--approved-by "&lt;name&gt; &lt;date&gt;"</code>: only recorded for <code>app</code> / <code>worker</code>; for an approval-gated command run the block with the dry run first, then the same block with <code>--approved-by</code>:</p>
+<pre><code>SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+# Free space: download caches and build output only (safe to delete)
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+# Code: shallow clone, or move an existing clone to the latest commit of the branch
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests &amp;&amp; git fetch -q --depth 1 origin $BR &amp;&amp; git checkout -q -B $BR FETCH_HEAD &amp;&amp; git log --oneline -1
+df -h ~   # the app or worker deploy needs about 2-3 GB free (46 GB free on 31 Oct)
+# ... the command, approval filled in, e.g. tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-10-31" ...
+# Afterwards: free the space again
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*</code></pre>
 <h2 id="register-people-who-may-use-the-app">Register people (who may
 use the app)</h2>
 <ul>
@@ -557,6 +562,23 @@ decide. Ignored; Security reviews.</td>
 <td>User reports an error</td>
 <td>Ask for the "Reference" (correlation id) shown in the error bar;
 search logs for it.</td>
+</tr>
+<tr class="odd">
+<td><em>The app's server did not answer (HTTP 500: Backend call
+failure)</em> (older SPA: <em>Unexpected token 'B', "Backend call
+failure" is not valid JSON</em>)</td>
+<td>The SWA gateway got no answer from the API. <strong>Once, then
+fine:</strong> cold start or restart after a deploy; nothing to do.
+<strong>One action only:</strong> it ran past 45 s (F3) and may still
+have finished; reload, check the request's last step
+(<code>workflow_diag.sh</code>) before repeating. <strong>Every
+page:</strong> the API is not starting. Check the website settings:
+<code>az staticwebapp appsettings list -n &lt;swa&gt; -g rg-pmo-review-pilot --query 'properties.{env:APP_ENVIRONMENT, redirect:NOTIFY_REDIRECT_TO, cosmosSet:COSMOS_CONNECTION_STRING != null}'</code>.
+The API refuses to start if <code>APP_ENVIRONMENT</code> is not
+pilot/dev/test/prod, <code>NOTIFY_REDIRECT_TO</code> is set in prod or
+is not one mail address, or the Cosmos connection string is missing.
+Fix the setting (<code>deploy_free.sh environment …</code>), then
+reload.</td>
 </tr>
 <tr class="odd">
 <td>New person needs access</td>

@@ -36,12 +36,19 @@ Full v2 steps, approvals and the live end-to-end test: `workflows/09-onboarding-
 
 ## Pilot session start (Azure Cloud Shell, Bash)
 
-Cloud Shell's home folder is reset after a short idle time. Start every session with:
+Cloud Shell is ephemeral: the clone, `.local/`, `~/.dotnet`, uploaded files and shell variables can be gone at any time, and the disk is small. Run this whole block every time, with the command in the middle (`BR` = the branch of the current handoff; `main` once it is merged). Commands carry `--approved-by "<name> <date>"`: only recorded for `app` / `worker`; for an approval-gated command run the block with the dry run first, then the same block with `--approved-by`:
 ```bash
-SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; az account set --subscription $SUB
-cd ~/onboarding-requests 2>/dev/null || { cd ~ && git clone -q -b claude/eager-ride-lx6he8 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git && cd onboarding-requests; }
-git fetch -q origin claude/eager-ride-lx6he8 && git checkout -q claude/eager-ride-lx6he8 && git pull -q origin claude/eager-ride-lx6he8   # an old clone gets the latest code
-git log --oneline -1
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+# Free space: download caches and build output only (safe to delete)
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+# Code: shallow clone, or move an existing clone to the latest commit of the branch
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+df -h ~   # the app or worker deploy needs about 2-3 GB free (46 GB free on 31 Oct)
+# ... the command, approval filled in, e.g. tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-10-31" ...
+# Afterwards: free the space again
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
 ```
 
 ## Register people (who may use the app)
@@ -127,6 +134,7 @@ Full detail: `docs/GO_LIVE.md`. No Azure resource or permission change, so no ap
 | Team task not picked up | Same SLA handling (`ID_TEAM_SLA_HOURS`, `ROLE_TEAM_SLA_HOURS`); issue `TaskSlaBreached`. |
 | Unauthorized approval issue | Someone other than the named Owner / a Security member tried to decide. Ignored; Security reviews. |
 | User reports an error | Ask for the "Reference" (correlation id) shown in the error bar; search logs for it. |
+| *The app's server did not answer (HTTP 500: Backend call failure)* (older SPA: *Unexpected token 'B', "Backend call failure" is not valid JSON*) | The SWA gateway got no answer from the API. **Once, then fine:** cold start or restart after a deploy; nothing to do. **One action only:** it ran past 45 s (F3) and may still have finished; reload, check the request's last step (`workflow_diag.sh`) before repeating. **Every page:** the API is not starting. Check the website settings: `az staticwebapp appsettings list -n <swa> -g rg-pmo-review-pilot --query 'properties.{env:APP_ENVIRONMENT, redirect:NOTIFY_REDIRECT_TO, cosmosSet:COSMOS_CONNECTION_STRING != null}'`. The API refuses to start if `APP_ENVIRONMENT` is not pilot/dev/test/prod, `NOTIFY_REDIRECT_TO` is set in prod or is not one mail address, or the Cosmos connection string is missing. Fix the setting (`deploy_free.sh environment …`), then reload. |
 | New person needs access | Register them by sign-in name (section *Register people*). They don't need to sign in first. Unregistered people see no data. |
 | Change the mapping sheet | PMO edits it in the app (Mapping sheet page). In-flight requests for that resource are re-reviewed automatically. |
 | Rotate Cosmos key | `az cosmosdb keys regenerate --key-kind primary`; re-run the app-setting step from `deploy_free.sh`. |

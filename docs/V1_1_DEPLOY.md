@@ -1,8 +1,8 @@
 # v1.1 deploy — P7 option 1: data and code, every new switch off
 
-Chosen by Gokul on 30 Oct 2026 (P6 approved; decisions 12a and 13a kept). This file is the runbook. **Steps 1–5 ran on 30 Oct 2026** (what-if clean, "approved", `apply` of `9105ddd` with the app and the worker, tenant id and production flag on PEST and VESTACY; `verify_features` line 16 PASS; `docs/DEPLOYMENT_LOG.md`). Steps 6–7 are next. CLAUDE.md rule 4 still applies to any further Azure change.
+Chosen by Gokul on 30 Oct 2026 (P6 approved; decisions 12a and 13a kept). This file is the runbook. **Steps 1–5 ran on 30 Oct 2026** (what-if clean, "approved", `apply` of `9105ddd` with the app and the worker, tenant id and production flag on PEST and VESTACY; `verify_features` line 16 PASS; `docs/DEPLOYMENT_LOG.md`). Steps 6–7 are next. **31 Oct 2026:** the steps in *31 Oct 2026: steps run, in order* below ran (API back on .NET 9, offboarding account deletion, Databricks workspace, groups and Unity Catalog grants). CLAUDE.md rule 4 still applies to any further Azure change.
 
-Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>` (`docs/MAC_DEPLOY.md`). Use the branch with v1.1 (`claude/elegant-darwin-nfot4p`, or `main` once it is merged), and run `git pull` first. Log every step in `docs/DEPLOYMENT_LOG.md`.
+Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>` (`docs/MAC_DEPLOY.md`). Use `main` (v1.1 merged with PR 5; today's changes with PR 4, before that merge `claude/nifty-bardeen-j0pqm3`). Cloud Shell is ephemeral: run each block below **whole**, from a fresh session (CLAUDE.md rule 12). Log every step in `docs/DEPLOYMENT_LOG.md`.
 
 ## What option 1 turns on, and what stays off
 | Live after option 1 | Stays off (each needs its own approval later) |
@@ -40,18 +40,162 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
    - Lines 1–15 should read as before the deploy.
    - Then open one request page as PMO, click **Offboard user** on a SAMPLE-free test person, and check that the plan appears within about 5 minutes. With the switch off, nothing changes.
 
-## Fresh Cloud Shell (it is reset after inactivity)
-Azure keeps every resource, setting and permission. A reset loses only the clone, `.local/` (params, workbooks, deploy stamps) and `~/.dotnet`.
-1. `az account show -o table` (the pilot subscription), then `SUB=$(az account show --query id -o tsv); RG=rg-pmo-review-pilot`.
-2. Clone or update the branch: `git clone -b claude/elegant-darwin-nfot4p https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests` (or `git pull` in an existing clone), `cd ~/onboarding-requests`.
-3. Code (no approval): `tools/deploy_free.sh worker $SUB`, then `tools/deploy_free.sh app $SUB`. The first one installs .NET 10 (1–2 minutes).
-4. Check: `bash tools/verify_features.sh $SUB | tee .local/verify.txt`. Line 1 passes only after step 3 in the same Cloud Shell (the deploy stamps live in `.local/`).
-Only when needed: `tools/deploy_free.sh params $SUB` before a what-if; upload the workbooks again before an import; `PY=$(tools/cosmos_python.sh)` and the connection string from `az cosmosdb keys list` for `register_user.py` / `import_workbook.py` (never pasted anywhere; `unset` it after).
+## Fresh Cloud Shell (ephemeral: run the whole block every time)
+Azure keeps every resource, setting and permission. A new session has no clone, no `.local/` (params, workbooks, deploy stamps), no `~/.dotnet` and no shell variables. Start every block with these lines (they are already in each block below):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+```
+Only when needed inside a block: `tools/deploy_free.sh params $SUB` before a what-if or `databricks`; upload the workbooks again before an import; `PY=$(tools/cosmos_python.sh)` and `CS=$(az cosmosdb keys list … -o tsv 2>/dev/null)` for `register_user.py` / `import_workbook.py` (never printed; `unset CS` after). Quote `grep` patterns that contain `!` in single quotes.
+
+## 31 Oct 2026: steps run, in order (full blocks)
+Results and evidence: `docs/DEPLOYMENT_LOG.md` (31 Oct rows). Every approval-gated step has a read-only block first; run the `--approved-by` block only after reading it.
+
+### A. App redeploy: API back on .NET 9, clear gateway message, offboarding *Make a new plan* (code only, no approval)
+Why: the first `dotnet-isolated:10.0` deploy left every page with *Backend call failure* (F21). Expect `API runtime: dotnet-isolated 9.0`, `Project deployed`, `Deployed commit …`.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-10-31"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*; df -h ~
+```
+Ran 31 Oct ~05:30 UTC (`ca3ceaf`). The worker was not changed (only on a worker code change: the same block with `worker` instead of `app`).
+
+### B. Offboarding account deletion (security change, approval)
+Dry run (expect `User.ReadWrite.All` NEW or already held, `OFFBOARD_DELETE_USER=true`, cost 0):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh offboarding $SUB on --delete-user
+```
+After reading it:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh offboarding $SUB on --delete-user --approved-by "Gokul 2026-10-31"
+```
+Ran 31 Oct. Then in the app: on a run planned **before** the switch, click **Make a new plan** (needs block A): the new plan lists *DELETE /users/{id} — soft delete*. A delete refused within ~24 h is the token delay (F61). Check settings and runs: `bash tools/workflow_diag.sh $SUB` (after the prelude).
+
+### C. Databricks serverless workspace (new resource, approval)
+Dry run (expect: policy `pmo-pilot-allowed-types` gains `Microsoft.Databricks/workspaces`; one workspace, premium, `computeMode: Serverless`; budget and Cosmos lines are what-if noise; worker settings outside the template: none):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh params $SUB
+tools/deploy_free.sh databricks $SUB > .local/dbx-dryrun.txt 2>&1; tail -3 .local/dbx-dryrun.txt
+grep -A12 'policyAssignments/pmo-pilot-allowed-types' .local/dbx-dryrun.txt
+grep -E 'Resource changes|to create|to delete' .local/dbx-dryrun.txt
+grep -E '^  [-+~x!] Microsoft' .local/dbx-dryrun.txt | grep -v -E 'containers/|sqlRoleAssignments|blobServices|roleAssignments/|Microsoft.Web/sites/|staticSites/'
+grep 'outside the template' .local/dbx-dryrun.txt; grep 'expected cost' .local/dbx-dryrun.txt
+```
+After reading it (up to ~30 minutes while the policy takes effect; if Cloud Shell drops, run it again, it continues):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh params $SUB
+tools/deploy_free.sh databricks $SUB --approved-by "Gokul 2026-10-31" 2>&1 | tee .local/dbx-apply.txt
+```
+Ran 31 Oct: `dbw-pmo-pkt2ofpqmlf3e`, https://adb-7405607339118600.0.azuredatabricks.net. Cost: no compute while idle; default storage is billed while it holds data (F119).
+
+### D. First Databricks account admin (browser, once)
+1. The Gmail account cannot do this: the account console opens the account of the user's **default** tenant (F120). Find a **member** Global Administrator (read-only):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570
+az account set --subscription $SUB
+az rest --method GET --url "https://graph.microsoft.com/v1.0/directoryRoles(roleTemplateId='62e90394-69f5-4237-9190-012177145e10')/members?\$select=userPrincipalName,userType" --query "value[].{upn:userPrincipalName, type:userType}" -o table
+```
+   31 Oct: the pilot admin (member account) is one.
+2. Private browser window → https://accounts.azuredatabricks.net → sign in as that member account (it becomes account admin).
+3. Down arrow next to the username (top right) → copy the **Account ID** (never shown in a workspace).
+4. **Security → Identity provider setup → Automatic identity management**: Enabled (default for accounts created after 1 Aug 2025, F116).
+5. **User management** → add Gokul's account → **Roles** → **Account admin**. Then the blocks below run in Gokul's own Cloud Shell (the device-code sign-in as the pilot admin was refused on 31 Oct).
+
+### E. Entra groups on the workspace (approval)
+Plan (read-only; `ACC` = account id from D3, `G` = the Entra group; 31 Oct: the PEST Dev data engineers group):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+A=tools/databricks/aim_setup.sh; ACC='<Databricks account id>'; G='<Entra group>'
+bash $A plan --account-id "$ACC" --workspace 7405607339118600 --group "$G"
+```
+After reading it (stops before assigning anything if automatic identity management is off):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+A=tools/databricks/aim_setup.sh; ACC='<Databricks account id>'; G='<Entra group>'
+bash $A apply --account-id "$ACC" --workspace 7405607339118600 --group "$G" --approved-by "Gokul 2026-10-31"
+bash $A status --account-id "$ACC" --workspace 7405607339118600
+```
+Ran 31 Oct: the group USER on the workspace; Gokul ADMIN. Admins: `--admin` (privileged).
+
+### F. Unity Catalog data access (approval)
+Catalog and schema from **Catalog** in the workspace (31 Oct: `dbw_pmo_pkt2ofpqmlf3e` / `default`). READ = `USE_CATALOG` + `USE_SCHEMA`, `SELECT`; WRITE adds `MODIFY`, `CREATE_TABLE` (F123). Plan (read-only):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+A=tools/databricks/aim_setup.sh; G='<Entra group>'
+bash $A grants --workspace dbw-pmo-pkt2ofpqmlf3e --catalog dbw_pmo_pkt2ofpqmlf3e --schema default --group "$G=WRITE"
+```
+After reading it (adds only what is missing, reads it back: PASS / FAIL):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+A=tools/databricks/aim_setup.sh; G='<Entra group>'
+bash $A grants --workspace dbw-pmo-pkt2ofpqmlf3e --catalog dbw_pmo_pkt2ofpqmlf3e --schema default --group "$G=WRITE" --approved-by "Gokul 2026-10-31"
+```
+Ran 31 Oct: PASS `USE_CATALOG` on the catalog, PASS `CREATE_TABLE,MODIFY,SELECT,USE_SCHEMA` on `default`. A reader group: the same blocks with `"$G=READ"`.
+
+### G. Member test (workspace SQL editor) and clean-up
+As a member of the group (SAMPLE data only):
+```sql
+CREATE TABLE IF NOT EXISTS dbw_pmo_pkt2ofpqmlf3e.default.sample_access_test (id INT, name STRING, created_at TIMESTAMP)
+  COMMENT 'SAMPLE: PMO onboarding pilot access test - drop after the test';
+INSERT INTO dbw_pmo_pkt2ofpqmlf3e.default.sample_access_test VALUES (1, 'SAMPLE row one', current_timestamp());
+SELECT * FROM dbw_pmo_pkt2ofpqmlf3e.default.sample_access_test;
+```
+A READ member: `SELECT` works, `INSERT` is refused. Afterwards (as Gokul): `DROP TABLE IF EXISTS dbw_pmo_pkt2ofpqmlf3e.default.sample_access_test;` and stop the SQL warehouse (DBUs while it runs).
+
+### H. Cost check (read-only)
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/cost_check.sh rg-pmo-review-pilot
+```
+Expect `OK: only allowed resource types` with the workspace listed; record the budget and month-to-date lines in `docs/COSTS.md`.
+
+### Still open
+- The PEST Dev Support Reader group does not exist in the pilot tenant: submit that request in the app (the agent creates the group after both approvals), then E and F with `=READ`.
+- Retry the SWA API on .NET 10 before **10 Nov 2026** (F21), with a way to see the start-up error first.
+- DBU and default-storage (DSU) rates not read yet (F119).
 
 ## Rollback
 - **Code:** check out the previous commit and run `tools/deploy_free.sh app <subscriptionId>` and `tools/deploy_free.sh worker <subscriptionId>` again.
 - **Data:** the new containers are empty or hold only v1.1 records. Leave them; deleting them is a resource change that needs approval.
-- **Switches:** they are already off. `AGENT_OFFBOARDING=false` and `EXTERNAL_UPLOAD_API_ENABLED=false` are always allowed.
+- **Switches:** they are already off. `AGENT_OFFBOARDING=false` and `EXTERNAL_UPLOAD_API_ENABLED=false` are always allowed; account deletion off: `tools/deploy_free.sh offboarding $SUB delete-off`.
+- **Databricks:** a grant is undone in the SQL editor (`REVOKE … ON SCHEMA … FROM \`<group>\``) and a workspace assignment in the account console (Workspaces → Permissions); the tools never remove. Deleting the workspace is a resource change (approval).
 
 ## Next options (each with its own dry run and approval)
 - **Option 2:** `tools/deploy_free.sh tap <subscriptionId> on --sender <mailbox>`, plus the Exchange RBAC for Applications scope on that mailbox (F81).

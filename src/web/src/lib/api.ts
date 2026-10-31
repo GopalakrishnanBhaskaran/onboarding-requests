@@ -36,22 +36,48 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
     throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
   }
 
-  return read<T>(res);
+  return read<T>(res, method);
 }
 
-async function read<T>(res: Response, alsoOk: number[] = []): Promise<T> {
+async function read<T>(res: Response, method: string, alsoOk: number[] = []): Promise<T> {
   if (res.status === 401) {
     window.location.assign('/login');
     throw new ApiError(401, 'unauthenticated', 'Sign-in required.');
   }
 
   const text = await res.text();
-  const json = text ? JSON.parse(text) : null;
+  const json = parseJson(text);
+  if (json === undefined) throw notAnswered(res.status, text, method);
   if (!res.ok && !alsoOk.includes(res.status)) {
     const e = json?.error;
     throw new ApiError(res.status, e?.code ?? 'error', e?.message ?? `Request failed (${res.status}).`, e?.correlationId, e?.details ?? undefined);
   }
   return json as T;
+}
+
+/** The parsed body, null for an empty body, undefined when the body is not JSON. */
+function parseJson(text: string): any {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A reply that did not come from the API: the SWA gateway answers in plain text ("Backend call failure") when the
+ * API did not start, crashed or ran past the 45 s limit (VERIFIED_FACTS F3; the API may still finish the action).
+ */
+function notAnswered(status: number, text: string, method: string): ApiError {
+  const plain = text.trim();
+  const reason = plain.length <= 80 && !plain.includes('<') ? `: ${plain}` : '';
+  const saved = method === 'GET' ? '' : ' Reload the page first: your action may already be saved.';
+  return new ApiError(
+    status,
+    'gateway',
+    `The app's server did not answer (HTTP ${status}${reason}). Wait a minute and try again.${saved} If it repeats on every page, tell the Operator.`,
+  );
 }
 
 /**
@@ -67,7 +93,7 @@ async function sendFile<T>(path: string, file: File): Promise<T> {
   } catch {
     throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
   }
-  return read<T>(res, [422]);
+  return read<T>(res, 'POST', [422]);
 }
 
 const p = (projectId: string) => `projects/${encodeURIComponent(projectId)}`;
@@ -155,8 +181,9 @@ export const api = {
   },
   offboarding: (projectId: string, enterpriseId: string) =>
     call<OffboardingView>('GET', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}`),
-  planOffboarding: (projectId: string, enterpriseId: string) =>
-    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan`),
+  /** replace: close the plan nobody confirmed yet and make a new one (e.g. after account deletion was switched on). */
+  planOffboarding: (projectId: string, enterpriseId: string, replace = false) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan${replace ? '&replace=true' : ''}`),
   confirmOffboarding: (projectId: string, enterpriseId: string, offboardingId: string) =>
     call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=execute`, { offboardingId }),
   rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>
