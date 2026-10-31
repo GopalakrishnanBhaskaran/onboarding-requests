@@ -40,7 +40,12 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     public static bool ValidEnterpriseId(string? id) => id is not null && EnterpriseIdFormat().IsMatch(id);
 
-    public async Task<(int Status, OffboardingView View)> PlanAsync(CallerContext caller, string? projectId, string enterpriseId, string cid, CancellationToken ct)
+    /// <param name="replace">
+    /// Close a ready plan nobody confirmed and make a new one (a setting such as account deletion changed, or Entra did).
+    /// A plan the worker is planning or executing is never replaced.
+    /// </param>
+    public async Task<(int Status, OffboardingView View)> PlanAsync(CallerContext caller, string? projectId, string enterpriseId, bool replace, string cid,
+        CancellationToken ct)
     {
         var project = await AuthoriseAsync(caller, projectId, ct);
         var upn = Upn(enterpriseId);
@@ -53,9 +58,14 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         var runs = await RunsAsync(project.ProjectId, upn, ct);
         if (runs.FirstOrDefault(r => r.Status is OffboardingStatus.Planning or OffboardingStatus.Executing
                                      || (r.Status == OffboardingStatus.Planned && !Expired(r))) is { } open)
-            return (200, OffboardingView.Of(open)); // a double click, or a run still in progress: the same run
+        {
+            if (!replace || open.Status != OffboardingStatus.Planned)
+                return (200, OffboardingView.Of(open)); // a double click, or a run still in progress: the same run
+            if (await CloseAsync(project, open, caller, cid, expired: false, ct) is { } current)
+                return (200, OffboardingView.Of(current)); // confirmed at the same moment: that run goes on
+        }
         foreach (var stale in runs.Where(r => r.Status == OffboardingStatus.Planned && Expired(r)))
-            await ExpireAsync(project, stale, caller, cid, ct);
+            await CloseAsync(project, stale, caller, cid, expired: true, ct);
 
         var person = (await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value;
         var now = clock.UtcNow;
@@ -185,25 +195,35 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     private bool Expired(OffboardingRun run) => clock.UtcNow - (run.PlannedAt ?? run.RequestedAt) > settings.OffboardPlanValidFor;
 
-    /// <summary>A plan nobody confirmed in time is closed (Failed, audited), so a new one can be made.</summary>
-    private async Task ExpireAsync(Project project, OffboardingRun run, CallerContext caller, string cid, CancellationToken ct)
+    /// <summary>
+    /// A plan nobody confirmed is closed (Failed, audited) so a new one can be made: it expired, or a PMO or Operator asked
+    /// for a new one. Returns the run when it is no longer a ready plan (confirmed at the same moment), else null.
+    /// </summary>
+    private async Task<OffboardingRun?> CloseAsync(Project project, OffboardingRun run, CallerContext caller, string cid, bool expired, CancellationToken ct)
     {
         var v = await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct);
-        if (v is null || v.Value.Status != OffboardingStatus.Planned) return;
+        if (v is null) return null;
+        if (v.Value.Status != OffboardingStatus.Planned) return v.Value;
         var now = clock.UtcNow;
         try
         {
             await stores.OffboardingRuns.ReplaceAsync(v.Value with
             {
                 Status = OffboardingStatus.Failed, FinishedAt = now, UpdatedAt = now,
-                Leftovers = [$"plan expired: not confirmed within {settings.OffboardPlanValidFor.TotalHours:0} hours; nothing was changed; replaced by a new plan"],
+                Leftovers = [expired
+                    ? $"plan expired: not confirmed within {settings.OffboardPlanValidFor.TotalHours:0} hours; nothing was changed; replaced by a new plan"
+                    : "plan replaced before anyone confirmed it (a new plan was asked for); nothing was changed"],
             }, v.ETag, ct);
         }
         catch (ConcurrencyException)
         {
-            return; // confirmed or replaced at the same moment
+            // Changed at the same moment: closed by someone else (null, a new plan may follow) or confirmed (that run goes on).
+            return (await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct))?.Value is { Status: not OffboardingStatus.Failed } current ? current : null;
         }
-        await AuditAsync(project, caller.UserId, "offboarding-plan-expired", run.EnterpriseId, $"run {run.Id} (plan {run.PlanHash}) expired unconfirmed; a new plan was asked for", cid, ct);
+        await AuditAsync(project, caller.UserId, expired ? "offboarding-plan-expired" : "offboarding-plan-replaced", run.EnterpriseId,
+            expired ? $"run {run.Id} (plan {run.PlanHash}) expired unconfirmed; a new plan was asked for"
+                    : $"run {run.Id} (plan {run.PlanHash}) replaced unconfirmed; a new plan was asked for", cid, ct);
+        return null;
     }
 
     /// <summary>The steps' fingerprint: execute runs only the plan that was confirmed.</summary>

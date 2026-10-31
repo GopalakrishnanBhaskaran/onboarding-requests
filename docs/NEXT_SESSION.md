@@ -10,6 +10,7 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
 - After the `app` deploy of `ef9fc7b` (00:46 UTC, first on `dotnet-isolated:10.0`) every page shows *Unexpected token 'B', "Backend call failure" is not valid JSON*: the API does not start. Settings checked and valid.
 - Branch `claude/nifty-bardeen-j0pqm3` = `claude/elegant-darwin-nfot4p` + API back on .NET 9 + clear SPA message for a gateway reply. **Deploy it:** `git fetch origin && git checkout claude/nifty-bardeen-j0pqm3 && tools/deploy_free.sh app $SUB` (code only, no approval), then reload the app and run `verify_features.sh` line 1. Worker unchanged.
 - Then: retry .NET 10 before **10 Nov 2026** (.NET 9 end of support), with a way to see the API start-up error first (F21).
+- Offboarding account deletion is on (approved, 31 Oct). Plans made before that keep *Delete — off*: after the `app` redeploy use **Make a new plan** on such a run (worker unchanged). `workflow_diag.sh` lists the runs with their plan time and delete step.
 
 ## Live state (evidence in `DEPLOYMENT_LOG.md`, 30 Oct 2026)
 - **v1.1 option 1 applied** (~16:40 UTC, `apply` of `9105ddd`, approved by Gokul): 8 new Cosmos containers, worker data roles, app + worker deployed, cost unchanged (budget ₹2,000, spent ₹12.57).

@@ -63,6 +63,9 @@ public class F5OffboardingTests
     private static Task<Resp> Plan(TestApp app, string upn = Upn, string user = TestApp.Paul, string project = TestApp.Alpha) =>
         app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={project}&mode=plan");
 
+    private static Task<Resp> NewPlan(TestApp app, string upn = Upn, string user = TestApp.Paul) =>
+        app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={TestApp.Alpha}&mode=plan&replace=true");
+
     private static Task<Resp> Execute(TestApp app, string offboardingId, string upn = Upn, string user = TestApp.Oscar, string project = TestApp.Alpha) =>
         app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={project}&mode=execute", new { offboardingId });
 
@@ -661,6 +664,43 @@ public class F5OffboardingTests
         Assert.Equal("Completed", Status(await Get(app, guest)));
         Assert.Equal([$"disable {guest}", $"delete-user {guest}"], app.Offboarding.Calls);
         Assert.Null(app.Directory.User(guest));
+    }
+
+    /// <summary>
+    /// Live 31 Oct 2026: account deletion was switched on after a plan was made. The plan kept "Delete account — off" (a plan
+    /// keeps the settings of the moment it was made) and asking again returned that same plan for 24 hours. "Make a new plan"
+    /// closes it unconfirmed, and the worker plans again with the new setting.
+    /// </summary>
+    [Fact]
+    public async Task F5_Make_a_new_plan_replaces_an_unconfirmed_plan_after_deletion_is_switched_on()
+    {
+        var (app, _) = await Leaver();
+        var old = await Planned(app);
+        Assert.Contains(Steps(old), s => s.Name == OffboardingJob.Delete && s.Result == "Skipped" && s.Detail.StartsWith("off (OFFBOARD_DELETE_USER=false)"));
+        app.OffboardingSettings = app.OffboardingSettings with { OffboardDeleteUser = true }; // the worker restarts with deletion on
+
+        var same = await Plan(app);
+        Assert.Equal((200, IdOf(old)), (same.Status, IdOf(same))); // without replace: a double click, the same plan
+        app.Clock.Advance(TimeSpan.FromMinutes(1)); // a little later (the latest run is the one shown)
+        var fresh = await NewPlan(app);
+        Assert.Equal((202, "Planning"), (fresh.Status, Status(fresh)));
+        Assert.NotEqual(IdOf(old), IdOf(fresh));
+        var closed = (await app.Stores.OffboardingRuns.GetAsync(TestApp.Alpha, IdOf(old)))!.Value;
+        Assert.Equal(OffboardingStatus.Failed, closed.Status);
+        Assert.Contains("plan replaced", Assert.Single(closed.Leftovers));
+        Assert.Contains(await app.Stores.AuditEvents.ListAsync(TestApp.Alpha), a => a.Value.Action == "offboarding-plan-replaced");
+        Assert.Equal("Failed", Status(await Execute(app, IdOf(old)))); // the closed plan can no longer be confirmed
+        Assert.Equal((200, IdOf(fresh)), (await NewPlan(app)).Pipe(r => (r.Status, IdOf(r)))); // the worker is on it: never replaced
+
+        await app.RunWorker();
+        var planned = await Get(app);
+        Assert.Equal((IdOf(fresh), "Planned"), (IdOf(planned), Status(planned)));
+        Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Delete && s.Result == "Planned" && s.Detail.Contains("30 days"));
+        Assert.Empty(app.Offboarding.Calls); // nothing changed before the new plan is confirmed
+        Assert.Equal(202, (await Execute(app, IdOf(planned))).Status); // Oscar confirms the plan Paul asked for
+        await app.RunWorker();
+        Assert.Contains($"delete-user {Upn}", app.Offboarding.Calls);
+        Assert.Single(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha), r => r.Value.Status != OffboardingStatus.Failed);
     }
 
     /// <summary>

@@ -181,8 +181,9 @@ export const api = {
   },
   offboarding: (projectId: string, enterpriseId: string) =>
     call<OffboardingView>('GET', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}`),
-  planOffboarding: (projectId: string, enterpriseId: string) =>
-    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan`),
+  /** replace: close the plan nobody confirmed yet and make a new one (e.g. after account deletion was switched on). */
+  planOffboarding: (projectId: string, enterpriseId: string, replace = false) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan${replace ? '&replace=true' : ''}`),
   confirmOffboarding: (projectId: string, enterpriseId: string, offboardingId: string) =>
     call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=execute`, { offboardingId }),
   rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>

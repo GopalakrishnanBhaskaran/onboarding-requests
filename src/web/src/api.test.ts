@@ -48,3 +48,19 @@ describe('API client', () => {
     await expect(api.queue()).resolves.toEqual({ items: [] });
   });
 });
+
+describe('offboarding plan', () => {
+  it('asks for a new plan only when told to replace the unconfirmed one', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ status: 'Planning' }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+    }));
+    await api.planOffboarding('PEST', 'leaver@contoso.com');
+    await api.planOffboarding('PEST', 'leaver@contoso.com', true);
+    expect(urls).toEqual([
+      '/api/offboarding/leaver%40contoso.com?projectId=PEST&mode=plan',
+      '/api/offboarding/leaver%40contoso.com?projectId=PEST&mode=plan&replace=true',
+    ]);
+  });
+});

@@ -23,7 +23,11 @@ if [[ -n "$W" ]]; then
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
   echo "-- settings:"
   az functionapp config appsettings list -g "$RG" -n "$W" \
-    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED'], name)].{name:name, value:value}" -o table
+    --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED','TAP_MAIL_SENDER','AGENT_OFFBOARDING','OFFBOARD_SUBSCRIPTIONS','OFFBOARD_DELETE_USER'], name)].{name:name, value:value}" -o table
+  # The worker reads its settings when it starts; a settings change restarts it. Compare with the offboarding plan times below.
+  echo "-- latest settings changes, restarts and deploys of the worker (activity log, 2 days):"
+  az monitor activity-log list --resource-id "$(az functionapp show -g "$RG" -n "$W" --query id -o tsv)" --offset 2d --max-events 10 \
+    --query "[?status.value=='Succeeded'].{time:eventTimestamp, operation:operationName.localizedValue}" -o table 2>/dev/null || echo "  (activity log not readable)"
   MI=$(az functionapp identity show -g "$RG" -n "$W" --query principalId -o tsv)
   echo "-- Graph application permissions (read: User.Read.All, GroupMember.Read.All, UserAuthenticationMethod.Read.All, AuditLog.Read.All; v2.1 provisioning adds User.Create, Group.Create, GroupMember.ReadWrite.All; agent TAP adds UserAuthMethod-TAP.ReadWrite.All):"
   HELD=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$MI/appRoleAssignments" --query "value[].appRoleId" -o tsv \
@@ -86,4 +90,11 @@ notes = q("notifications", "SELECT c.status, c.kind, c.lastError, c.deliveredTo 
 print("  notifications by status:", dict(Counter(n["status"] for n in notes)) or "none")
 print("  mail errors:", dict(Counter(n.get("lastError") for n in notes if n.get("lastError"))) or "none")
 print("  mailed to (test redirect shows one address):", dict(Counter(a for n in notes for a in (n.get("deliveredTo") or []))) or "none")
+# v1.1 F5: a plan keeps the worker settings of the moment it was made (e.g. OFFBOARD_DELETE_USER); "Make a new plan" replaces it.
+runs = q("offboardingRuns", "SELECT TOP 8 c.id, c.projectId, c.enterpriseId, c.status, c.requestedAt, c.plannedAt, c.steps FROM c ORDER BY c.requestedAt DESC")
+print("  offboarding runs (latest 8):" if runs else "  offboarding runs: none")
+for r in runs:
+    d = next((s for s in r.get("steps") or [] if s.get("name") == "Delete account"), None)
+    print(f"  {r['id']} {r.get('projectId')} {r.get('status')} {r.get('enterpriseId')} requested={r.get('requestedAt')} planned={r.get('plannedAt') or '-'}")
+    print(f"      delete step: {d.get('result')} {d.get('detail')}" if d else "      delete step: not planned yet")
 PY
