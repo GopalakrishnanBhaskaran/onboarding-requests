@@ -111,12 +111,17 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     allowed_roles = str(s.get("ROLE_ASSIGN_ALLOWED_ROLES", "")).lower()
     prov_ok = on("AGENT_PROVISIONING") and on("AGENT_ROLE_ASSIGNMENT") and CREATE_ROLES <= roles and READ_ROLES <= roles and rbac \
         and all(r in allowed_roles for r in TEST_ROLES.values())
-    retired = sorted(roles & RETIRED_ROLES)
+    # Account deletion (offboarding … on --delete-user, decision F5b) holds User.ReadWrite.All on purpose (F75): while it is
+    # on, that role is not a retired Phase 2 role, and revoke-graph-writes keeps it (line 17 checks deletion itself).
+    deletion_on = on("OFFBOARD_DELETE_USER")
+    kept = OFFBOARD_DELETE_ROLE in roles and deletion_on
+    retired = sorted((roles & RETIRED_ROLES) - ({OFFBOARD_DELETE_ROLE} if deletion_on else set()))
     out.append(Result("5. Agent may create user/group/membership and assign Reader + Storage Blob Data Reader (v2.1)",
                       PASS if prov_ok and not retired else (FAIL if retired else WAIT),
                       f"settings {'on' if on('AGENT_PROVISIONING') and on('AGENT_ROLE_ASSIGNMENT') else 'off'}; Graph create roles "
                       f"{'all' if CREATE_ROLES <= roles else sorted(CREATE_ROLES - roles)}; read roles {'all' if READ_ROLES <= roles else sorted(READ_ROLES - roles)}; "
-                      f"RBAC Administrator at {rbac or 'no allowed scope'}; allow-listed roles {[n for n, r in TEST_ROLES.items() if r in allowed_roles]}; retired roles {retired or 'none'}",
+                      f"RBAC Administrator at {rbac or 'no allowed scope'}; allow-listed roles {[n for n, r in TEST_ROLES.items() if r in allowed_roles]}; retired roles {retired or 'none'}"
+                      + (f"; {OFFBOARD_DELETE_ROLE} kept for account deletion (line 17)" if kept else ""),
                       "" if prov_ok and not retired else "tools/deploy_free.sh revoke-graph-writes <sub> --approved-by …" if retired
                       else f"tools/deploy_free.sh provisioning <sub> on /subscriptions/<sub>/resourceGroups/rg-pmo-sample-access {','.join(TEST_ROLES.values())} (dry run → approval)"))
 
@@ -381,6 +386,12 @@ def self_test() -> None:
     assert l17(delete_on).status == FAIL and OFFBOARD_DELETE_ROLE in l17(delete_on).detail, l17(delete_on)
     delete_on["graph_roles"] = sorted(set(delete_on["graph_roles"]) | {OFFBOARD_DELETE_ROLE})
     assert l17(delete_on).status == PASS and "delete accounts on" in l17(delete_on).detail, l17(delete_on)
+    # Line 5: with deletion on, User.ReadWrite.All is kept on purpose (not "retired"); with deletion off it is retired again.
+    l5 = lambda c: next(r for r in evaluate(c, projects, rows, requests, notes, []) if r.feature.startswith("5."))
+    assert l5(delete_on).status == PASS and "kept for account deletion" in l5(delete_on).detail, l5(delete_on)
+    deletion_off = json.loads(json.dumps(delete_on)); deletion_off["worker_settings"]["OFFBOARD_DELETE_USER"] = "false"
+    assert l5(deletion_off).status == FAIL and OFFBOARD_DELETE_ROLE in l5(deletion_off).detail \
+        and "revoke-graph-writes" in l5(deletion_off).next, l5(deletion_off)
     delete_alone = json.loads(json.dumps(delete_on))
     delete_alone["worker_settings"]["AGENT_OFFBOARDING"] = "false"; delete_alone["swa_settings"]["AGENT_OFFBOARDING"] = "false"
     assert l17(delete_alone).status == FAIL, l17(delete_alone)

@@ -182,10 +182,16 @@ grant_graph() {
 
 # Security change: removes the retired Phase 2b/2c Graph permissions from the worker identity. Dry run without approval.
 revoke_graph_writes() {
-  local name mi perm role assignment
+  local name mi perm role assignment deletion
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  # Account deletion (offboarding … on --delete-user, F5b) needs User.ReadWrite.All (F75): keep it while deletion is on.
+  deletion=$(worker_setting "$name" OFFBOARD_DELETE_USER)
   for perm in "${GRAPH_RETIRED_ROLES[@]}"; do
+    if [[ "$perm" == "User.ReadWrite.All" && "$deletion" == [Tt]rue ]]; then
+      echo "Kept: $perm (account deletion is on, OFFBOARD_DELETE_USER=true; to remove it: offboarding <sub> delete-off first, then this command)"
+      continue
+    fi
     role=$(graph_role_id "$perm")
     assignment=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
       --query "value[?appRoleId=='$role'].id | [0]" -o tsv)
