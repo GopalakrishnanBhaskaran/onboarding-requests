@@ -3,6 +3,7 @@
 Script: `tools/databricks/aim_setup.sh`. Separate from the PMO onboarding app: no Azure resource, no cost.
 Written 31 Oct 2026. Facts F110–F113 in `docs/VERIFIED_FACTS.md`, read on Microsoft Learn that day.
 Use this instead of SCIM (`docs/DATABRICKS_SCIM.md`) unless you need cross-tenant (B2B) users.
+End-to-end test with the onboarding app (one joiner, control and data plane): `docs/DATABRICKS_E2E_TEST.md`.
 
 ## What AIM gives you (F106, F110)
 
@@ -68,6 +69,8 @@ bash $A status --account-id "$ACC" --workspace <workspace name>
 - `plan` does not call the external group API, because reading a group adds it to the account.
 
 ## Check it works
+
+- **Entitlements (F114, since 14 Sep 2026):** a newly assigned group inherits no entitlement. In the workspace: Settings → **Identity and access** → Groups → the group → switch on **Workspace access** and/or **Databricks SQL access**. `apply` does not set them yet.
 
 - Account console → **User management** → **Groups**: the group shows as external.
 - A member signs in to the workspace: they're added on first sign-in (status **Active**).
