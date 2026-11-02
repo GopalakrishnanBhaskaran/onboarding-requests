@@ -18,6 +18,12 @@ Every fact below was read on the page named, on 2 Nov 2026. "Page date" is the p
 | D10 | — | New VNets created with API versions after 31 Mar 2026 get **private subnets** (no default outbound). The Kubernetes SHIR must reach `mcr.microsoft.com`, `*.data.mcr.microsoft.com` and `*.compute.governance.azure.com` (wildcard, **no private endpoint**). | NAT gateway on the SHIR subnet. VNet injection template also uses a NAT gateway. |
 | D11 | Test via `Test-NetConnection` on Windows | Linux SHIR | Same checks with `nslookup`, `nc -zv <host> 443` and `curl` on the VM through `az vm run-command` (no inbound port, no Bastion). |
 
+### Your decisions on these (2 Nov 2026)
+- D1: Kubernetes SHIR on one Linux VM.
+- D3, D4, D6, D8: **complete end-to-end private** → back-end Private Link (`NoAzureDatabricksRules`), `browser_authentication` PE on this workspace (allowed for non-production, P6), storage firewall with PEs (gated on discovery, irreversible part), peering both ways and zones linked to both VNets. One `databricks_ui_api` PE in the workspace VNet serves clusters and, through peering, the SHIR (P6). See `WAVE_PLAN.md` v2.
+- D5: Purview *Disabled for ingestion only* (an IP allow list does not exist; *Disabled from all networks* would cut your device off the Purview portal).
+- Cost: test window only, then decommission.
+
 ## Facts used (URL, page date)
 
 | Id | Fact | Source |
@@ -35,6 +41,7 @@ Every fact below was read on the page named, on 2 Nov 2026. "Page date" is the p
 | P11 | Purview firewall options (D5). | [data-gov-classic-firewall](https://learn.microsoft.com/en-us/purview/data-gov-classic-firewall) (2025-02-24) |
 | P12 | Default outbound access retirement (D10): applies to API versions after 31 Mar 2026; existing VNets unaffected. Secondary source (announcement AZ515484); **UNVERIFIED on Learn today**. | [mc.merill.net AZ515484](https://mc.merill.net/message/AZ515484) |
 | P13 | Prices (Central India, USD list, 2 Nov 2026, Azure Retail Prices API): D8as_v5 Linux 0.222/h; D8s_v5 0.404/h; private endpoint 0.01/h; Standard static public IP 0.005/h; private DNS zone 0.50/month; Standard SSD E10 10.56/month; Bastion Basic 0.19/h. NAT gateway: API returned no item → **UNVERIFIED** (~0.045/h + 0.045/GB list elsewhere). | `https://prices.azure.com/api/retail/prices` |
+| P15 | Back-end (classic compute) Private Link on an existing workspace: Premium + VNet injection; stop **all compute, incl. SQL warehouses**; set **Required NSG rules = NoAzureDatabricksRules** ("can take over 15 minutes"); `databricks_ui_api` PE in a **dedicated PE subnet of the workspace VNet**; link `privatelink.azuredatabricks.net` to the workspace VNet; records `adb-<id>.<n>` and `pl-auth.<region>`; verify by starting a cluster and running a command ("Control Plane Request Failure" = misconfigured). New-workspace path: public access Enabled, NAT gateway No. | [private-link-standard](https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/private-link-standard) (2026-10-09) |
 | P14 | Azure Databricks Entra token resource `2ff814a6-3304-4ab8-85cb-cd0e6f879c1d` (repo fact F113). | ../docs/VERIFIED_FACTS.md |
 
 ## Live observation (not a doc)

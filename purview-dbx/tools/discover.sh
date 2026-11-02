@@ -95,6 +95,7 @@ get warehouses "/api/2.0/sql/warehouses"
 get ipacl_conf "/api/2.0/workspace-conf?keys=enableIpAccessLists"
 get ipacl "/api/2.0/ip-access-lists"
 get clusters "/api/2.0/clusters/list"
+get storage_creds "/api/2.1/unity-catalog/storage-credentials"
 if [ -n "$PV_APP" ]; then
   get sp "/api/2.0/preview/scim/v2/ServicePrincipals?filter=applicationId%20eq%20%22$PV_APP%22"
   get grants_catalog "/api/2.1/unity-catalog/effective-permissions/catalog/$CAT?principal=$PV_APP"
@@ -127,6 +128,9 @@ wh = [{"id": w.get("id"), "name": w.get("name"), "type": w.get("warehouse_type")
 tbl = B("table")
 running = [c.get("cluster_name") for c in B("clusters").get("clusters", []) if c.get("state") in ("RUNNING", "PENDING", "RESIZING", "RESTARTING")]
 mrg = L("mrg.json", [])
+mrg_id = (p.get("managedResourceGroupId") or "").lower()
+creds = [{"name": c.get("name"), "connector": (c.get("azure_managed_identity") or {}).get("access_connector_id")} for c in B("storage_creds").get("storage_credentials", [])]
+creds_on_managed = [c["name"] for c in creds if c["connector"] and mrg_id and c["connector"].lower().startswith(mrg_id + "/")]
 summary = {
   "context": ctx, "runner_public_ip": L("runner.json"),
   "tenant": {"signed_in_tenant": ctx["tenantId"], "workspace_tenant": ws.get("tenantId") or sub_t.get(ws["subscriptionId"]),
@@ -167,6 +171,7 @@ summary = {
     "warehouses": wh, "ip_access_lists_enabled": (B("ipacl_conf") or {}).get("enableIpAccessLists"),
     "ip_access_lists": [{"label": x.get("label"), "type": x.get("list_type"), "enabled": x.get("enabled"), "count": x.get("address_count")} for x in B("ipacl").get("ip_access_lists", [])],
     "running_clusters": running,
+    "storage_credentials": creds, "storage_credentials_on_managed_rg_connector": creds_on_managed,
     "purview_sp_in_workspace": bool(B("sp").get("Resources")) if "sp" in dbx else None,
     "purview_sp_in_account": bool(B("acct_sp").get("Resources")) if "acct_sp" in dbx else None,
     "purview_effective_catalog": B("grants_catalog").get("privilege_assignments") if "grants_catalog" in dbx else None,
@@ -190,6 +195,7 @@ checks = [
   ("Scan target table exists", d["table"]["exists"]),
   ("A SQL warehouse exists", bool(d["warehouses"])),
   ("No running clusters (migration needs none)", not d["running_clusters"]),
+  ("No storage credential uses the managed-RG access connector (storage firewall deletes it)", S("storage_creds") == 200 and not d["storage_credentials_on_managed_rg_connector"]),
 ]
 summary["checks"] = [{"check": c, "ok": bool(ok)} for c, ok in checks]
 os.makedirs(os.path.join(ROOT, "report"), exist_ok=True)
@@ -211,6 +217,7 @@ rows = [("Signed-in tenant", t["signed_in_tenant"]), ("Workspace tenant / Purvie
   ("SQL warehouses", "; ".join(f"{x['name']} {x['type']} serverless={x['serverless']} {x['state']} {x['http_path']}" for x in d["warehouses"]) or "none"),
   ("IP access lists", f"enabled={d['ip_access_lists_enabled']} lists={d['ip_access_lists']}"),
   ("Running clusters", d["running_clusters"] or "none"),
+  ("Storage credentials (on managed-RG connector)", f"{[c['name'] for c in d['storage_credentials']]} ({d['storage_credentials_on_managed_rg_connector'] or 'none'})"),
   ("Purview SP in workspace / account", f"{d['purview_sp_in_workspace']} / {d['purview_sp_in_account']}"),
   ("Databricks HTTP status per call", d["http_status"])]
 md += [f"| {k} | {v} |" for k, v in rows]

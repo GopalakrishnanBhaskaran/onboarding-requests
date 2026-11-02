@@ -1,69 +1,81 @@
-# Design and wave plan (draft, waiting for your OK)
+# Design and wave plan v2 — complete end-to-end private, test window only
 
-Region: same as the workspace (from discovery). Names start with `pvdbx-`. CIDRs are checked against every VNet discovery finds before wave 1.
+Your decisions (2 Nov 2026): commands run on **your computer through Remote Control**; runtime **Kubernetes SHIR on one Linux VM**; **complete end-to-end private-endpoint connectivity**; **test only, then decommission** (middle ground on cost, free credits).
+
+Region: the workspace's (from discovery). Names start with `pvdbx-`. CIDRs are checked against every VNet discovery finds.
 
 ## Target architecture
 
 ```
-My device (IP /32) ──public──► Workspace front end ──► IP access list: ALLOW my-device only
-                                                       (every other public IP → 403)
+My device (IP /32) ──public──► workspace front end ── IP access list: ALLOW my-device only (others → 403)
+My device ──public──► Purview portal (Entra sign-in; Purview has no IP allow list)
 
-Purview (sub-A) ◄─ account PE + ingestion PEs (blob, queue) ─┐
-                                                             │  transit VNet  pvdbx-transit-vnet 10.120.0.0/23
-Kubernetes SHIR VM (no public IP, NAT egress) ─ pvdbx-shir ──┤
-  10.120.0.0/27                                              │
-                                                             └─ pvdbx-pe 10.120.1.0/26
-                                                                └─ databricks_ui_api PE ──► workspace (sub-B)
-Workspace VNet (VNet injection)  pvdbx-dbx-vnet 10.110.0.0/22
-  pvdbx-dbx-host 10.110.0.0/24, pvdbx-dbx-container 10.110.1.0/24 (delegated, NSG, NAT)
+        transit VNet (sub-A) 10.120.0.0/23                     workspace VNet (sub-B) 10.110.0.0/22
+ ┌──────────────────────────────────────────┐   peering   ┌────────────────────────────────────────────────┐
+ │ pvdbx-shir 10.120.0.0/27                 │◄──────────►│ pvdbx-dbx-host 10.110.0.0/24  (delegated, NAT)  │
+ │   K8s SHIR VM (no public IP, NAT egress) │  both ways  │ pvdbx-dbx-container 10.110.1.0/24 (delegated)  │
+ │ pvdbx-pe 10.120.1.0/26                   │             │ pvdbx-dbx-pe 10.110.2.0/26                     │
+ │   Purview account PE                     │             │   databricks_ui_api PE (front + back end)      │
+ │   Purview ingestion PEs (blob, queue)    │             │   browser_authentication PE                    │
+ └──────────────────────────────────────────┘             │   workspace storage PEs (dfs, blob)            │
+  SHIR → 443 → Databricks PE subnet (NSG allow)           └────────────────────────────────────────────────┘
+  Private DNS zones linked to BOTH VNets
 ```
+Scan path, all private: SHIR → Databricks PE (API + SQL warehouse) → workspace storage PEs (Cloud Fetch) → Purview account + ingestion PEs. Only public hops left (no PE exists, docs P3): image pulls from `mcr.microsoft.com` and `*.compute.governance.azure.com`, through the NAT gateway.
 
-## Resources (proposed)
+## What "complete" adds compared to v1, and the docs basis
+| Item | Docs basis | Note |
+|---|---|---|
+| Back-end Private Link: `databricks_ui_api` PE in the workspace VNet PE subnet, `Required NSG rules = NoAzureDatabricksRules`, public access **Enabled** | P15 (back-end page) | existing workspace: stop **all compute incl. SQL warehouses** first; > 15 min |
+| SHIR uses the **same** PE through peering | P6: `databricks_ui_api` "handles REST API calls for both inbound and classic compute plane Private Link" | how-to pages show a second front-end PE in the transit VNet; if test connection fails because of this, fallback = add that PE (+1 PE, separate zone) |
+| `browser_authentication` PE hosted on this workspace | P6: allowed "for non-production environments" | `pl-auth.<region>` record; only used by a browser inside the VNets |
+| Workspace storage firewall + `dfs`/`blob` PEs + access connector outside the managed RG | P8 | **irreversible part**: deletes the access connector in the managed RG; gated on discovery showing no storage credential uses it |
+| Peering transit ↔ workspace VNet, both ways | your plan | cross-subscription; no gateway transit; forwarded traffic off |
+| Purview firewall **Disabled for ingestion only** | P11 | *Disabled from all networks* would lock your device out of the Purview portal (no IP allow list, your device is not in the VNet) |
+| Not added: platform / portal PE, serverless NCC PEs | P9, P10, P6 | platform PE is tenant-wide; portal PE is classic-portal only; NCC is for serverless → your resources, not used by the scan |
 
-| Agent | Resource | Where | Notes |
-|---|---|---|---|
-| A | `pvdbx-dbx-nsg`, `pvdbx-dbx-vnet` (host + container subnets delegated to `Microsoft.Databricks/workspaces`), `pvdbx-dbx-nat` + public IP | workspace RG, sub-B (docs: same RG as the workspace) | only if discovery shows a managed VNet |
-| A | Workspace update → VNet injection | the workspace | **all clusters and jobs terminated first**; ~15 min; public access stays Enabled; `AllRules` |
-| A (wave 2) | `pvdbx-dbx-uiapi-pe` (`databricks_ui_api`) | transit `pvdbx-pe` subnet | needs VNet injection done |
-| B | `rg-pvdbx-transit`, `pvdbx-transit-vnet`, subnets `pvdbx-shir`, `pvdbx-pe`, NSGs, `pvdbx-transit-nat` + public IP | sub-A | private subnets (D10) |
-| B | Purview **account** PE, **ingestion** PEs (blob, queue; Event Hubs only if on) | transit `pvdbx-pe` | no portal / platform PE (D5) |
-| C | Private DNS zones in `rg-pvdbx-dns`: `privatelink.azuredatabricks.net`, `privatelink.purview.azure.com`, `privatelink.blob.core.windows.net`, `privatelink.queue.core.windows.net` (+ `privatelink.servicebus.windows.net` if Event Hubs) | sub-A | linked to the **transit VNet only** (D8); blob/queue links with fallback to internet |
-| C | VNet peering | — | **dropped**: not needed when the PE sits in the transit VNet (D8). Say if you still want it. |
-| D | `pvdbx-shir-vm` Ubuntu 24.04, Standard_D8as_v5 (8 vCPU, 32 GB), 128 GB Standard SSD, no public IP, SSH key only, k3s single node, IRCTL registers `pvdbx-k8s-shir` | transit `pvdbx-shir` | managed through `az vm run-command` (no inbound port, no Bastion). k3s is a Linux Kubernetes; IRCTL's environment check on k3s is **UNVERIFIED** → fallback kubeadm or a 1-node AKS. |
-| E | Purview MI as service principal (Entra managed) in the account, assigned to the workspace (USER); entitlements workspace + Databricks SQL access; warehouse CAN USE; UC: USE CATALOG, USE SCHEMA, SELECT on the table | Databricks | no Azure RBAC role needed for the MI (P1) |
-| F | IP access list `my-device` (your IP /32) created **before** `enableIpAccessLists=true`; Purview firewall *Disabled for ingestion only* after the scans pass | workspace, Purview | no Purview IP rule exists (D5); no storage firewall (D6) |
+## Resources
+| Agent | Resource | Where |
+|---|---|---|
+| A | `pvdbx-dbx-nsg`, `pvdbx-dbx-pe-nsg`, `pvdbx-dbx-vnet` (host + container delegated to `Microsoft.Databricks/workspaces`, PE subnet), `pvdbx-dbx-nat` + public IP | workspace RG, sub-B (docs: same RG as the workspace) |
+| A | Workspace update: VNet injection (if not yet) → then `NoAzureDatabricksRules` | the workspace |
+| A | PEs `pvdbx-dbx-uiapi-pe` (`databricks_ui_api`), `pvdbx-dbx-auth-pe` (`browser_authentication`), `pvdbx-dbx-dfs-pe`, `pvdbx-dbx-blob-pe` (workspace storage); access connector `pvdbx-dbx-ac`; storage firewall on | workspace VNet PE subnet |
+| B | `rg-pvdbx-transit`: `pvdbx-transit-vnet` (`pvdbx-shir`, `pvdbx-pe`), `pvdbx-shir-nsg`, `pvdbx-pe-nsg`, `pvdbx-transit-nat` + public IP; Purview account PE + ingestion PEs (blob, queue; + namespace only if managed Event Hubs is on) | sub-A |
+| C | `rg-pvdbx-dns`: `privatelink.azuredatabricks.net`, `privatelink.purview.azure.com`, `privatelink.blob.core.windows.net`, `privatelink.queue.core.windows.net`, `privatelink.dfs.core.windows.net` (+ `privatelink.servicebus.windows.net` if Event Hubs), each linked to **both** VNets (blob/dfs/queue links: fallback to internet); peering both ways | sub-A |
+| D | `pvdbx-shir-vm` Ubuntu 24.04, D8as_v5, 128 GB Standard SSD, no public IP, k3s, IRCTL → `pvdbx-k8s-shir` Running; auto-shutdown | transit `pvdbx-shir` |
+| E | Purview MI service principal, workspace USER, entitlements, warehouse CAN USE, USE CATALOG / USE SCHEMA / SELECT | Databricks |
+| F | IP list `my-device` (your IP /32) → `enableIpAccessLists=true`; Purview *Disabled for ingestion only* after scans pass | workspace, Purview |
 
 ### NSG rules
-- `pvdbx-pe-nsg` (PE subnet, network policies on): Allow TCP 443 from `10.120.0.0/27` (SHIR) → `10.120.1.0/26`, priority 100; Deny all inbound, priority 4000.
-- `pvdbx-shir-nsg`: Deny inbound from Internet, priority 4000 (no inbound allow at all). Outbound default (needs MCR, `*.compute.governance.azure.com`, Ubuntu/k3s packages through NAT).
-- `pvdbx-dbx-nsg`: Databricks adds its own rules (AllRules); we add nothing that blocks them. Internet inbound is denied by the default rules.
+- `pvdbx-dbx-pe-nsg` (Databricks PE subnet, PE network policies on): allow TCP **443 from `10.120.0.0/27`** (SHIR, via peering); allow TCP 443, 6666, 3306, 8443–8451 from `10.110.0.0/23` (cluster subnets, back-end ports P6); deny all other inbound.
+- `pvdbx-pe-nsg` (transit PE subnet): allow TCP 443 from `10.120.0.0/27`; deny all other inbound.
+- `pvdbx-shir-nsg`: deny inbound from Internet; no inbound allow (access through `az vm run-command`).
+- `pvdbx-dbx-nsg` (cluster subnets): with `NoAzureDatabricksRules` Databricks adds no inbound/outbound rules; keep the default rules (deny Internet inbound) and allow outbound to the PE subnet.
 
-## Waves
+## Waves (one approval per wave)
+| Wave | Parallel | Notes |
+|---|---|---|
+| 0 | discovery, your IP | read-only; your OK on this plan |
+| 1 | **A** VNet + NSGs + NAT, then VNet injection · **B** transit VNet, NSGs, NAT, Purview PEs · **D** VM · **E** identity + grants | approval = what-if + list + cost; **workspace downtime**: all clusters, jobs and classic warehouses stopped during the network update |
+| 2 | **A** NoAzureDatabricksRules + Databricks PEs (+ storage firewall if approved) · **C** zones, links, zone groups, peering · **D** k3s + IRCTL (Running) · **F** IP list (your IP first, then enable) | approval = what-if + the lockdown and storage-firewall steps |
+| 3 | **V** validation → **S** source, test connection, scan 1, scan 2, Data Map → Purview firewall → **R** report | no infra change except the Purview firewall |
+| 4 | **Decommission** (below) | approval: delete list |
 
-| Wave | Parallel agents | Depends on | Approval batch |
+## Cost — test window only (Central India list prices, DOC_CHECK P13)
+| Item | Qty | Per day kept | Note |
 |---|---|---|---|
-| 0 | Discovery (read-only), your IP | sign-in | your OK on this design |
-| 1 | **A** workspace VNet + NAT + migrate to VNet injection · **B** transit VNet, NSGs, NAT, Purview PEs · **D** SHIR VM create · **E** SP, assignment, CAN USE, UC grants | wave 0 OK | **one approval**: what-if output + resource list + cost |
-| 2 | **A2** Databricks PE → **C** DNS zones, links, zone groups → **D** k3s + IRCTL register (Running) → **F** IP list (my IP first, then enable) | A + B done | **one approval**: what-if + the lockdown step |
-| 3 | **V** validation (nslookup / nc / curl from the SHIR VM; your device allowed; cloud runner blocked) → **S** register source, test connection, scan 1, scan 2, Data Map check → Purview firewall → **R** report | all | Purview firewall change is in the wave 2 batch |
+| Private endpoints | 9 (10 with Event Hubs) | ~2.2 USD | 0.01/h each + 0.01/GB |
+| NAT gateways + public IPs | 2 + 2 | ~2.4 USD | NAT price UNVERIFIED (~0.045/h) |
+| SHIR VM D8as_v5 | 1 | 0.22 per hour **on** | deallocated outside test hours |
+| SHIR disk 128 GB | 1 | ~0.4 USD | |
+| Private DNS zones | 5–6 | < 0.1 USD | |
+| Bastion | 0 | 0 | not used |
 
-Locks: an agent writes `locks.<resource>` in `state/state.json` before a change and removes it after. Shared resources: `subnet:pvdbx-pe` (A2, B), `workspace` (A, E, F), `purview` (B, S, F).
+**A 1–2 day test ≈ 10–20 USD (≈ ₹850–1,700) from your credits.** Plus SQL warehouse minutes and Purview scan billing.
 
-## Cost (Central India list prices, USD, see DOC_CHECK P13)
+## Decommission (wave 4) and what stays
+Deleted: SHIR VM + disk + NIC, IR registration, every `pvdbx-` PE, DNS zones and links, peering, transit VNet + NAT, Purview PEs; IP list switched off (or kept, your choice); Purview firewall back to *Enabled from all networks*; storage firewall off.
 
-| Item | Qty | Per month if kept | Note |
-|---|---|---|---|
-| SHIR VM D8as_v5 Linux | 1 | 162 (24×7) | deallocate between scans: ~0.22 per hour used |
-| SHIR OS disk E10 128 GB | 1 | 11 | charged while it exists |
-| Private endpoints | 4 (5 with Event Hubs) | 29–37 | + 0.01 per GB |
-| NAT gateways + public IPs | 2 + 2 | ~66 + 7 | NAT price **UNVERIFIED** (~0.045/h) |
-| Private DNS zones | 4–5 | 2–3 | |
-| Bastion | 0 | 0 | not used (run-command) |
-| **Total** | | **~125 with the VM off, ~290 with it on 24×7** | ≈ ₹10,500 / ₹24,500 at ₹84 per USD (rate **UNVERIFIED**) |
-
-Plus: SQL warehouse minutes during tests and scans (auto-stop 10 min), Purview scan billing (existing account). The PMO pilot budget is ₹2,000/month, so this needs its own approval and budget; everything goes into `pvdbx-` resources so cleanup is a short, listed delete.
-
-## Open decisions (asked once, before wave 1)
-1. Runtime: Kubernetes SHIR on one VM (recommended, documented) vs Managed VNet IR v2 (no VM, UNVERIFIED for MI + private path).
-2. Optional extras that the docs say are not needed: back-end Private Link, workspace storage firewall (irreversible part), `browser_authentication` web-auth workspace, VNet peering.
-3. Where commands run: your computer through Remote Control (browser steps, your real IP) or this cloud session with a device-code sign-in (API only, no browser).
+**Stays on the existing workspace (no documented way back):**
+- VNet injection: the workspace keeps `pvdbx-dbx-vnet`; its NAT gateway (~33 USD/month, UNVERIFIED) stays unless you accept default outbound access (free, being retired). Required NSG rules go back to `AllRules` after the back-end PE is removed.
+- If the storage firewall was enabled: the managed-RG access connector stays deleted (the replacement `pvdbx-dbx-ac` stays in use).
