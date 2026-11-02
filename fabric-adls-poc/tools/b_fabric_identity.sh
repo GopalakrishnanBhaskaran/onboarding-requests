@@ -85,7 +85,7 @@ fi
 # 4. RBAC, least privilege (FB3): Delegator at account + Data Contributor on the container
 rbac() { # rbac <principalId> <type> <role> <scope> <label>
   if [ -z "$1" ]; then change "$5 (after the identity exists)"; return; fi
-  n="$(az role assignment list --assignee "$1" --scope "$4" --role "$3" --query 'length(@)' -o tsv 2>/dev/null || echo 0)"
+  n="$(az role assignment list --scope "$4" --query "[?principalId=='$1' && roleDefinitionName=='$3'] | length(@)" -o tsv 2>/dev/null || echo 0)"
   if [ "$n" != 0 ]; then ok "$5"; else change "$5"
     [ "$APPLY" = 1 ] && az role assignment create --assignee-object-id "$1" --assignee-principal-type "$2" --role "$3" --scope "$4" -o none
   fi
@@ -93,7 +93,7 @@ rbac() { # rbac <principalId> <type> <role> <scope> <label>
 rbac "$SP_ID" ServicePrincipal "Storage Blob Delegator" "$STG_ID" "identity: Storage Blob Delegator @ account"
 rbac "$SP_ID" ServicePrincipal "Storage Blob Data Contributor" "$CONT_SCOPE" "identity: Storage Blob Data Contributor @ container $CONTAINER"
 # the owner needs a data role to upload test files and to browse in the portal with Entra auth
-if az role assignment list --assignee "$ME_OID" --scope "$CONT_SCOPE" --include-inherited --query "[?contains(roleDefinitionName,'Storage Blob Data')] | length(@)" -o tsv | grep -qv '^0$'; then ok "you: a Storage Blob Data role on $CONTAINER"; else
+if az role assignment list --scope "$CONT_SCOPE" --include-inherited --query "[?principalId=='$ME_OID' && contains(roleDefinitionName,'Storage Blob Data')] | length(@)" -o tsv | grep -qv '^0$'; then ok "you: a Storage Blob Data role on $CONTAINER"; else
   rbac "$ME_OID" User "Storage Blob Data Contributor" "$CONT_SCOPE" "you: Storage Blob Data Contributor @ container $CONTAINER"
 fi
 
@@ -110,7 +110,7 @@ fi
 {
   echo "mode=$([ "$APPLY" = 1 ] && echo apply || echo plan) changes=${#PLAN[@]}"; printf '%s\n' "${PLAN[@]:-none}"
   [ -n "$WS_ID" ] && fab "/workspaces/$WS_ID" || true
-  [ -n "$SP_ID" ] && az role assignment list --assignee "$SP_ID" --all --query "[].{role:roleDefinitionName,scope:scope}" -o json || true
+  [ -n "$SP_ID" ] && az role assignment list --all --query "[?principalId=='$SP_ID'].{role:roleDefinitionName,scope:scope}" -o json || true
   az storage account show -n "$STG" -g "$RG" --query "networkRuleSet.resourceAccessRules" -o json
 } | save "B-$([ "$APPLY" = 1 ] && echo apply || echo plan).txt"
 [ "$APPLY" = 1 ] && python3 "$ST" agent B done "identity, RBAC, resource rule in place" >/dev/null

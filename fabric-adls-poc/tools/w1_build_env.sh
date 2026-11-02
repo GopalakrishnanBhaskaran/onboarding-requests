@@ -12,8 +12,10 @@ REGION="centralindia"; BUDGET=1000; APPLY=0
 RG="rg-pvdbx-fabric-poc"; VNET="pvdbx-vnet-fabricpoc"; SPACE="10.60.0.0/24"; PE_SUBNET="snet-pe"; PE_PREFIX="10.60.0.0/27"
 CONTAINER="poc"; FOLDER="input"
 while [ $# -gt 0 ]; do case "$1" in --region) REGION="$2"; shift 2;; --budget) BUDGET="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
+[ -n "${ME_MAIL:-}" ] && PRESET_MAIL="$ME_MAIL"
 SUB="$(az account show --query id -o tsv)"; TENANT="$(az account show --query tenantId -o tsv)"
-ME_MAIL="$(az ad signed-in-user show --query "mail || userPrincipalName" -o tsv)"
+ME_MAIL="${PRESET_MAIL:-$(az ad signed-in-user show --query "mail || otherMails[0] || userPrincipalName" -o tsv)}"
+case "$ME_MAIL" in *"#EXT#"*|"") die "no usable e-mail for budget alerts on your account; re-run with ME_MAIL=<your mail> exported";; esac
 # storage name: stpvdbxfab + 6 chars derived from the subscription id (stable across re-runs, globally unique enough)
 STG="stpvdbxfab$(printf '%s' "$SUB" | sha256sum | cut -c1-6)"
 [ "$APPLY" = 1 ] && { require_approval 1; python3 "$ST" lock storage-account A; python3 "$ST" lock vnet A; python3 "$ST" agent A running "build base"; }
@@ -39,7 +41,7 @@ item "container $CONTAINER (control plane; not affected by the firewall)" "az st
 if [ "$APPLY" = 1 ]; then
   for k in "resourceGroup=$RG" "storageAccount=$STG" "container=$CONTAINER" "testFolder=$FOLDER" "region=$REGION" "subscription=$SUB" "tenant=$TENANT" "vnet=$VNET" "peSubnet=$PE_SUBNET"; do
     python3 "$ST" set "env.${k%%=*}" "${k#*=}" >/dev/null; done
-  az storage account show -g "$RG" -n "$STG" --query "{name:name,hns:isHnsEnabled,publicNetworkAccess:publicNetworkAccess,networkRuleSet:networkRuleSet,sharedKey:allowSharedKeyAccess,tls:minimumTlsVersion}" -o json | save W1-base-storage-after.json
+  az storage account show -g "$RG" -n "$STG" --query "{name:name,hns:isHnsEnabled,publicNetworkAccess:publicNetworkAccess,networkRuleSet:networkRuleSet,sharedKey:allowSharedKeyAccess,tls:minimumTlsVersion}" -o json | save W1-base-storage-after.json || true
   python3 "$ST" agent A running "base built; next a_storage_network.sh" >/dev/null
 fi
 echo "== $N change(s) $([ "$APPLY" = 1 ] && echo applied || echo 'planned; nothing changed')"

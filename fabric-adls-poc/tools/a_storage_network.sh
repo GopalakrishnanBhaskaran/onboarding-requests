@@ -24,7 +24,11 @@ case "$SUB$RG$STG" in *UNVERIFIED*) die "run discover.sh first";; esac
 az account set --subscription "$SUB"
 [ -n "$VNET_RG" ] || VNET_RG="$(az network vnet list --query "[?name=='$VNET'].resourceGroup | [0]" -o tsv)"
 [ -n "$DNS_RG" ] || DNS_RG="$VNET_RG"
-[ -n "$DEVICE_IP" ] || DEVICE_IP="$(device_ip)"
+if [ -z "$DEVICE_IP" ]; then
+  [ -n "${ACC_CLOUD:-}${AZUREPS_HOST_ENVIRONMENT:-}" ] && die "Cloud Shell: pass --device-ip <your device IP> (Cloud Shell's own IP must never be allowed by mistake)"
+  DEVICE_IP="$(device_ip)"
+fi
+python3 -c 'import ipaddress,sys;a=ipaddress.ip_address(sys.argv[1]);sys.exit(0 if a.version==4 and a.is_global else 1)' "$DEVICE_IP" || die "--device-ip must be a public IPv4 address"
 STG_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STG"
 SUBNET_ID="$(az network vnet subnet show -g "$VNET_RG" --vnet-name "$VNET" -n "$SUBNET" --query id -o tsv)"
 LOC="$(az storage account show -n "$STG" -g "$RG" --query location -o tsv)"
