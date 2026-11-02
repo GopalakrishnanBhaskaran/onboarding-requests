@@ -8,11 +8,12 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; TENANT="$(env_get tenant)"
-WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0
+WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --workspace) WS="$2"; shift 2;; --container) CONTAINER="$2"; shift 2;;
     --capacity) CAP="$2"; shift 2;; --create-capacity) NEWCAP="$2"; shift 2;; --region) REGION="$2"; shift 2;;
+    --capacity-admin) CAP_ADMIN="$2"; shift 2;;   # a native member UPN of this tenant (B2B users can't be capacity admins, FB24)
     --apply) APPLY=1; shift;; *) die "unknown argument $1";;
   esac
 done
@@ -22,6 +23,8 @@ STG_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/stora
 CONT_SCOPE="$STG_ID/blobServices/default/containers/$CONTAINER"
 ME_UPN="$(az ad signed-in-user show --query userPrincipalName -o tsv)"
 ME_OID="$(az ad signed-in-user show --query id -o tsv)"
+[ -n "$CAP_ADMIN" ] || CAP_ADMIN="$ME_UPN"
+case "$CAP_ADMIN" in *"#EXT#"*) log "note: capacity admin is an external account; if Azure refuses it, re-run with --capacity-admin <native member UPN> (list: az ad user list --query \"[?userType=='Member' && !contains(userPrincipalName,'#EXT#')].userPrincipalName\" -o tsv)";; esac
 [ "$APPLY" = 1 ] && { require_approval 1; python3 "$ST" lock fabric-workspace B; python3 "$ST" lock fabric-capacity B; python3 "$ST" agent B running apply; }
 trap '[ "$APPLY" = 1 ] && { python3 "$ST" unlock fabric-workspace B; python3 "$ST" unlock fabric-capacity B; python3 "$ST" unlock storage-network-rules B 2>/dev/null; } || true' EXIT
 PLAN=()
@@ -36,10 +39,10 @@ if [ -n "$NEWCAP" ]; then
   r="$(az provider show -n Microsoft.Fabric --query registrationState -o tsv 2>/dev/null || echo NotRegistered)"
   if [ "$r" = Registered ]; then ok "Microsoft.Fabric provider registered"; else change "register Microsoft.Fabric resource provider (free)"; [ "$APPLY" = 1 ] && az provider register -n Microsoft.Fabric --wait; fi
   if az resource show -g "$RG" -n "$CAP" --resource-type Microsoft.Fabric/capacities >/dev/null 2>&1; then ok "capacity $CAP exists"; else
-    change "create capacity $CAP F2 in $RG/$REGION, admin = you (billing starts; pause when idle, FB18/FB19)"
+    change "create capacity $CAP F2 in $RG/$REGION, admin = $(echo "$CAP_ADMIN" | sed -E 's/^[^@#]+/***/') (billing starts; pause when idle, FB18/FB19)"
     if [ "$APPLY" = 1 ]; then
       az rest --method put --url "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Fabric/capacities/$CAP?api-version=2023-11-01" \
-        --body "{\"location\":\"$REGION\",\"sku\":{\"name\":\"F2\",\"tier\":\"Fabric\"},\"properties\":{\"administration\":{\"members\":[\"$ME_UPN\"]}},\"tags\":{\"purpose\":\"fabric-adls-poc\"}}" -o none
+        --body "{\"location\":\"$REGION\",\"sku\":{\"name\":\"F2\",\"tier\":\"Fabric\"},\"properties\":{\"administration\":{\"members\":[\"$CAP_ADMIN\"]}},\"tags\":{\"purpose\":\"fabric-adls-poc\"}}" -o none
       for i in $(seq 1 40); do s="$(az resource show -g "$RG" -n "$CAP" --resource-type Microsoft.Fabric/capacities --query properties.state -o tsv)"; [ "$s" = Active ] && break; sleep 15; done
       [ "$s" = Active ] || die "capacity state $s"
     fi
