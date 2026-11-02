@@ -6,7 +6,8 @@ import {
 import { Copy16Regular, Send20Regular, TextAdd20Regular } from '@fluentui/react-icons';
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
-import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess } from '../lib/types';
+import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess, StatusLine } from '../lib/types';
+import { correctionFor, missingTasks, privilegedJobRows, returnedSiblings } from '../lib/resubmit';
 import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
 import { FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, justificationTemplate, whoDoesWhat } from '../lib/flow';
 import { ErrorBar, Loading, PageHeader, useStyles } from '../components/common';
@@ -60,6 +61,10 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const [resolved, setResolved] = useState<ResolveResult | null>(null);
   const [ticked, setTicked] = useState<string[]>([]);
   const [resolveError, setResolveError] = useState<unknown>(null);
+  // A returned request of a bundle ("All" or several resources): the other returned requests of the same submission.
+  const [siblings, setSiblings] = useState<StatusLine[]>([]);
+  const [include, setInclude] = useState<string[]>([]);
+  const [partial, setPartial] = useState<{ done: number; failed: { label: string; why: string }[] } | null>(null);
   const environments = project.environments ?? [];
   const tenants = projects.filter((p) => p.roles.includes('Requester') || p.projectId === project.projectId);
 
@@ -87,23 +92,35 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     setResolved(null);
     setTicked([]);
     if (!envChosen) { setOptions(null); return; }
-    api.resourceOptions(project.projectId, fields.environment).then((r) => setOptions(r.options)).catch((e) => { setOptions([]); setResolveError(e); });
+    let current = true; // a slower answer for an earlier choice never overwrites the latest one
+    api.resourceOptions(project.projectId, fields.environment)
+      .then((r) => { if (current) setOptions(r.options); })
+      .catch((e) => { if (current) { setOptions([]); setResolveError(e); } });
+    return () => { current = false; };
   }, [isNew, project.projectId, fields.environment, envChosen]);
   const chosen = options ? forApi(selected, options) : [];
   useEffect(() => {
     if (!isNew || chosen.length === 0) { setResolved(null); setTicked([]); return; }
     setResolveError(null);
+    let current = true; // ticking fast sends several resolves: only the answer for the latest selection counts
     api.resolve(project.projectId, fields.environment, chosen)
       .then((r) => {
+        if (!current) return;
         setResolved(r);
         // One requestable group: ticked for the requester; several: they choose (never more access than asked for).
         const requestable = r.resolvedAccess.filter((a) => a.status !== 'Unresolved');
         setTicked(requestable.length === 1 ? [groupKey(requestable[0])] : []);
       })
-      .catch(setResolveError);
+      .catch((e) => { if (current) setResolveError(e); });
+    return () => { current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, project.projectId, fields.environment, chosen.join('|')]);
   const tickedAccess = resolved?.resolvedAccess.filter((a) => ticked.includes(groupKey(a))) ?? [];
+  // Rows flagged Privileged under a job-role level (e.g. Data Engineer): the AI review asks for the tasks in the justification.
+  const chosenRows = (sheet ?? []).filter((r) => inEnv(r) && (isNew
+    ? tickedAccess.some((a) => same(a.groupName, r.entraGroup))
+    : same(r.resource, fields.resource) && same(r.accessLevel, fields.accessLevel)));
+  const privilegedRows = privilegedJobRows(chosenRows);
 
   const derived = fields.enterpriseId
     ? `${fields.enterpriseId.split('@')[0].toLowerCase().replace(/[^a-z0-9._'-]/g, '')}${project.domainIdSuffix ?? (fields.enterpriseId.includes('@') ? '@' + fields.enterpriseId.split('@')[1] : '')}`
@@ -121,6 +138,15 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
         });
         setEtag(request.etag);
         setReason(v.flow?.lastReason ?? null);
+        if (v.bundleId) {
+          api.listRequests(project.projectId)
+            .then((list) => {
+              const others = returnedSiblings(list.items, v);
+              setSiblings(others);
+              setInclude(others.map((x) => x.requestId));
+            })
+            .catch(() => setSiblings([]));
+        }
       })
       .catch(setError)
       .finally(() => setLoading(false));
@@ -165,7 +191,28 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
       const view = requestId && etag
         ? await api.resubmit(project.projectId, requestId, body, etag)
         : await api.submit(project.projectId, body);
-      navigate({ page: 'request', requestId: view.request.value.id });
+      const others = siblings.filter((x) => include.includes(x.requestId));
+      if (others.length === 0) {
+        navigate({ page: 'request', requestId: view.request.value.id });
+        return;
+      }
+      // The same correction for the other returned requests of the submission; each keeps its own resource and level.
+      const failed: { label: string; why: string }[] = [];
+      for (const other of others) {
+        const label = `${other.resource ?? other.requestId} · ${other.accessLevel ?? '—'}`;
+        try {
+          const { request } = await api.getRequest(project.projectId, other.requestId);
+          await api.resubmit(project.projectId, other.requestId, correctionFor(request.value, body), request.etag);
+        } catch (e) {
+          failed.push({ label, why: e instanceof Error ? e.message : 'not resubmitted' });
+        }
+      }
+      if (failed.length === 0) {
+        navigate({ page: 'requests' });
+        return;
+      }
+      setEtag(null);
+      setPartial({ done: 1 + others.length - failed.length, failed });
     } catch (e) {
       if (e instanceof ApiError && e.status === 412) setStale(true);
       else if (e instanceof ApiError && e.code === 'incomplete_request') setMissing(e.details ?? []);
@@ -231,6 +278,15 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
         </MessageBar>
       )}
       <ErrorBar error={error} />
+      {partial && (
+        <MessageBar intent="warning" role="alert" layout="multiline">
+          <MessageBarBody>
+            <MessageBarTitle>{`${partial.done} of ${partial.done + partial.failed.length} requests resubmitted`}</MessageBarTitle>
+            {`Not resubmitted: ${partial.failed.map((x) => `${x.label} (${x.why})`).join('; ')}. Open each from the requests list to fix it.`}
+            <div><Button size="small" onClick={() => navigate({ page: 'requests' })}>Go to requests</Button></div>
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
       <div className={f.layout}>
         <form
@@ -360,7 +416,8 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
               </MessageBar>
             )}
             {!isNew && (
-            <Field label="Resource" required hint="From the PMO mapping sheet of this tenant.">
+            <Field label="Resource" required
+              hint="From the PMO mapping sheet of this tenant. One request is one group: to ask for more resources (or All), start a new request.">
               <Select value={fields.resource} disabled={resources.length === 0 || (environments.length > 0 && !fields.environment)}
                 onChange={(_, d) => setFields((x) => ({ ...x, resource: d.value, accessLevel: '' }))}>
                 <option value="">{environments.length > 0 && !fields.environment ? 'Choose the environment first' : 'Choose…'}</option>
@@ -399,7 +456,34 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             <Caption1 className={s.muted} aria-live="polite">
               {length} / 2000 characters. Higher access needs a longer reason: the AI review checks the length against the access level.
             </Caption1>
+            {privilegedRows.length > 0 && (
+              <MessageBar intent={missingTasks(fields.justification) ? 'warning' : 'info'} layout="multiline">
+                <MessageBarBody>
+                  <MessageBarTitle>Privileged group</MessageBarTitle>
+                  {`${[...new Set(privilegedRows.map((r) => r.accessLevel))].join(', ')} is flagged Privileged on the mapping sheet. `}
+                  {missingTasks(fields.justification)
+                    ? 'Name the tasks that need it in the justification (e.g. build or run pipelines, ingest or transform data, deploy, support), or the AI review returns the request.'
+                    : 'The justification names the tasks; approvers see the Privileged flag.'}
+                </MessageBarBody>
+              </MessageBar>
+            )}
           </FormSection>
+
+          {siblings.length > 0 && (
+            <section className={`${s.section} ${f.card}`} aria-labelledby="bundle-h">
+              <Subtitle2 as="h2" id="bundle-h">Fix the whole submission</Subtitle2>
+              <Caption1>
+                {`This request was submitted together with ${siblings.length} other request${siblings.length === 1 ? '' : 's'} (one per group) that the AI review also returned. `}
+                Resubmit them with the same joiner details, justification and Owner; each keeps its own resource and access level. Untick any you want to fix on its own.
+              </Caption1>
+              <fieldset role="group" aria-label="Other returned requests" style={{ border: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {siblings.map((x) => (
+                  <Checkbox key={x.requestId} label={`${x.resource ?? x.requestId} · ${x.accessLevel ?? '—'}`} checked={include.includes(x.requestId)}
+                    onChange={(_, d) => setInclude((cur) => d.checked === true ? [...cur, x.requestId] : cur.filter((y) => y !== x.requestId))} />
+                ))}
+              </fieldset>
+            </section>
+          )}
 
           <FormSection n={4} id="owner-h" title="Who decides the business need" done={readiness[3].ok}>
             <Field label="Owner (sign-in name)" required hint="Only this person’s decision counts at the Owner stage. Security decides next." validationMessage={ownerError}>
@@ -408,8 +492,8 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
           </FormSection>
 
           <div className={f.submitBar}>
-            <Button appearance="primary" size="large" type="submit" icon={<Send20Regular />} disabled={saving || invalid || stale}>
-              {saving ? 'Submitting…' : requestId ? 'Resubmit request' : 'Submit request'}
+            <Button appearance="primary" size="large" type="submit" icon={<Send20Regular />} disabled={saving || invalid || stale || partial !== null}>
+              {saving ? 'Submitting…' : requestId ? (include.length > 0 ? `Resubmit ${1 + include.length} requests` : 'Resubmit request') : 'Submit request'}
             </Button>
             <Button size="large" onClick={() => navigate(requestId ? { page: 'request', requestId } : { page: 'requests' })}>Cancel</Button>
             <Caption1 className={s.muted}>{ready} of {readiness.length} parts ready{isNew && ticked.length > 1 ? ` · ${ticked.length} requests will be created` : ''}</Caption1>
@@ -441,7 +525,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
               groups={summaryGroups}
               owner={fields.owner.trim()}
               items={readiness}
-              count={isNew ? ticked.length : 1}
+              count={isNew ? ticked.length : 1 + include.length}
             />
           </div>
         </aside>

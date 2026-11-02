@@ -22,7 +22,8 @@ public sealed record StatusLine(
     string? DomainId,
     string? Resource,
     string? AccessLevel,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string? BundleId = null);
 
 public sealed record DurationItem(string Name, long Seconds, string Text);
 
@@ -62,11 +63,11 @@ public static class Reports
         if (flow is null)
             // v1 documents carry only the platform user id: never show it.
             return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? "—", RequestStatus.Completed, "Legacy (v1)", WaitingOn.None, "—", [], "—", 0, "—", null,
-                r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt);
+                r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId);
         var inStage = flow.IsOpen || flow.Status == RequestStatus.Returned ? now - flow.StageSince : TimeSpan.Zero;
         return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? r.CreatedBy, flow.Status, StatusText.Label(flow.Status), flow.WaitingOn,
             StatusText.Label(flow.WaitingOn), Done(flow), Next(flow), (long)inStage.TotalSeconds, Span(inStage), flow.Ado?.Url,
-            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt);
+            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId);
     }
 
     private static IReadOnlyList<string> Done(WorkflowState f)

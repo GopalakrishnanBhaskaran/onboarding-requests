@@ -19,6 +19,11 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - No Azure leftover: the worker could list the subscription's role assignments; the account had no direct Azure role.
   - The test account is still enabled until tomorrow's re-run, unless Gokul disabled it by hand.
 - **New on 2 Nov (code only, not deployed; branch `claude/portal-ux-redesign`):**
+  - **Returned "Admin-level" for Data Engineer, fixed** (Gokul's live test, 2 Nov: Data Engineer on PEST ph returned with "Admin-level access is requested …").
+    - Cause: rows whose roles include Contributor are flagged Privileged on import, and the review ranked every Privileged row as admin.
+    - Now: an admin level (Admin, Owner …) still needs an administrative task. A job-role level on a Privileged row (Data Engineer …) needs the tasks that use the access (build or run pipelines, ingest, transform, deploy, support …). The reason names the row and its roles; the form warns before submit.
+  - **Returned submission fixed in one go:** a request from an "All"/several-resources submission lists the other returned requests of that submission on the resubmit page. One correction resubmits them all (ticked by default); each keeps its own resource and level. One request is one group: more resources = a new request (said on the form).
+  - **Form race fixed:** ticking resources quickly could show the groups of an earlier selection (a slower resolve answer overwrote the latest). Only the latest answer counts now.
   - **Databricks A3–A5 automated** (Gokul: "make A3, A4 and A5 automated … decisions on the entitlements according to the name of the group … tests part of automation … log it"). Policy `config/databricks-access.json`:
     - every level: Workspace access; readers: + Databricks SQL access;
     - Unity Catalog: reader `USE_CATALOG`, `USE_SCHEMA`, `SELECT`; writer + `MODIFY`; engineer + `CREATE_TABLE`;

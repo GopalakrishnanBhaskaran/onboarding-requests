@@ -195,6 +195,7 @@ export interface AccessRequest extends IntakeFields {
   updatedAt: string;
   revision: number;
   flow: WorkflowState | null;
+  bundleId?: string | null;
 }
 
 export interface StatusLine {
@@ -214,6 +215,8 @@ export interface StatusLine {
   resource: string | null;
   accessLevel: string | null;
   updatedAt: string;
+  /** Requests submitted together (one per group, F1) share this id. */
+  bundleId?: string | null;
 }
 
 export interface DurationItem {

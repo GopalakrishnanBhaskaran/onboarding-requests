@@ -139,6 +139,41 @@ public class ReviewChecksTests
     }
 
     [Fact]
+    public async Task A_job_role_level_on_a_privileged_row_is_never_called_admin_and_passes_with_its_tasks()
+    {
+        // 2 Nov 2026: Data Engineer rows are flagged Privileged (their roles include Contributor). The old rule asked for an
+        // administrative task and said "Admin-level access is requested"; it now asks for the tasks, admin or build/run work.
+        var bare = await Review(s => s with
+        {
+            DomainId = "sample.e4001@sample.invalid", Resource = "SAMPLE Sales Lakehouse", AccessLevel = "Write",
+            Justification = "SAMPLE: Data Engineer on SAMPLE Sales Lakehouse, Sales domain (Dev), for the new team member, from 1 Nov.",
+        });
+        var c = bare.Check(CheckCodes.ReqLevelJustified);
+        Assert.Equal(CheckStatus.Fail, c.Status);
+        Assert.DoesNotContain("Admin-level", c.Detail);
+        Assert.Contains("flagged Privileged", c.Detail);
+        Assert.Contains("Storage Blob Data Contributor", c.Detail);
+
+        var tasks = await Review(s => s with
+        {
+            DomainId = "sample.e4001@sample.invalid", Resource = "SAMPLE Sales Lakehouse", AccessLevel = "Write",
+            Justification = "SAMPLE: joins the sales data team to build and run ingestion pipelines into the lakehouse, from 1 Nov.",
+        });
+        Assert.Equal(CheckStatus.Pass, tasks.Check(CheckCodes.ReqLevelJustified).Status);
+    }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("to build and transform the curated tables", true)]
+    [InlineData("to support the platform on call", false)]
+    public void An_admin_level_still_needs_an_administrative_task(string why, bool fails)
+    {
+        var issue = ReviewChecks.LevelNotJustified(3, $"SAMPLE: needed on the platform for the team {why}.");
+        Assert.Equal(fails, issue is not null);
+        if (fails) Assert.StartsWith("Admin-level access is requested", issue);
+    }
+
+    [Fact]
     public async Task Write_level_with_read_only_work_is_higher_than_justified()
     {
         var o = await Review(s => s with { Justification = "SAMPLE: needs to view the engineering dashboards and read monthly reports for audit." });

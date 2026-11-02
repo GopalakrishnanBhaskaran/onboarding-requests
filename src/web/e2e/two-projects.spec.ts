@@ -449,3 +449,48 @@ test('tracker and inbox: "/" search opens a request, the Owner lane filters, the
   await expect(olivia.page.getByRole('heading', { name: 'Your decision as the named Owner' })).toBeVisible();
   for (const u of [alice, olivia]) await u.ctx.close();
 });
+
+test('returned submission: a privileged job-role group asks for tasks, never "Admin-level"; one correction resubmits every returned request of it', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const page = alice.page;
+  const tag = enterpriseId('fixall');
+  await page.goto('/#/requests/new');
+  await page.getByRole('switch', { name: 'Choose several resources' }).check();
+  const group = page.getByRole('group', { name: 'Resources' });
+  for (const name of ['Engineering', 'Sales']) await group.getByRole('checkbox', { name, exact: true }).check();
+  const table = page.getByRole('table', { name: 'Resolved access' });
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-SALES-WRITE', exact: true }).check();
+  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await page.getByLabel('Enterprise ID').fill(tag);
+  await page.getByLabel('First name').fill('Sample');
+  await page.getByLabel('Last name').fill('Joiner');
+  // Row A-SALES-WRITE is flagged Privileged (Storage Blob Data Contributor): the form says the tasks are needed.
+  await page.getByRole('textbox', { name: 'Justification' })
+    .fill('SAMPLE: needs to view the sales dashboards and read the monthly reports of the lakehouse for the new team, from 1 Nov.');
+  await expect(page.getByText(/is flagged Privileged on the mapping sheet\. Name the tasks/)).toBeVisible();
+  await page.getByLabel('Owner (sign-in name)').fill('sample-user-olivia@sample.invalid');
+  await page.getByRole('button', { name: 'Submit request' }).click();
+  await expect(page).toHaveURL(/#\/requests$/);
+
+  const mine = async () => {
+    const res = await page.request.get('/api/projects/SAMPLE-ALPHA/requests');
+    const items = (await res.json()).items as { requestId: string; status: string; resource: string; domainId: string }[];
+    return items.filter((x) => x.domainId?.startsWith(tag.split('@')[0]));
+  };
+  await expect.poll(async () => (await mine()).map((x) => x.status).sort(), { timeout: 20_000 }).toEqual(['Returned', 'Returned']);
+  const sales = (await mine()).find((x) => x.resource === 'SAMPLE Sales Lakehouse')!;
+
+  await open(page, sales.requestId);
+  await expect(page.getByText(/is flagged Privileged \(role Storage Blob Data Contributor\)/).first()).toBeVisible();
+  await expect(page.getByText(/Admin-level access is requested/)).toHaveCount(0);
+  await page.getByRole('link', { name: 'Correct and resubmit' }).click();
+  await expect(page.getByRole('heading', { name: 'Fix the whole submission' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'SAMPLE Databricks Engineering · User' })).toBeChecked();
+  await page.getByRole('textbox', { name: 'Justification' })
+    .fill('SAMPLE: joins the sales data team to build and run ingestion pipelines into the lakehouse and the engineering workspace, from 1 Nov.');
+  await expect(page.getByText('The justification names the tasks; approvers see the Privileged flag.')).toBeVisible();
+  await page.getByRole('button', { name: 'Resubmit 2 requests' }).click();
+  await expect(page).toHaveURL(/#\/requests$/);
+  await expect.poll(async () => (await mine()).map((x) => x.status).sort(), { timeout: 20_000 }).toEqual(['AwaitingOwner', 'AwaitingOwner']);
+  await alice.ctx.close();
+});

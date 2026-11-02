@@ -218,7 +218,7 @@ public static partial class ReviewChecks
             : $"Justification has {length} characters; access level '{s.AccessLevel}' needs at least {min}, with the business reason.");
 
         // 3. Request vs mapping.
-        var levelIssue = LevelNotJustified(rank, s.Justification);
+        var levelIssue = LevelNotJustified(rank, s.Justification, AdminLevel(s.AccessLevel, policy) ? null : row);
         Add(CheckCodes.ReqLevelJustified, CheckGroups.RequestVsMapping, levelIssue is null ? CheckStatus.Pass : CheckStatus.Fail,
             levelIssue ?? $"Access level '{s.AccessLevel}' is consistent with the justification.");
 
@@ -350,18 +350,35 @@ public static partial class ReviewChecks
         return 2;
     }
 
+    /// <summary>The requested level itself names an administrative or owner level (Admin, Owner, Contributor …).</summary>
+    public static bool AdminLevel(string? accessLevel, ReviewPolicy policy) => HasWord(accessLevel, policy.PrivilegedWords);
+
     /// <summary>
     /// Rule-only consistency check between the access level and the justification (the AI model, when on, adds its own
-    /// view): admin access needs an administrative reason; write access must not describe read-only work.
+    /// view): an admin level needs an administrative reason; a job-role level on a row flagged Privileged (2 Nov 2026: e.g.
+    /// Data Engineer, whose Azure roles include Contributor) needs the tasks that use the access — administrative or
+    /// build/run work — and is never called admin; write access must not describe read-only work.
     /// </summary>
-    public static string? LevelNotJustified(int rank, string? justification)
+    /// <param name="privilegedRow">The matched row when rank 3 comes only from its Privileged flag (the level is a job role).</param>
+    public static string? LevelNotJustified(int rank, string? justification, MappingRow? privilegedRow = null)
     {
         var j = justification?.ToLowerInvariant() ?? "";
+        if (rank >= 3 && privilegedRow is { } row)
+            return AdminReason().IsMatch(j) || WriteWork().IsMatch(j)
+                ? null
+                : $"Row {row.RowId} ('{row.AccessLevel}') is flagged Privileged ({PrivilegedRoles(row)}), so the justification must name the tasks "
+                  + "that need this access (e.g. build or run pipelines, ingest or transform data, deploy, support). The access level itself is fine.";
         if (rank >= 3 && !AdminReason().IsMatch(j))
             return "Admin-level access is requested, but the justification gives no administrative task (e.g. manage, configure, deploy, support).";
         if (rank == 2 && ReadOnlyWork().IsMatch(j) && !WriteWork().IsMatch(j))
             return "The justification describes read-only work; request a read access level instead.";
         return null;
+    }
+
+    private static string PrivilegedRoles(MappingRow row)
+    {
+        var roles = row.Grants().Select(g => g.RoleName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).Take(4).ToList();
+        return roles.Count switch { 0 => $"role {row.Role}", 1 => $"role {roles[0]}", _ => $"roles {string.Join(", ", roles)}" };
     }
 
     private static readonly string[] WriteLevelWords = ["write", "edit", "contribute", "develop", "developer", "modify", "user", "use", "run"];
