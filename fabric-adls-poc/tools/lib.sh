@@ -11,6 +11,7 @@ EVIDENCE_DIR="$POC_DIR/evidence"                     # masked output, safe for g
 FABRIC_API="https://api.fabric.microsoft.com/v1"
 FABRIC_RESOURCE="https://api.fabric.microsoft.com"
 mkdir -p "$RAW_DIR" "$EVIDENCE_DIR"
+export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no   # never stop at "install extension? (Y/n)"
 
 log()  { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
