@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "updated": "2026-11-02T00:00:00Z",
+  "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
+  "runMode": "Remote Control on the owner's Mac (az CLI + headed Playwright; the owner signs in, Claude never types credentials)",
+  "env": {
+    "tenant": "UNVERIFIED",
+    "subscription": "UNVERIFIED",
+    "resourceGroup": "UNVERIFIED",
+    "storageAccount": "UNVERIFIED",
+    "container": "UNVERIFIED",
+    "testFolder": "UNVERIFIED",
+    "region": "UNVERIFIED",
+    "networkPrefix": "pvdbx-",
+    "fabricWorkspace": "UNVERIFIED",
+    "fabricWorkspaceId": "UNVERIFIED",
+    "fabricCapacity": "UNVERIFIED (minimum F2)",
+    "deviceIp": "UNVERIFIED (recorded masked only)"
+  },
+  "waves": {
+    "1": {"agents": ["A", "B"], "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule", "approvedBy": null, "approvedAt": null},
+    "2": {"agents": ["C", "D"], "scope": "Fabric managed PE (+ approval on storage) + VNet data gateway (subnet delegation, provider, gateway, connection)", "approvedBy": null, "approvedAt": null},
+    "3": {"agents": ["E"], "scope": "tests (shortcut, notebook, pipeline, other-IP block) + report", "approvedBy": null, "approvedAt": null}
+  },
+  "agents": {
+    "A": {"name": "storage network", "status": "pending"},
+    "B": {"name": "Fabric identity", "status": "pending"},
+    "C": {"name": "Fabric managed private endpoint", "status": "pending"},
+    "D": {"name": "VNet data gateway", "status": "pending"},
+    "E": {"name": "tests + report", "status": "pending"}
+  },
+  "locks": {
+    "storage-account": null,
+    "storage-network-rules": null,
+    "fabric-workspace": null,
+    "vnet": null,
+    "fabric-capacity": null
+  },
+  "decisions": [],
+  "handoff": []
+}
