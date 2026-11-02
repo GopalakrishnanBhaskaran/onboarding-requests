@@ -51,7 +51,12 @@ fi
 [ -n "$CAP" ] || die "--capacity <existing F capacity> or --create-capacity <name> --region <loc> is required"
 SKU="$(az resource list --resource-type Microsoft.Fabric/capacities --query "[?name=='$CAP'].sku.name | [0]" -o tsv)"
 case "$SKU" in F*) ok "capacity $CAP is an F SKU ($SKU)";; "") [ "$APPLY" = 1 ] && die "capacity $CAP not found";; *) die "capacity $CAP is $SKU, not an F SKU";; esac
-CAP_ID="$(fab /capacities 2>/dev/null | j "[c['id'] for c in d['value'] if c['displayName']=='$CAP'][0] if any(c['displayName']=='$CAP' for c in d['value']) else ''" || true)"
+cap_id() { fab /capacities 2>/dev/null | j "[c['id'] for c in d['value'] if c['displayName']=='$CAP'][0] if any(c['displayName']=='$CAP' for c in d['value']) else ''" || true; }
+CAP_ID="$(cap_id)"
+if [ "$APPLY" = 1 ] && [ -z "$CAP_ID" ]; then  # a new capacity can take a few minutes to appear in the Fabric API
+  for i in $(seq 1 20); do sleep 15; CAP_ID="$(cap_id)"; [ -n "$CAP_ID" ] && break; done
+  [ -n "$CAP_ID" ] || die "capacity $CAP is not visible in Fabric for you (are you its admin? see --capacity-admin)"
+fi
 
 # 2. workspace on that capacity
 WS_ID="$(fab /workspaces | j "[w['id'] for w in d['value'] if w['displayName']=='$WS'][0] if any(w['displayName']=='$WS' for w in d['value']) else ''")"

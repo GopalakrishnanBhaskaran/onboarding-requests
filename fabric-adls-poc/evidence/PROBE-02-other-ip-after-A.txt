@@ -1,0 +1,5 @@
+# Run by Claude from its cloud container (public IP NOT on the storage firewall), after Agent A apply (23:57Z). Anonymous requests.
+DNS stpvdbxfabb5731f.blob.core.windows.net -> blob.pnq22prdstr05a.store.core.windows.net via ['stpvdbxfabb5731f.blob.core.windows.net', 'stpvdbxfabb5731f.privatelink.blob.core.windows.net']
+DNS stpvdbxfabb5731f.dfs.core.windows.net -> dfs.pnq22prdstr05a.store.core.windows.net via ['stpvdbxfabb5731f.dfs.core.windows.net', 'stpvdbxfabb5731f.privatelink.dfs.core.windows.net']
+2026-11-02T23:58:32Z blob HTTP 403 AuthorizationFailure
+2026-11-02T23:58:34Z dfs HTTP 401 NoAuthenticationInformation

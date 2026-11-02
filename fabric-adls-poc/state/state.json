@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-02T23:50:55Z",
+  "updated": "2026-11-02T23:59:21Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -51,10 +51,11 @@
   "agents": {
     "A": {
       "name": "storage network",
-      "status": "running",
-      "at": "2026-11-02T23:50:55Z",
+      "status": "done",
+      "at": "2026-11-02T23:59:21Z",
       "notes": [
-        "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending"
+        "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending",
+        "2026-11-02T23:59:21Z applied 23:57Z: device IP rule, PEs blob+dfs Approved, privatelink.blob/dfs zones linked + A records; public DNS CNAME via privatelink; other-IP blob probe 403"
       ]
     },
     "B": {
@@ -100,6 +101,12 @@
       "from": "Owner",
       "to": "Claude",
       "text": "w1_build_env applied (5/5 done); A plan OK; apply retried after a missing-space typo"
+    },
+    {
+      "at": "2026-11-02T23:59:21Z",
+      "from": "A",
+      "to": "B",
+      "text": "storage network in place; next b_fabric_identity.sh (capacity fabpocf2, workspace ws-fabric-adls-poc)"
     }
   ]
 }
