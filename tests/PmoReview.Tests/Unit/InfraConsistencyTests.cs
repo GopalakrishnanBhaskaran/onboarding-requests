@@ -203,6 +203,11 @@ public partial class InfraConsistencyTests
         Assert.Contains("param agentOffboarding bool = false", bicep);
         Assert.Contains("{ name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }", bicep);
         Assert.Contains("param offboardDeleteUser bool = false", bicep);
+        // v1.2: the Databricks set-up exists only in the worker, only switched on, and is off in the template.
+        Assert.Contains("settings.Workflow.AgentDatabricks && roleWriter is not null", worker);
+        Assert.DoesNotContain("Databricks", Read("src", "api", "PmoReview.Api", "Program.cs"));
+        Assert.Contains("param agentDatabricks bool = false", bicep);
+        Assert.Contains("{ name: 'AGENT_DATABRICKS', value: agentDatabricks ? 'true' : 'false' }", bicep);
     }
 
     /// <summary>
@@ -217,7 +222,9 @@ public partial class InfraConsistencyTests
         var deploy = Read("tools", "deploy_free.sh");
         foreach (var (setting, param) in new[] { ("TAP_MAIL_SENDER", "tapMailSender"), ("MAIL_MAX_PER_MINUTE", "mailMaxPerMinute"),
                      ("MAIL_MAX_PER_HOUR", "mailMaxPerHour"), ("AGENT_OFFBOARDING", "agentOffboarding"), ("OFFBOARD_DELETE_USER", "offboardDeleteUser"),
-                     ("OFFBOARD_SUBSCRIPTIONS", "offboardSubscriptions"), ("AGENT_TAP", "agentTap"), ("AGENT_PROVISIONING", "agentProvisioning") })
+                     ("OFFBOARD_SUBSCRIPTIONS", "offboardSubscriptions"), ("AGENT_TAP", "agentTap"), ("AGENT_PROVISIONING", "agentProvisioning"),
+                     ("AGENT_DATABRICKS", "agentDatabricks"), ("DATABRICKS_ACCOUNT_ID", "databricksAccountId"), ("DATABRICKS_WORKSPACES", "databricksWorkspaces"),
+                     ("DATABRICKS_GRANT_CATALOGS", "databricksGrantCatalogs") })
         {
             Assert.Contains($"{{ name: '{setting}', value: {param}", worker);
             Assert.Contains($"\"{param}\": v(live.get(\"{setting}\"", deploy);

@@ -18,7 +18,20 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - Leftover "still in" that same group: most likely Entra's index lag (F104). Fixed in `7922922`.
   - No Azure leftover: the worker could list the subscription's role assignments; the account had no direct Azure role.
   - The test account is still enabled until tomorrow's re-run, unless Gokul disabled it by hand.
-- **New on 31 Oct (code only, not deployed):**
+- **New on 2 Nov (code only, not deployed; branch `claude/portal-ux-redesign`):**
+  - **Databricks A3–A5 automated** (Gokul: "make A3, A4 and A5 automated … decisions on the entitlements according to the name of the group … tests part of automation … log it"). Policy `config/databricks-access.json`:
+    - every level: Workspace access; readers: + Databricks SQL access;
+    - Unity Catalog: reader `USE_CATALOG`, `USE_SCHEMA`, `SELECT`; writer + `MODIFY`; engineer + `CREATE_TABLE`;
+    - admin/owner names, and names with no or two levels: people.
+  - **By hand now:** `aim_setup.sh apply … --grant <catalog>.<schema>` (A3 + A4 + A5 + 4 tests + `.local/databricks-setup.log`; self-test passes, 2 mutation checks).
+  - **Agent (off until approved):** `AGENT_DATABRICKS`; `deploy_free.sh databricks $SUB on --account-id … --workspace … --catalogs …` (dry run → "approved" → `--approved-by`), then `app` (the website follows the switch). Behaviour:
+    - acts at With Role Team for `dbx:` rows;
+    - tests live and logs to the trail, the checks and the audit log;
+    - the verification re-tests every role-team report;
+    - a `dbx:` row with Azure roles goes to people.
+  - **Databricks-side rights of the worker identity** (account admin, workspace admin, `USE CATALOG` + `MANAGE` per catalog) are printed by the dry run. They are F118 and ASSUMED until the first run.
+  - `verify_features` line 18 (WAIT until switched on).
+  - **Open (rule 1):** the pilot Databricks workspace `dbw-pmo-pkt2ofpqmlf3e` has no recorded approval or cost line.
   - **Website redesign** (SPA only; same API, same flow, same guardrails; ships with the next `app` deploy, no approval):
     - **Shell:** sidebar navigation with a live *waiting on you* count on My actions; avatar with your roles; slimmer permanent scope strip; compact header on phones.
     - **Requests tracker:** pipeline tiles per step (click to filter), *In progress / Needs attention / Completed / Closed* chips, search (`/` focuses, Enter opens a single match), a 7-step progress bar per row, *more than 24 h* waits highlighted, and a *waiting on you* callout.

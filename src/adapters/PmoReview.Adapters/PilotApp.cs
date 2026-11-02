@@ -108,6 +108,11 @@ public sealed record PilotSettings
                     Math.Clamp(int.TryParse(get("MAIL_MAX_PER_HOUR"), out var mph) ? mph : MailLimits.AzureManagedDomain.PerHour, 1, 1_000_000)),
                 // v1.1 (30 Oct 2026): every switch off by default.
                 AgentOffboarding = On("AGENT_OFFBOARDING"),
+                // v1.2 (2 Nov 2026): Databricks set-up of a request's group, off by default (deploy_free.sh databricks, approval-gated).
+                AgentDatabricks = On("AGENT_DATABRICKS"),
+                DatabricksAccountId = Guid.TryParse(get("DATABRICKS_ACCOUNT_ID"), out var dbxAcc) ? dbxAcc.ToString("D") : null,
+                DatabricksWorkspaces = List("DATABRICKS_WORKSPACES").Select(PmoReview.Core.Databricks.DatabricksWorkspace.Parse).OfType<PmoReview.Core.Databricks.DatabricksWorkspace>().ToList(),
+                DatabricksGrantCatalogs = List("DATABRICKS_GRANT_CATALOGS").Where(c => System.Text.RegularExpressions.Regex.IsMatch(c, "^[A-Za-z0-9_]{1,255}$")).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 OffboardDeleteUser = On("OFFBOARD_DELETE_USER"),
                 OffboardSubscriptions = List("OFFBOARD_SUBSCRIPTIONS").Where(x => Guid.TryParse(x, out _)).Select(x => Guid.Parse(x).ToString("D")).Distinct().ToList(),
                 TapMailSender = Mailbox(get("TAP_MAIL_SENDER"), "TAP_MAIL_SENDER"),
@@ -166,7 +171,8 @@ public static class PilotApp
 
     public static WorkflowParts BuildWorkflow(DataStores stores, PilotSettings settings, IClock clock, ILoggerFactory loggers,
         IReviewModel? model = null, IQueueClient? queue = null, IDirectoryReader? directory = null, IRoleAssignmentReader? roles = null,
-        IAiAssistant? assistant = null, IDirectoryWriter? writer = null, IRoleAssignmentWriter? roleWriter = null, IDirectMail? directMail = null)
+        IAiAssistant? assistant = null, IDirectoryWriter? writer = null, IRoleAssignmentWriter? roleWriter = null, IDirectMail? directMail = null,
+        PmoReview.Core.Databricks.IDatabricksAccess? databricksAccess = null)
     {
         var reviewer = model ?? ReviewModelFactory.Create(settings, logger: loggers.CreateLogger("AzureOpenAI"));
         var sources = new StoreSourcesOfTruth(stores);
@@ -181,9 +187,12 @@ public static class PilotApp
         var runs = new RunService(stores, dispatcher, reviewer.Info, clock, TimeSpan.FromMinutes(settings.StuckRunMinutes));
         var issues = new IssueLog(stores, clock, loggers.CreateLogger<IssueLog>());
         var notifier = new Notifier(stores, clock, loggers.CreateLogger<Notifier>(), issues, settings.Workflow.MailEnabled);
-        var verifier = new Verifier(directory, roles, settings.Workflow);
+        // v1.2: Databricks set-up and tests exist only with AGENT_DATABRICKS (the worker passes the access then).
+        var databricks = databricksAccess is null ? null : new PmoReview.Core.Databricks.DatabricksConfig(databricksAccess,
+            settings.Workflow.DatabricksWorkspaces, settings.Workflow.DatabricksGrantCatalogs, PmoReview.Core.Databricks.DatabricksPolicy.Default);
+        var verifier = new Verifier(directory, roles, settings.Workflow, databricks);
         var agent = new WorkflowAgent(stores, sources, runs, notifier, issues, verifier, settings.Workflow, policy, clock,
-            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail);
+            loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail, databricks);
         var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
         var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);

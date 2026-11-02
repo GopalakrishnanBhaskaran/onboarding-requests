@@ -41,7 +41,7 @@ public sealed record Verification(IReadOnlyList<CheckResult> Checks)
 /// AI verification of what the teams did (Stages 4–6). Reads only: the report, the sources of truth and, when available,
 /// Entra and role assignments. It never fixes anything itself; a mismatch goes back to the team with the exact difference.
 /// </summary>
-public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader? roles, WorkflowSettings settings)
+public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader? roles, WorkflowSettings settings, Databricks.DatabricksConfig? databricks = null)
 {
     public bool CanReadEntra => directory is not null;
 
@@ -182,6 +182,26 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
 
         checks.Add(Exact(VerifyCodes.RoleExact, "Reported and recorded", expected, record.AssignedRoles.Concat(report.AssignedRoles).Distinct(RoleComparer.Instance).ToList()));
 
+        // v1.2: a Databricks row is tested live in Databricks (whoever set it up). Only the worker can read Databricks: with the
+        // set-up switched on, the website's own step leaves the tests pending for it, so nothing completes untested.
+        if (Databricks.DatabricksPolicy.ParseTarget(scope.RoleScope) is { } target && notConnected is null)
+        {
+            if (databricks is not null && databricks.Workspace(target.Workspace) is { } ws)
+            {
+                var decision = databricks.Policy.Decide(scope.EntraGroup);
+                checks.AddRange(decision.ByAgent
+                    ? await Databricks.DatabricksChecks.RunAsync(databricks.Access, ws, scope.EntraGroup, target, decision, ct)
+                    : [new CheckResult(Databricks.DatabricksChecks.Workspace, G, CheckStatus.NotApplicable, $"Not tested in Databricks: {decision.Why}.")]);
+                return new Verification(checks);
+            }
+            if (databricks is null && settings.AgentDatabricks && !settings.AllowUnverifiedEntra)
+            {
+                checks.Add(new CheckResult(Databricks.DatabricksChecks.Workspace, G, CheckStatus.Pending,
+                    "Tested live in Databricks by the background agent within a few minutes."));
+                return new Verification(checks);
+            }
+        }
+
         if (roles is null || directory is null || notConnected is not null)
         {
             checks.Add(new CheckResult(VerifyCodes.RoleInAzure, G, CheckStatus.NotApplicable, notConnected is not null
@@ -248,7 +268,8 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
         var member = groups.Count == 1 && await directory.IsMemberAsync(groups[0].ObjectId, user.ObjectId, ct);
         var access = member ? CheckStatus.Pass : CheckStatus.Fail;
         var detail = member ? $"{r.DomainId} is a member of {scope.EntraGroup}" : $"{r.DomainId} is not a member of {scope.EntraGroup}";
-        if (member && roles is not null)
+        // A Databricks row has no Azure role to compare: its Databricks access is tested live at the role step (DBX_* checks).
+        if (member && roles is not null && !Databricks.DatabricksPolicy.IsDatabricksScope(scope.RoleScope))
         {
             var expected = WorkflowAgent.ExpectedRoles(scope);
             var actual = await AssignedAsync(groups[0].ObjectId, expected, ct);

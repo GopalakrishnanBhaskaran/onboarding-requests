@@ -291,6 +291,22 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
                       f"delete accounts {'on (soft delete, 30 days)' if delete_on else 'off'}; no Azure right (by design)",
                       "tools/deploy_free.sh offboarding <sub> on … --approved-by, or offboarding <sub> off" if broken
                       else "" if worker_on else "tools/deploy_free.sh offboarding <sub> on (dry run → approval)"))
+
+    # 18. v1.2 (Gokul, 2 Nov 2026): the agent sets up a Databricks row's group (A3-A5) after both approvals and tests it.
+    # Worker and website switched on together, the role step on, the account, workspaces and catalogs named. The
+    # Databricks-side rights of the worker's identity are not visible from here: the first run proves them (F118).
+    dbx_on, dbx_swa = on("AGENT_DATABRICKS"), str(swa.get("AGENT_DATABRICKS", "")).lower() == "true"
+    dbx_ws = [w for w in (s.get("DATABRICKS_WORKSPACES") or "").split(",") if re.match(r"^[^=]+=(https://)?adb-\d+\.\d+\.azuredatabricks\.net/?$", w.strip())]
+    dbx_cat = [c for c in (s.get("DATABRICKS_GRANT_CATALOGS") or "").split(",") if re.match(r"^[A-Za-z0-9_]+$", c.strip())]
+    dbx_acc = bool(re.match(r"^[0-9a-fA-F-]{36}$", s.get("DATABRICKS_ACCOUNT_ID") or ""))
+    dbx_bad = (dbx_on or dbx_swa) and (dbx_on != dbx_swa or not on("AGENT_ROLE_ASSIGNMENT") or not dbx_acc or not dbx_ws or not dbx_cat)
+    out.append(Result("18. Agent sets up a request's group in Databricks (account, workspace, entitlements, Unity Catalog) and tests it",
+                      FAIL if dbx_bad else PASS if dbx_on else WAIT,
+                      f"worker AGENT_DATABRICKS={'true' if dbx_on else 'false'}, website {'true' if dbx_swa else 'false'}; "
+                      f"role step {'on' if on('AGENT_ROLE_ASSIGNMENT') else 'off'}; account {'set' if dbx_acc else 'not set'}; "
+                      f"workspaces {[w.split('=')[0] for w in dbx_ws] or 'none'}; catalogs {dbx_cat or 'none'}",
+                      "tools/deploy_free.sh databricks <sub> on --account-id … --workspace … --catalogs … --approved-by, or databricks <sub> off"
+                      if dbx_bad else "" if dbx_on else "tools/deploy_free.sh databricks <sub> on --account-id … --workspace … --catalogs … (dry run → approval)"))
     return out
 
 
@@ -395,6 +411,19 @@ def self_test() -> None:
     delete_alone = json.loads(json.dumps(delete_on))
     delete_alone["worker_settings"]["AGENT_OFFBOARDING"] = "false"; delete_alone["swa_settings"]["AGENT_OFFBOARDING"] = "false"
     assert l17(delete_alone).status == FAIL, l17(delete_alone)
+    # v1.2: the agent's Databricks set-up: off WAIT, on and complete PASS, half switched or incomplete FAIL.
+    l18 = lambda c: next(r for r in evaluate(c, projects, rows, requests, notes, []) if r.feature.startswith("18."))
+    assert l18(ctx).status == WAIT and "databricks <sub> on" in l18(ctx).next, l18(ctx)
+    dbx = json.loads(json.dumps(ctx))
+    dbx["worker_settings"].update({"AGENT_DATABRICKS": "true", "DATABRICKS_ACCOUNT_ID": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+                                   "DATABRICKS_WORKSPACES": "dbw-pmo=https://adb-7405607339118600.0.azuredatabricks.net", "DATABRICKS_GRANT_CATALOGS": "sample_e2e"})
+    dbx["swa_settings"]["AGENT_DATABRICKS"] = "true"
+    assert l18(dbx).status == PASS and "dbw-pmo" in l18(dbx).detail, l18(dbx)
+    for broken in ({"swa_settings": {**dbx["swa_settings"], "AGENT_DATABRICKS": "false"}},
+                   {"worker_settings": {**dbx["worker_settings"], "DATABRICKS_GRANT_CATALOGS": ""}},
+                   {"worker_settings": {**dbx["worker_settings"], "DATABRICKS_WORKSPACES": "evil=https://example.com"}},
+                   {"worker_settings": {**dbx["worker_settings"], "AGENT_ROLE_ASSIGNMENT": "false"}}):
+        assert l18({**dbx, **broken}).status == FAIL, (broken, l18({**dbx, **broken}))
     # v1.1 F2: AGENT_TAP on but no TAP sender mailbox (or Graph Mail.Send in Entra) = no pass mailed: WAIT, naming option 2.
     for change in ({"TAP_MAIL_SENDER": ""}, {"TAP_MAIL_SENDER": "not-a-mailbox"}):
         nosender = json.loads(json.dumps(ctx)); nosender["worker_settings"].update(change)
@@ -404,13 +433,14 @@ def self_test() -> None:
     got5b = next(r for r in evaluate(entra, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
     assert got5b.status == WAIT and "F81" in got5b.detail, got5b.detail
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
-    assert all(r.status == PASS for r in res if not r.feature.startswith("15.")), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
+    # (Line 18, the agent's Databricks set-up, is off by default: WAIT until it is approved, tested below.)
+    assert all(r.status == PASS for r in res if not r.feature.startswith(("15.", "18."))), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
     go = next(r for r in res if r.feature.startswith("15."))
     assert go.status == WAIT and "environment <sub> prod" in go.next, (go.detail, go.next)
     prod = json.loads(json.dumps(ctx))
     for k in ("worker_settings", "swa_settings"):
         prod[k].update({"APP_ENVIRONMENT": "prod", "NOTIFY_REDIRECT_TO": ""})
-    assert all(r.status == PASS for r in evaluate(prod, projects, rows, requests, notes, [])), \
+    assert all(r.status == PASS for r in evaluate(prod, projects, rows, requests, notes, []) if not r.feature.startswith("18.")), \
         [(r.feature, r.status, r.detail) for r in evaluate(prod, projects, rows, requests, notes, []) if r.status != PASS]
     # A team list left empty, a failed mail and an hour of backlog are named.
     empty = [dict(projects[0], contacts={"security": ["sec@company.example"]}), projects[1]]

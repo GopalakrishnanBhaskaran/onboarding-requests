@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PmoReview.Adapters;
+using PmoReview.Adapters.Databricks;
 using PmoReview.Adapters.Entra;
 using PmoReview.Adapters.Outbound;
 using PmoReview.Adapters.Rbac;
@@ -18,7 +19,8 @@ using PmoReview.Core.Workflow;
 // (CLAUDE.md rule 11). Managed identity only. The agent never approves. Entra and Azure RBAC are read only unless the
 // approved v2.1 provisioning is switched on (AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT): then, only after the Owner and
 // Security approvals, it creates the user, group and membership and assigns allow-listed Azure roles. With the approved
-// AGENT_TAP (and a mail sender) it also mails a new account's one-time TAP and initial password to the joiner, once.
+// AGENT_TAP (and a mail sender) it also mails a new account's one-time TAP and initial password to the joiner, once. With the
+// approved AGENT_DATABRICKS it sets up a Databricks row's group (account, workspace, entitlements, Unity Catalog) and tests it.
 string? Env(string name) => Environment.GetEnvironmentVariable(name);
 bool On(string name) => string.Equals(Env(name), "true", StringComparison.OrdinalIgnoreCase);
 if (!On("ALLOW_PAID_SERVICES"))
@@ -68,8 +70,14 @@ var host = new HostBuilder()
             IDirectMail? directMail = settings.Workflow.AgentTap && writer is not null && settings.Workflow.TapMailSender is { } tapSender
                 ? new DirectMail(new GraphMailSender(Http(), credential, tapSender))
                 : null;
+            // v1.2 (AGENT_DATABRICKS, approval-gated: deploy_free.sh databricks): the Databricks set-up of a request's group, after
+            // both approvals, with the worker's managed identity as a Databricks service principal. Needs the role assignment step on.
+            var databricks = settings.Workflow.AgentDatabricks && roleWriter is not null && settings.Workflow.DatabricksAccountId is { } dbxAccount
+                ? new DatabricksAccessClient(Http(), credential, dbxAccount)
+                : null;
             return PilotApp.BuildWorkflow(sp.GetRequiredService<DataStores>(), settings, sp.GetRequiredService<IClock>(), loggers,
-                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter, directMail: directMail);
+                directory: sp.GetRequiredService<IDirectoryReader>(), roles: roles, assistant: assistant, writer: writer, roleWriter: roleWriter, directMail: directMail,
+                databricksAccess: databricks);
         });
         services.AddSingleton(sp =>
         {

@@ -31,7 +31,8 @@ public sealed partial class WorkflowAgent(
     IAiAssistant? assistant = null,
     IDirectoryWriter? writer = null,
     IRoleAssignmentWriter? roleWriter = null,
-    IDirectMail? directMail = null)
+    IDirectMail? directMail = null,
+    Databricks.DatabricksConfig? databricks = null)
 {
     private const string Agent = WorkflowState.AgentActor;
     private const int MaxStepsPerCall = 8;

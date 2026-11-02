@@ -86,6 +86,18 @@ param offboardDeleteUser bool = false
 @description('v1.1 F5: comma-separated subscription ids whose Azure role assignments offboarding removes (empty = every subscription the worker can list).')
 param offboardSubscriptions string = ''
 
+@description('v1.2 (2 Nov 2026): the worker sets up a request\'s group in Databricks (A3-A5) after both approvals. Off until approved: deploy_free.sh databricks.')
+param agentDatabricks bool = false
+
+@description('v1.2: the Databricks account id the agent works in (DATABRICKS_ACCOUNT_ID).')
+param databricksAccountId string = ''
+
+@description('v1.2: workspaces the agent may set up, comma-separated name=https://adb-<id>.<n>.azuredatabricks.net (DATABRICKS_WORKSPACES).')
+param databricksWorkspaces string = ''
+
+@description('v1.2: Unity Catalog catalogs the agent may grant on, comma-separated (DATABRICKS_GRANT_CATALOGS). Empty = none.')
+param databricksGrantCatalogs string = ''
+
 @description('v1.1 F2: the agent TAP mail sender mailbox (TAP_MAIL_SENDER). Kept here so a redeploy never drops it: the settings below replace all of the worker\'s app settings.')
 param tapMailSender string = ''
 
@@ -213,6 +225,10 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
         { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
         { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }
+        { name: 'AGENT_DATABRICKS', value: agentDatabricks ? 'true' : 'false' }
+        { name: 'DATABRICKS_ACCOUNT_ID', value: databricksAccountId }
+        { name: 'DATABRICKS_WORKSPACES', value: databricksWorkspaces }
+        { name: 'DATABRICKS_GRANT_CATALOGS', value: databricksGrantCatalogs }
         { name: 'TAP_MAIL_SENDER', value: tapMailSender }
         { name: 'MAIL_MAX_PER_MINUTE', value: mailMaxPerMinute }
         { name: 'MAIL_MAX_PER_HOUR', value: mailMaxPerHour }

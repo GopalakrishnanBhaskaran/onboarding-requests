@@ -107,6 +107,18 @@ param offboardDeleteUser bool = false
 @description('v1.1 F5: comma-separated subscription ids in scope for offboarding (empty = every subscription the worker can list).')
 param offboardSubscriptions string = ''
 
+@description('v1.2 (2 Nov 2026): the worker sets up a request\'s group in Databricks (A3-A5) after both approvals. Off until approved: deploy_free.sh databricks.')
+param agentDatabricks bool = false
+
+@description('v1.2: the Databricks account id the agent works in (DATABRICKS_ACCOUNT_ID).')
+param databricksAccountId string = ''
+
+@description('v1.2: workspaces the agent may set up, comma-separated name=https://adb-<id>.<n>.azuredatabricks.net (DATABRICKS_WORKSPACES).')
+param databricksWorkspaces string = ''
+
+@description('v1.2: Unity Catalog catalogs the agent may grant on, comma-separated (DATABRICKS_GRANT_CATALOGS). Empty = none.')
+param databricksGrantCatalogs string = ''
+
 @description('v1.1 F2: the one shared mailbox the agent TAP mail is sent from (tools/deploy_free.sh tap … --sender). Empty = not configured (the ID team issues passes).')
 param tapMailSender string = ''
 
@@ -172,6 +184,10 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     agentOffboarding: agentOffboarding
     offboardDeleteUser: offboardDeleteUser
     offboardSubscriptions: offboardSubscriptions
+    agentDatabricks: agentDatabricks
+    databricksAccountId: databricksAccountId
+    databricksWorkspaces: databricksWorkspaces
+    databricksGrantCatalogs: databricksGrantCatalogs
     tapMailSender: tapMailSender
     mailMaxPerMinute: mailMaxPerMinute
     mailMaxPerHour: mailMaxPerHour

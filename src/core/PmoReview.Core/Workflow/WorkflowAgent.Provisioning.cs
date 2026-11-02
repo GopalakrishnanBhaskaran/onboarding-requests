@@ -89,6 +89,8 @@ public sealed partial class WorkflowAgent
         if (task.PickedUpAt is not null || task.Agent is not { Completed: false, Manual: { } m }) return null;
         if (settings.AgentPrivileged && (m.EndsWith(PrivilegedLeft, StringComparison.Ordinal) || m.EndsWith(" is privileged access", StringComparison.Ordinal)))
             return "privileged rows are now done by the AI agent";
+        if (task.Team == AppRole.RoleTeam && databricks is not null && m == DatabricksOff)
+            return "the agent's Databricks set-up is now on";
         if (task.Team == AppRole.RoleTeam && m.Contains(NotAllowListed, StringComparison.Ordinal) && scope?.Grants() is { Count: > 0 } grants
             && grants.All(g => g.RoleId is not null && g.Scope is not null && AllowListed(g)))
             return "every approved Azure role is now on the agent's allow-list";
@@ -473,11 +475,16 @@ public sealed partial class WorkflowAgent
         // Exactly the Azure roles the Owner and Security saw: taken from the approved scope, never from the live row.
         var grants = scope.Grants();
 
+        // v1.2: a Databricks row (role scope dbx:…) is set up by the agent only with AGENT_DATABRICKS; it never carries Azure roles
+        // too (one row per plane), so a request is never completed with only half of its access in place.
+        var databricksRow = Databricks.DatabricksPolicy.IsDatabricksScope(scope.RoleScope);
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
             : Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (row is null ? $"mapping row {scope.MappingRowId} not found"
             : PrivilegedReason(row, scope)
-            ?? (grants.Count == 0 ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)" : null));
+            ?? (databricksRow && grants.Count > 0 ? DatabricksMixed
+            : databricksRow && databricks is null ? DatabricksOff
+            : grants.Count == 0 && !databricksRow ? "the approved access has no Azure role and scope for the agent (e.g. a Databricks role)" : null));
         var severity = manual?.Contains("not assigned", StringComparison.Ordinal) == true ? IssueSeverity.High : IssueSeverity.Info;
         if (manual is null)
         {
@@ -498,6 +505,7 @@ public sealed partial class WorkflowAgent
             }
         }
         if (manual is not null) return ToRoleTeam(r, task, work with { Manual = manual }, project, now, severity);
+        if (databricksRow) return await DatabricksSetupAsync(r, task, scope, work, project, now, ct);
 
         try
         {

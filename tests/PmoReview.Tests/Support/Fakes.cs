@@ -56,6 +56,9 @@ public sealed class FakeDirectory : IDirectoryReader
 
     public string GroupId(string name) => _groups[name][0].ObjectId;
 
+    /// <summary>The display name of a group object id (the Databricks fake learns account group names from it).</summary>
+    public string? GroupName(string objectId) => _groups.Values.SelectMany(g => g).FirstOrDefault(g => g.ObjectId == objectId)?.DisplayName;
+
     public void AddMember(string group, string upn) =>
         _members.AddOrUpdate(group, [upn], (_, set) => { set.Add(upn); return set; });
 
@@ -424,5 +427,98 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
             throw new DirectoryWriteException("GraphUnavailable");
         }
         Calls.Add(call);
+    }
+}
+
+/// <summary>
+/// v1.2 Databricks stand-in: an account (Entra groups added on first read, as automatic identity management does), one or
+/// more workspaces with group assignments and entitlements, and Unity Catalog privileges per securable (inherited from the
+/// catalog to its schemas, as the effective-permissions read returns them).
+/// </summary>
+public sealed class FakeDatabricks : PmoReview.Core.Databricks.IDatabricksAccess
+{
+    private readonly ConcurrentDictionary<string, long> account = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(long Ws, string Group), List<string>> assigned = new();
+    private readonly ConcurrentDictionary<(long Ws, string Group), List<string>> entitlements = new();
+    private readonly ConcurrentDictionary<(long Ws, string Securable, string Group), List<string>> grants = new();
+    private readonly ConcurrentDictionary<long, string> names = new();
+    private long next = 7000;
+
+    public List<string> Calls { get; } = [];
+    /// <summary>Every write fails with this category (e.g. "DatabricksForbidden").</summary>
+    public string? FailWith { get; set; }
+    /// <summary>Grants are accepted but not applied: the read-back test must catch it.</summary>
+    public bool DropGrants { get; set; }
+
+    /// <summary>Entra group display name by object id (automatic identity management reads it from Entra).</summary>
+    public Func<string, string?> EntraName { get; set; } = _ => null;
+
+    public Task<long> AddGroupToAccountAsync(string entraGroupObjectId, CancellationToken ct)
+    {
+        Calls.Add($"account {EntraName(entraGroupObjectId) ?? entraGroupObjectId}");
+        var id = account.GetOrAdd(entraGroupObjectId, _ => Interlocked.Increment(ref next));
+        if (EntraName(entraGroupObjectId) is { } name) names[id] = name;
+        return Task.FromResult(id);
+    }
+
+    /// <summary>The Databricks group name of an account id (the fake learns it when the group is assigned).</summary>
+    public void Name(long principalId, string group) => names[principalId] = group;
+
+    public Task<IReadOnlyList<string>> WorkspacePermissionsAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, string groupName, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<string>>(assigned.TryGetValue((ws.Id, groupName.ToLowerInvariant()), out var p) ? p.ToList() : []);
+
+    public Task AssignUserAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, long principalId, CancellationToken ct)
+    {
+        Fail();
+        var group = names.TryGetValue(principalId, out var n) ? n : throw new DirectoryWriteException("DatabricksNotFound");
+        Calls.Add($"assign {ws.Name} {group} USER");
+        Assign(ws, group, "USER");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Test set-up: the group is in the workspace with these permissions (e.g. done by a person).</summary>
+    public void Assign(PmoReview.Core.Databricks.DatabricksWorkspace ws, string group, string permission)
+    {
+        assigned[(ws.Id, group.ToLowerInvariant())] = [permission];
+        entitlements.TryAdd((ws.Id, group.ToLowerInvariant()), []);
+    }
+
+    public Task<IReadOnlyList<string>?> EntitlementsAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, string groupName, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<string>?>(entitlements.TryGetValue((ws.Id, groupName.ToLowerInvariant()), out var e) ? e.ToList() : null);
+
+    public Task AddEntitlementsAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, string groupName, IReadOnlyList<string> add, CancellationToken ct)
+    {
+        Fail();
+        Calls.Add($"entitlements {ws.Name} {groupName} {string.Join(",", add)}");
+        entitlements.AddOrUpdate((ws.Id, groupName.ToLowerInvariant()), _ => add.ToList(), (_, l) => l.Union(add).ToList());
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<string>> EffectivePrivilegesAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, string securableType, string fullName, string groupName, CancellationToken ct)
+    {
+        var own = grants.TryGetValue((ws.Id, $"{securableType}:{fullName}", groupName.ToLowerInvariant()), out var g) ? g : [];
+        var catalog = securableType == "schema" && grants.TryGetValue((ws.Id, $"catalog:{fullName.Split('.')[0]}", groupName.ToLowerInvariant()), out var c) ? c : [];
+        return Task.FromResult<IReadOnlyList<string>>(own.Union(catalog).ToList());
+    }
+
+    public Task GrantAsync(PmoReview.Core.Databricks.DatabricksWorkspace ws, string securableType, string fullName, string groupName, IReadOnlyList<string> privileges, CancellationToken ct)
+    {
+        Fail();
+        Calls.Add($"grant {ws.Name} {securableType} {fullName} {groupName} {string.Join(",", privileges)}");
+        if (!DropGrants) Grant(ws, securableType, fullName, groupName, privileges);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Test set-up: privileges already in place (e.g. granted by a person).</summary>
+    public void Grant(PmoReview.Core.Databricks.DatabricksWorkspace ws, string securableType, string fullName, string groupName, IEnumerable<string> privileges) =>
+        grants.AddOrUpdate((ws.Id, $"{securableType}:{fullName}", groupName.ToLowerInvariant()), _ => privileges.ToList(), (_, l) => l.Union(privileges).ToList());
+
+    /// <summary>Test set-up: entitlements already in place.</summary>
+    public void Entitle(PmoReview.Core.Databricks.DatabricksWorkspace ws, string group, params string[] add) =>
+        entitlements.AddOrUpdate((ws.Id, group.ToLowerInvariant()), _ => add.ToList(), (_, l) => l.Union(add).ToList());
+
+    private void Fail()
+    {
+        if (FailWith is { } f) throw new DirectoryWriteException(f);
     }
 }

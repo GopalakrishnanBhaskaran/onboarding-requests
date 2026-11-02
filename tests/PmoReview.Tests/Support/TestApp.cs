@@ -64,6 +64,8 @@ public sealed class TestApp
     /// <summary>Agent TAP: the sign-in details mail (sent directly, never stored).</summary>
     public FakeDirectMail Mail { get; }
     public FakeTracker Tracker { get; } = new();
+    /// <summary>v1.2: Databricks (used only when AGENT_DATABRICKS is on; the worker holds it, never the API).</summary>
+    public FakeDatabricks Databricks { get; }
     /// <summary>F5: Graph and ARM for offboarding (reads always; writes only when AGENT_OFFBOARDING is on).</summary>
     public FakeOffboarding Offboarding { get; }
     public PilotSettings Settings { get; }
@@ -83,10 +85,11 @@ public sealed class TestApp
         RoleWriter = new FakeRoleWriter(Roles);
         Mail = new FakeDirectMail();
         Offboarding = new FakeOffboarding(Directory);
+        Databricks = new FakeDatabricks { EntraName = Directory.GroupName };
         Loggers = loggers;
         Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, loggers, model, directory: Directory, roles: Roles,
             writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
-            directMail: settings.Workflow.AgentTap ? Mail : null);
+            directMail: settings.Workflow.AgentTap ? Mail : null, databricksAccess: settings.Workflow.AgentDatabricks ? Databricks : null);
     }
 
     /// <summary>The approved access resource group of the tests (fills the SAMPLE PEST rows' Azure role scopes).</summary>

@@ -77,6 +77,19 @@ public sealed record WorkflowSettings
     /// Off: plans are still made and shown; execution is refused.
     /// </summary>
     public bool AgentOffboarding { get; init; }
+    /// <summary>
+    /// v1.2 (<c>AGENT_DATABRICKS</c>, default false; Gokul 2 Nov 2026, off until approved): at With Role Team, for a mapping
+    /// row whose role scope is <c>dbx:workspace/catalog[.schema]</c>, the agent adds the group to the Databricks account and
+    /// workspace (A3), gives the entitlements and Unity Catalog privileges its name stands for (A4, A5;
+    /// <c>config/databricks-access.json</c>) and tests them. Needs <see cref="AgentRoleAssignment"/> on.
+    /// </summary>
+    public bool AgentDatabricks { get; init; }
+    /// <summary>The Databricks account id (<c>DATABRICKS_ACCOUNT_ID</c>, a GUID).</summary>
+    public string? DatabricksAccountId { get; init; }
+    /// <summary>Workspaces the agent may set up (<c>DATABRICKS_WORKSPACES</c>: name=https://adb-…azuredatabricks.net, comma separated).</summary>
+    public IReadOnlyList<Databricks.DatabricksWorkspace> DatabricksWorkspaces { get; init; } = [];
+    /// <summary>Catalogs the agent may grant on (<c>DATABRICKS_GRANT_CATALOGS</c>); empty = none.</summary>
+    public IReadOnlyList<string> DatabricksGrantCatalogs { get; init; } = [];
     /// <summary>F5 (<c>OFFBOARD_DELETE_USER</c>, default false): after disabling, soft-delete the account (restorable 30 days, F75).</summary>
     public bool OffboardDeleteUser { get; init; }
     /// <summary>

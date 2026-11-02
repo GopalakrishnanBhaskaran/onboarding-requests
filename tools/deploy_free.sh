@@ -58,6 +58,8 @@
 #
 #   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--delete-user] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh offboarding <subscriptionId> off|delete-off     (always allowed)
+#   tools/deploy_free.sh databricks <subscriptionId> on --account-id <id> --workspace <name> --catalogs <c[,c]> [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh databricks <subscriptionId> off                  (always allowed)
 #       v1.1 F5, option 3 "Entra only" (Gokul, 30 Oct 2026): for a plan a PMO or Operator confirmed, the agent revokes the
 #       sessions, removes the TAP and the group memberships, disables the account, verifies and mails the PMO. "on": Graph
 #       User.RevokeSessions.All + User.EnableDisableAccount.All (F71, F74; the rest is held) + worker AGENT_OFFBOARDING=true,
@@ -459,6 +461,61 @@ agent_privileged() {
   echo "Agent privileged rows on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
 }
 
+# v1.2 (Gokul, 2 Nov 2026): the agent sets up a Databricks row's group after both approvals — account and workspace (A3),
+# the entitlements and Unity Catalog privileges its name stands for (A4, A5; config/databricks-access.json) — and tests it.
+# Security change: dry run unless --approved-by. The Databricks-side rights of the worker's identity are given by a
+# Databricks account admin (printed below); this command sets only the worker and website settings. Off: always allowed.
+agent_databricks() {
+  local mode="$1" account="${2:-}" workspace="${3:-}" catalogs="${4:-}" name swa mi app roles wsid wsurl ws c
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings AGENT_DATABRICKS=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_DATABRICKS=false -o none
+    echo "Agent Databricks set-up switched off on $name and $swa: Databricks rows go to the role assignment team again."
+    echo "The worker's Databricks rights stay; removing them is a permission change (approval)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "databricks on|off"; return 1; }
+  [[ "$account" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "--account-id <Databricks account id (GUID)> is required."; return 1; }
+  [[ -n "$workspace" ]] || { echo "--workspace <workspace resource name> is required."; return 1; }
+  [[ "$catalogs" =~ ^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$ ]] || { echo "--catalogs <catalog[,catalog]> is required (Unity Catalog names)."; return 1; }
+  ws=$(az resource list --resource-type Microsoft.Databricks/workspaces --query "[?name=='$workspace'].id | [0]" -o tsv)
+  [[ -n "$ws" ]] || { echo "Workspace $workspace not found in this subscription."; return 1; }
+  wsurl=$(az resource show --ids "$ws" --query properties.workspaceUrl -o tsv); wsid=$(az resource show --ids "$ws" --query properties.workspaceId -o tsv)
+  mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
+  app=$(az ad sp show --id "$mi" --query appId -o tsv 2>/dev/null || true)
+  roles=$(worker_setting "$name" AGENT_ROLE_ASSIGNMENT)
+  echo "Checks:"
+  echo "  Agent role assignment: ${roles:-false} (must be true: the Databricks set-up is part of the agent's role step)"
+  echo "  Workspace: $workspace = https://$wsurl (id $wsid)"
+  echo "  Worker identity: $name, object id $mi, application (client) id ${app:-unknown}"
+  echo "Databricks-side rights of the worker's identity (a Databricks account admin gives them once; F118):"
+  echo "  1. Account console > User management > Service principals > Add > Microsoft Entra ID managed, application id ${app:-<client id>}."
+  echo "  2. Account console > that service principal > Roles: Account admin (A3: the external-group and workspace-assignment APIs, F111, F112)."
+  echo "  3. Account console > Workspaces > $workspace > Permissions: the service principal as Admin (A4: workspace group entitlements, F114)."
+  for c in ${catalogs//,/ }; do
+    echo "  4. SQL in $workspace: GRANT USE CATALOG, MANAGE ON CATALOG $c TO \`${app:-<client id>}\`;   (A5 on $c, F115)"
+  done
+  echo "Plan for $name and $swa, expected cost 0 (REST calls only: no compute, no Azure resource):"
+  echo "  Settings: AGENT_DATABRICKS=true (worker + SWA), DATABRICKS_ACCOUNT_ID=$account,"
+  echo "            DATABRICKS_WORKSPACES=$workspace=https://$wsurl, DATABRICKS_GRANT_CATALOGS=$catalogs"
+  echo "  Effect: after the Owner and then Security approved, for a mapping row whose role scope is dbx:$workspace/<catalog>[.<schema>]"
+  echo "  the agent adds the group to the account and the workspace (USER), gives Workspace access (everyone) and Databricks SQL"
+  echo "  access (readers), grants the privileges its name stands for (reader: USE_CATALOG, USE_SCHEMA, SELECT; writer: + MODIFY;"
+  echo "  engineer: + CREATE_TABLE), tests all of it live and logs it. Never ADMIN, never an admin/owner group, never another catalog."
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  [[ "$roles" == "true" ]] || { echo "Switch agent role assignment on first (tools/deploy_free.sh provisioning ...)."; return 1; }
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_DATABRICKS=true \
+    "DATABRICKS_ACCOUNT_ID=$account" "DATABRICKS_WORKSPACES=$workspace=https://$wsurl" "DATABRICKS_GRANT_CATALOGS=$catalogs"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_DATABRICKS=true -o none
+  echo "Agent Databricks set-up on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes),"
+  echo "once the Databricks-side rights above are in place. Check: bash tools/verify_features.sh <sub> (line 18)."
+}
+
 # v1.1 F5 option 3, Entra steps only (Gokul, 30 Oct 2026). Graph application permissions the offboarding writes need (F71,
 # F74) and the ones it reuses (reads; group membership removal from v2.1 provisioning; TAP removal from the agent TAP).
 GRAPH_OFFBOARD_NEW=(User.RevokeSessions.All User.EnableDisableAccount.All)
@@ -640,17 +697,18 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv offb
+  local env sender redirect tenant tap priv offb dbx
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
   offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
+  dbx=$([[ -n "$w" ]] && worker_setting "$w" AGENT_DATABRICKS || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -812,7 +870,11 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "agentOffboarding": v(live.get("AGENT_OFFBOARDING", "").lower() == "true"),
      "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
      "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
-     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", ""))}
+     "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", "")),
+     # v1.2 as it is live: the agent's Databricks set-up (deploy_free.sh databricks, approved separately).
+     "agentDatabricks": v(live.get("AGENT_DATABRICKS", "").lower() == "true"),
+     "databricksAccountId": v(live.get("DATABRICKS_ACCOUNT_ID", "")), "databricksWorkspaces": v(live.get("DATABRICKS_WORKSPACES", "")),
+     "databricksGrantCatalogs": v(live.get("DATABRICKS_GRANT_CATALOGS", ""))}
 json.dump({"$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
            "contentVersion": "1.0.0.0", "parameters": p}, open(out, "w"), indent=2)
 print("wrote", out, "| worker on, notifications", p["notifySender"]["value"], "| environment", p["appEnvironment"]["value"], "| ADO off, role reader None")
@@ -875,6 +937,19 @@ PY
       esac
     done
     agent_offboarding "$MODE" "$OFF_SUBS" "$OFF_DELETE"
+    ;;
+  databricks)
+    MODE="${3:?on|off}"; shift 3; DBX_ACCOUNT=""; DBX_WS=""; DBX_CATALOGS=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --account-id) DBX_ACCOUNT="${2:?Databricks account id}"; shift 2 ;;
+        --workspace) DBX_WS="${2:?workspace resource name}"; shift 2 ;;
+        --catalogs) DBX_CATALOGS="${2:?catalog[,catalog]}"; shift 2 ;;
+        --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (databricks $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
+        *) echo "unknown argument $1"; exit 1 ;;
+      esac
+    done
+    agent_databricks "$MODE" "$DBX_ACCOUNT" "$DBX_WS" "$DBX_CATALOGS"
     ;;
   environment)
     ENVNAME="${3:?pilot|dev|test|prod}"; REDIRECT=""

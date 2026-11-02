@@ -67,10 +67,12 @@ bash $A status --account-id "$ACC" --workspace <workspace name>
   - assigns the group to the workspace as **USER**, or **ADMIN** with `--admin` (F112).
   - Running it again changes only what is missing, and never lowers ADMIN to USER.
 - `plan` does not call the external group API, because reading a group adds it to the account.
+- `--grant <catalog>[.<schema>]` (USER groups, v1.2): after the assignment, `apply` grants the Unity Catalog privileges of the group's level on the catalog (`USE_CATALOG`) and the schema (reader `USE_SCHEMA`, `SELECT`; writer + `MODIFY`; engineer + `CREATE_TABLE`), adding only what is missing (F115, F117). Then it **tests** everything by reading it back (`DBX_WORKSPACE`, `DBX_ENTITLEMENTS`, `DBX_UC_CATALOG`, `DBX_UC_SCHEMA`) and appends one line per group to `.local/databricks-setup.log`, printed ready for `docs/DEPLOYMENT_LOG.md`. Any FAIL exits non-zero. You need to be a workspace admin and own the catalog (or hold `MANAGE` on it). `plan` shows what the name decides, without changing anything.
+- The AI agent can do the same for every approved request: `tools/deploy_free.sh databricks` (`docs/DATABRICKS_E2E_TEST.md`).
 
 ## Check it works
 
-- **Entitlements (F114, since 14 Sep 2026):** a newly assigned group inherits no entitlement. In the workspace: Settings → **Identity and access** → Groups → the group → switch on **Workspace access** and/or **Databricks SQL access**. `apply` does not set them yet.
+- **Entitlements (F114, since 14 Sep 2026):** a newly assigned group inherits no entitlement. `apply` (USER groups) now sets them by the group's **name** (`config/databricks-access.json`): **Workspace access** for every level, plus **Databricks SQL access** for readers; admin/owner names and names with no or two levels are left to a person. By hand: Settings → **Identity and access** → Groups → the group.
 
 - Account console → **User management** → **Groups**: the group shows as external.
 - A member signs in to the workspace: they're added on first sign-in (status **Active**).

@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Databricks access by Entra group name (Gokul, 2 Nov 2026). One file for the AI agent (embedded in the worker) and for",
+    "tools/databricks/aim_setup.sh. The first level whose 'match' word appears in the group's last name part wins (checked",
+    "in this order); no match = left to the role assignment team. 'Workspace access' is given to every level; Databricks SQL",
+    "access to readers. Privileges are Unity Catalog privilege names (REST spelling). Never here: ALL_PRIVILEGES, MANAGE,",
+    "CREATE_CATALOG, ownership, allow-cluster-create, allow-instance-pool-create (refused by the code)."
+  ],
+  "entitlementsForEveryone": ["workspace-access"],
+  "levels": [
+    { "level": "Admin", "match": ["admin", "owner"], "byAgent": false,
+      "why": "workspace or data administration is never given by the agent or this script: a person decides" },
+    { "level": "Engineer", "match": ["engineer", "developer", "scientist"], "byAgent": true,
+      "entitlements": [],
+      "catalogPrivileges": ["USE_CATALOG"],
+      "schemaPrivileges": ["USE_SCHEMA", "SELECT", "MODIFY", "CREATE_TABLE"] },
+    { "level": "Writer", "match": ["writer", "contributor", "editor", "readwrite"], "byAgent": true,
+      "entitlements": [],
+      "catalogPrivileges": ["USE_CATALOG"],
+      "schemaPrivileges": ["USE_SCHEMA", "SELECT", "MODIFY"] },
+    { "level": "Reader", "match": ["reader", "viewer", "view", "consumer", "read"], "byAgent": true,
+      "entitlements": ["databricks-sql-access"],
+      "catalogPrivileges": ["USE_CATALOG"],
+      "schemaPrivileges": ["USE_SCHEMA", "SELECT"] }
+  ]
+}
