@@ -45,7 +45,8 @@ save() {
 
 # Fabric REST (GET by default). Token comes from the signed-in az CLI user; never printed.
 fab() {
-  local method="${2:-GET}" url="$1"; shift 2 || true
+  local url="$1" method="GET"; shift
+  if [ $# -gt 0 ] && [[ "$1" != -* ]]; then method="$1"; shift; fi
   az rest --method "$method" --resource "$FABRIC_RESOURCE" --url "$FABRIC_API$url" "$@"
 }
 
