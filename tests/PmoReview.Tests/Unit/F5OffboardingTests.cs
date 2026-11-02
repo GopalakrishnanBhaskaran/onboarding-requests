@@ -582,6 +582,91 @@ public class F5OffboardingTests
         Assert.Equal((409, "person_is_leaver"), (again.Status, again.ErrorCode));
     }
 
+    /// <summary>An access record of the response document for <paramref name="upn"/> on a mapping row, as the agent writes it.</summary>
+    private static async Task<ResponseRecord> AccessRecord(TestApp app, string rowId, string upn = Upn, string? requestId = null)
+    {
+        var row = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, rowId))!.Value;
+        var id = requestId ?? $"sample-old-{rowId.ToLowerInvariant()}-{upn.Split('@')[0]}";
+        var record = new ResponseRecord
+        {
+            Id = id, ProjectId = TestApp.Alpha, RequestId = id, UserId = upn, Resource = row.Resource, AccessLevel = row.AccessLevel, EntraGroup = row.EntraGroup,
+            Role = row.Role, State = ResponseState.Assigned, Justification = "SAMPLE: earlier access.", AssignedBy = "AI agent", AssignedAt = app.Clock.UtcNow,
+            UpdatedBy = "AI agent", UpdatedAt = app.Clock.UtcNow, Version = 1, IsSample = true,
+        };
+        await app.Stores.ResponseDocument.CreateAsync(record);
+        return record;
+    }
+
+    private static async Task<ResponseState> StateOf(TestApp app, string id) => (await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, id))!.Value.State;
+
+    [Fact]
+    public async Task Offboarding_marks_the_persons_access_records_revoked_so_a_rehire_is_not_returned_as_a_duplicate()
+    {
+        // Gokul, 2 Nov 2026: a rehire was returned with "This user already has this access … (Assigned)" after offboarding.
+        var (app, _) = await Leaver();
+        var old = await AccessRecord(app, "A-SALES-READ");
+        var someoneElse = await AccessRecord(app, "A-SALES-READ", upn: "sample.stays@sample.invalid");
+        var planned = await Planned(app);
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+
+        Assert.Equal("Completed", Status(await Get(app)));
+        Assert.Equal(ResponseState.Revoked, await StateOf(app, old.Id));
+        Assert.Equal(ResponseState.Assigned, await StateOf(app, someoneElse.Id));
+        var audit = Assert.Single((await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value), a => a.Action == "offboarding-access-records");
+        // The old access, and the record of the request the offboarding closed (its access was never granted).
+        Assert.Contains("2 access record(s) marked Revoked: Read on SAMPLE Sales Lakehouse (SAMPLE-GRP-ALPHA-SALES-READ", audit.Details);
+        Assert.Contains("User on SAMPLE Databricks Engineering", audit.Details);
+        var run = Assert.Single(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha)).Value;
+        Assert.NotNull(run.AccessRecordsRevokedAt);
+
+        // The rehire: the Data Steward marks the person Active again; the same access is no longer a duplicate.
+        var person = (await app.Stores.PeopleInventory.GetAsync(TestApp.Alpha, Person.MakeId(Upn)))!;
+        await app.Stores.PeopleInventory.ReplaceAsync(person.Value with { Status = PersonStatus.Active, Version = person.Value.Version + 1 }, person.ETag);
+        app.Clock.Advance(TimeSpan.FromHours(1));
+        var rehire = await app.SubmitId(TestApp.Intake(enterpriseId: "sample.leaver@company.example", resource: "SAMPLE Sales Lakehouse", accessLevel: "Read"));
+        await app.RunWorker();
+        var flow = (await app.Request(rehire)).Flow!;
+        Assert.DoesNotContain("already has this access", flow.LastReason ?? "");
+        Assert.Equal(RequestStatus.AwaitingOwner, flow.Status);
+
+        // Once per run: another worker run changes nothing more.
+        await app.RunWorker();
+        Assert.Single((await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value), a => a.Action == "offboarding-access-records");
+    }
+
+    [Fact]
+    public async Task A_group_still_held_keeps_its_record_and_runs_finished_before_this_step_are_caught_up_without_touching_newer_records()
+    {
+        var (app, _) = await Leaver();
+        app.Directory.AddMember("SAMPLE-GRP-ALPHA-DRIVE-EDIT", Upn);
+        app.Offboarding.Dynamic.Add("SAMPLE-GRP-ALPHA-DRIVE-EDIT"); // membership by rule: a leftover
+        var held = await AccessRecord(app, "A-DRIVE-EDIT-1");
+        var gone = await AccessRecord(app, "A-SALES-READ");
+        var planned = await Planned(app);
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+
+        Assert.Equal("PartiallyCompleted", Status(await Get(app)));
+        Assert.Equal((ResponseState.Assigned, ResponseState.Revoked), (await StateOf(app, held.Id), await StateOf(app, gone.Id)));
+        Assert.Contains("kept (still a member): Edit on SAMPLE Shared Drive",
+            Assert.Single((await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value), a => a.Action == "offboarding-access-records").Details);
+
+        // A run that finished before this step existed (no AccessRecordsRevokedAt): caught up on the next worker run. A record
+        // written before it finished is revoked; one written after it (a rehire's) stays.
+        var v = Assert.Single(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha));
+        await app.Stores.OffboardingRuns.ReplaceAsync(v.Value with { AccessRecordsRevokedAt = null, Leftovers = [] }, v.ETag);
+        var before = await AccessRecord(app, "A-FIN-VIEW", requestId: "sample-before-run");
+        await app.Stores.ResponseDocument.ReplaceAsync(before with { UpdatedAt = v.Value.FinishedAt!.Value.AddMinutes(-1) },
+            (await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, before.Id))!.ETag);
+        app.Clock.Advance(TimeSpan.FromHours(1));
+        var after = await AccessRecord(app, "A-DBW-ENG-USER", requestId: "sample-rehire-request");
+        await app.RunWorker();
+        Assert.Equal(ResponseState.Revoked, await StateOf(app, before.Id));
+        Assert.Equal(ResponseState.Revoked, await StateOf(app, held.Id)); // no leftover any more on the caught-up run
+        Assert.Equal(ResponseState.Assigned, await StateOf(app, after.Id));
+    }
+
     [Fact]
     public async Task F5_Double_click_on_plan_and_confirm_runs_everything_once()
     {

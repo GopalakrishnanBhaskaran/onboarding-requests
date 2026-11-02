@@ -251,6 +251,11 @@ public sealed record OffboardingRun : IDocument
     public string? PlanHash { get; init; }
     public DateTimeOffset? PlannedAt { get; init; }
     public DateTimeOffset? FinishedAt { get; init; }
+    /// <summary>
+    /// When the person's access records in the response document were marked Revoked after this run finished (2 Nov 2026;
+    /// once per run, null = not yet: runs that finished before this existed are caught up by the worker).
+    /// </summary>
+    public DateTimeOffset? AccessRecordsRevokedAt { get; init; }
     /// <summary>Transient failures per step (step index); a step is retried on the next worker run, at most 3 times.</summary>
     public IReadOnlyDictionary<string, int> Attempts { get; init; } = new Dictionary<string, int>();
     public DateTimeOffset UpdatedAt { get; init; }

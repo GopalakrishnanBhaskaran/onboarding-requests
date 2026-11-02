@@ -13,7 +13,8 @@ namespace PmoReview.Core.Offboarding;
 /// remove Azure role assignments → disable the account (→ soft-delete only with <c>OFFBOARD_DELETE_USER</c>) → mark the
 /// person a leaver → close the person's open requests. Every step reads before it writes, so a repeat changes nothing
 /// twice; progress is saved after each step. Verify: read everything again. Nothing left → Completed and one mail to the
-/// project's PMO only; anything left → PartiallyCompleted, an escalation, and no completion mail.
+/// project's PMO only; anything left → PartiallyCompleted, an escalation, and no completion mail. Then (2 Nov 2026) the
+/// person's access records in the response document are marked Revoked, so a rehire is not returned as a duplicate.
 /// </summary>
 /// <param name="writer">Entra writes; null unless <c>AGENT_OFFBOARDING</c> (plans are still made).</param>
 /// <param name="remover">Azure role assignment deletes; null unless <c>AGENT_OFFBOARDING</c>.</param>
@@ -65,8 +66,56 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                     // Another worker instance moved this run on; the next run looks again.
                 }
             }
+            // Finished runs (this one's, and those that finished before this step existed): the response document follows.
+            foreach (var v in (await stores.OffboardingRuns.ListAsync(project.ProjectId, ct))
+                         .Where(r => r.Value.Status is OffboardingStatus.Completed or OffboardingStatus.PartiallyCompleted && r.Value.AccessRecordsRevokedAt is null))
+            {
+                try
+                {
+                    await RevokeAccessRecordsAsync(project, v, ct);
+                }
+                catch (ConcurrencyException)
+                {
+                    // A record or the run changed meanwhile: the next run looks again (revoked records are skipped then).
+                }
+            }
         }
         return handled;
+    }
+
+    /// <summary>
+    /// The person's access records in the response document (2 Nov 2026): when a run has finished, every record of the person
+    /// that was active then becomes Revoked — except a group the person is still in (a leftover of an account that was not
+    /// deleted), which stays as it is. Records written after the run finished (a rehire's request) are never touched.
+    /// App data only: no Entra or Azure call. Once per run, audited.
+    /// </summary>
+    private async Task RevokeAccessRecordsAsync(Project project, Versioned<OffboardingRun> v, CancellationToken ct)
+    {
+        var run = v.Value;
+        var until = run.FinishedAt ?? run.UpdatedAt;
+        var deleted = run.Steps.Any(s => s.Name == Delete && s.Result == OffboardingStepResult.Done);
+        const string still = "still in ";
+        bool StillIn(string group) => !deleted && run.Leftovers.Any(l => l.StartsWith(still, StringComparison.Ordinal)
+            && (string.Equals(l[still.Length..], group, StringComparison.OrdinalIgnoreCase) || l[still.Length..].StartsWith($"{group} (", StringComparison.OrdinalIgnoreCase)));
+        var now = clock.UtcNow;
+        var revoked = new List<string>();
+        var kept = new List<string>();
+        foreach (var rec in (await stores.ResponseDocument.ListAsync(project.ProjectId, ct))
+                     .Where(x => x.Value.IsActive && string.Equals(x.Value.UserId, run.EnterpriseId, StringComparison.OrdinalIgnoreCase) && x.Value.UpdatedAt <= until))
+        {
+            var r = rec.Value;
+            var label = $"{r.AccessLevel} on {r.Resource} ({r.EntraGroup}, request {r.RequestId})";
+            if (StillIn(r.EntraGroup))
+            {
+                kept.Add(label);
+                continue;
+            }
+            await stores.ResponseDocument.ReplaceAsync(r with { State = ResponseState.Revoked, Version = r.Version + 1, UpdatedBy = Actor, UpdatedAt = now }, rec.ETag, ct);
+            revoked.Add(label);
+        }
+        await SaveAsync(project, v, run with { AccessRecordsRevokedAt = now, UpdatedAt = now }, "offboarding-access-records",
+            $"{revoked.Count} access record(s) marked Revoked{(revoked.Count == 0 ? "" : $": {string.Join("; ", revoked)}")}" +
+            $"{(kept.Count == 0 ? "" : $"; kept (still a member): {string.Join("; ", kept)}")}", ct);
     }
 
     // ---- plan (dry run: reads only) ---------------------------------------------------------------------------------
