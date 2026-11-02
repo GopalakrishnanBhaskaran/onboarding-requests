@@ -21,7 +21,9 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "state", "state.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE = os.path.join(HERE, "..", "state", "state.json")
+DEFAULT = os.environ.get("STATE_FILE") or os.path.join(HERE, "..", "..", ".local", "fabric-poc", "state.json")
 FORBIDDEN = ("password", "secret", "token", "accountkey", "sig=")
 
 
@@ -70,6 +72,10 @@ def parse_value(raw):
 
 
 def main(argv, path=DEFAULT):
+    if path == DEFAULT and not os.path.exists(path):  # working copy outside git, seeded from the template
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        import shutil
+        shutil.copyfile(TEMPLATE, path)
     if not argv:
         print(__doc__)
         return 2

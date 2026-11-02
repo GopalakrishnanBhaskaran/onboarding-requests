@@ -3,6 +3,7 @@
 # resource providers, existing capacities/workspaces/tenant settings. Changes nothing.
 # Usage: bash fabric-adls-poc/tools/fabric_check.sh [region]   (default centralindia)
 source "$(dirname "$0")/lib.sh"
+az_preflight
 set +e; trap - ERR
 REGION="${1:-centralindia}"
 AZ_BIN="$(command -v az)"; az() { timeout 90 "$AZ_BIN" "$@" --only-show-errors; }

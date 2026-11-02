@@ -4,8 +4,9 @@
 # Usage: bash b_fabric_identity.sh --workspace <name> --container <c> [--capacity <armName>] [--create-capacity <name> --region <loc>] [--apply]
 source "$(dirname "$0")/lib.sh"
 need az; need python3
+az_preflight
 ST="$POC_DIR/tools/state.py"
-env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$POC_DIR/state/state.json" "$1"; }
+env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; TENANT="$(env_get tenant)"
 WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0
 while [ $# -gt 0 ]; do

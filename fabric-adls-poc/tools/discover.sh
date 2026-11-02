@@ -4,6 +4,7 @@
 # Raw JSON -> .local/fabric-poc/ (not in git); masked copies -> fabric-adls-poc/evidence/01-*.
 source "$(dirname "$0")/lib.sh"
 need az; need python3; need curl
+az_preflight
 
 SUB="" ; STG="" ; PREFIX="pvdbx-" ; DEVICE_IP=""
 while [ $# -gt 0 ]; do

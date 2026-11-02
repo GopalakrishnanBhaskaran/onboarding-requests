@@ -4,10 +4,11 @@
 # Usage: bash a_storage_network.sh --vnet <pvdbx-vnet> --pe-subnet <subnet> [--dns-rg <rg>] [--device-ip <ip>] [--apply]
 source "$(dirname "$0")/lib.sh"
 need az; need python3
+az_preflight
 ST="$POC_DIR/tools/state.py"
-SUB="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["subscription"])' "$POC_DIR/state/state.json")"
-RG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["resourceGroup"])' "$POC_DIR/state/state.json")"
-STG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["storageAccount"])' "$POC_DIR/state/state.json")"
+SUB="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["subscription"])' "$STATE_FILE")"
+RG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["resourceGroup"])' "$STATE_FILE")"
+STG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["storageAccount"])' "$STATE_FILE")"
 VNET="" ; SUBNET="" ; VNET_RG="" ; DNS_RG="" ; DEVICE_IP="" ; APPLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -17,7 +18,7 @@ while [ $# -gt 0 ]; do
     *) die "unknown argument $1";;
   esac
 done
-envq() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$POC_DIR/state/state.json" "$1"; }
+envq() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$STATE_FILE" "$1"; }
 [ -n "$VNET" ] || VNET="$(envq vnet)"; [ -n "$SUBNET" ] || SUBNET="$(envq peSubnet)"
 [ -n "$VNET" ] && [ -n "$SUBNET" ] || die "--vnet and --pe-subnet are required (see evidence/01-vnets.json)"
 case "$SUB$RG$STG" in *UNVERIFIED*) die "run discover.sh first";; esac

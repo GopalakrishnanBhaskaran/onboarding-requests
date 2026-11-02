@@ -7,6 +7,7 @@
 # Usage: bash w1_build_env.sh [--region centralindia] [--budget 1000] [--apply]
 source "$(dirname "$0")/lib.sh"
 need az; need python3
+az_preflight
 ST="$POC_DIR/tools/state.py"
 REGION="centralindia"; BUDGET=1000; APPLY=0
 RG="rg-pvdbx-fabric-poc"; VNET="pvdbx-vnet-fabricpoc"; SPACE="10.60.0.0/24"; PE_SUBNET="snet-pe"; PE_PREFIX="10.60.0.0/27"

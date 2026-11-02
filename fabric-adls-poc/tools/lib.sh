@@ -11,7 +11,9 @@ EVIDENCE_DIR="$POC_DIR/evidence"                     # masked output, safe for g
 FABRIC_API="https://api.fabric.microsoft.com/v1"
 FABRIC_RESOURCE="https://api.fabric.microsoft.com"
 mkdir -p "$RAW_DIR" "$EVIDENCE_DIR"
-export AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no   # never stop at "install extension? (Y/n)"
+# Working state (approvals, locks, ids) lives outside git so 'git pull' never conflicts; state/state.json is the template + handoff copy.
+export STATE_FILE="${STATE_FILE:-$RAW_DIR/state.json}"
+[ -f "$STATE_FILE" ] || cp "$POC_DIR/state/state.json" "$STATE_FILE"
 
 log()  { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
@@ -54,6 +56,12 @@ fab() {
 
 # Device public IP as seen from the internet (only meaningful when run on your own device).
 device_ip() { curl -fsS -m 10 https://api.ipify.org || curl -fsS -m 10 https://ifconfig.me; }
+
+# Fail early, with a fix, when the Azure CLI itself is broken (e.g. a stale command index in Cloud Shell).
+az_preflight() {
+  az account show --query id -o tsv >/dev/null 2>"$RAW_DIR/.azerr" && return 0
+  die "az is not working: $(grep -m1 -i error "$RAW_DIR/.azerr" || head -1 "$RAW_DIR/.azerr"). Fix: rm -f ~/.azure/commandIndex.json ; az account show -o table ; then re-run"
+}
 
 # Approval gate for any change: wave must be approved in state/state.json.
 require_approval() {

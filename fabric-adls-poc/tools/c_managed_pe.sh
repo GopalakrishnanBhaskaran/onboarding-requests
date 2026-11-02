@@ -3,8 +3,9 @@
 # Default: PLAN. --apply needs wave 2 approval. Usage: bash c_managed_pe.sh [--subresources dfs,blob] [--apply]
 source "$(dirname "$0")/lib.sh"
 need az; need python3
+az_preflight
 ST="$POC_DIR/tools/state.py"
-env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$POC_DIR/state/state.json" "$1"; }
+env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(env_get fabricWorkspaceId)"
 SUBRES="dfs" ; APPLY=0
 while [ $# -gt 0 ]; do case "$1" in --subresources) SUBRES="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
