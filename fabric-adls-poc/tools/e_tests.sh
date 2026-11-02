@@ -8,7 +8,8 @@ ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$POC_DIR/state/state.json" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(env_get fabricWorkspaceId)"
 CMD="${1:-}"; shift || true
-CONTAINER="" ; FOLDER="poc" ; GWCONN=""
+CONTAINER="$(env_get container)" ; FOLDER="$(env_get testFolder)" ; GWCONN=""
+case "$CONTAINER" in UNVERIFIED) CONTAINER="";; esac; case "$FOLDER" in UNVERIFIED|"") FOLDER="input";; esac
 while [ $# -gt 0 ]; do case "$1" in --container) CONTAINER="$2"; shift 2;; --folder) FOLDER="$2"; shift 2;; --connection) GWCONN="$2"; shift 2;; *) die "unknown $1";; esac; done
 [ -n "$CONTAINER" ] || die "--container required"
 [ "$CMD" = probe ] || require_approval 3
@@ -67,7 +68,7 @@ PY
   fab /connections POST --body "$body" | j "d['id']"
 }
 
-do_prep() {
+do_prep() { # optional: only works from a client whose IP is allowed (your device); in Cloud Shell the notebook writes input.csv instead
   printf 'id,name,amount\n1,alpha,10\n2,beta,20\n3,gamma,30\n' > "$RAW_DIR/input.csv"
   az storage fs directory create -f "$CONTAINER" -n "$FOLDER" --account-name "$STG" --auth-mode login -o none 2>/dev/null || true
   if az storage fs file upload -f "$CONTAINER" -p "$FOLDER/input.csv" -s "$RAW_DIR/input.csv" --account-name "$STG" --auth-mode login --overwrite -o none 2>"$RAW_DIR/prep.err"; then
@@ -95,6 +96,9 @@ import json,sys
 stg,cont,folder,ts,lh,ws=sys.argv[1:7]
 code=f'''import json
 base = "abfss://{cont}@{stg}.dfs.core.windows.net/{folder}"
+# 1. WRITE a single CSV file into ADLS over the managed private endpoint (no client outside Fabric can reach the account)
+mssparkutils.fs.put(base + "/input.csv", "id,name,amount\\n1,alpha,10\\n2,beta,20\\n3,gamma,30\\n", True)
+# 2. READ it back with Spark, 3. WRITE parquet, 4. READ the parquet back
 df = spark.read.option("header", True).csv(base + "/input.csv")
 n_in = df.count()
 out = base + "/from_fabric_notebook/run_{ts}"
@@ -117,7 +121,8 @@ PY
   st="$(wait_job "$nb" "$(run_job "$nb" RunNotebook)")"
   echo "$st" | save E-notebook-job.txt
   out="$(onelake_get "$WS_ID/$lh/Files/poc_results/notebook_$ts.json")"; echo "$out" | save E-notebook-result.json
-  az storage fs file list -f "$CONTAINER" --path "$FOLDER/from_fabric_notebook/run_$ts" --account-name "$STG" --auth-mode login --query "[].{name:name,size:contentLength}" -o json 2>&1 | save E-notebook-adls-listing.json
+  # expected from Cloud Shell: blocked by the firewall (Cloud Shell's IP is not allowed) -> extra "other IP" evidence
+  az storage fs file list -f "$CONTAINER" --path "$FOLDER" --account-name "$STG" --auth-mode login -o json 2>&1 | head -c 600 | save E-cloudshell-adls-listing.txt
   if echo "$out" | grep -q '"ok": true'; then result NOTEBOOK "PASS read 3 rows + wrote/read back parquet via abfss:// (managed PE); job: ${st%% *}"; else result NOTEBOOK "FAIL job: $st"; fi
 }
 pipeline_def() { # pipeline_def <connectionId> <lakehouseId> <sinkFolder>: Binary copy ADLS file -> Lakehouse Files
@@ -161,6 +166,6 @@ case "$CMD" in
   pipeline-twa) do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa;;
   pipeline-gw) [ -n "$GWCONN" ] || die "--connection <gateway connection id> (created by you in the UI)"; do_pipeline PIPELINE_GW "$GWCONN" poc_pl_gateway from_pipeline_gw;;
   probe) do_probe;;
-  all) do_prep; do_lakehouse; do_shortcut; do_notebook; do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa; do_probe;;
+  all) do_lakehouse; do_notebook; do_shortcut; do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa; do_probe;;
   *) die "usage: e_tests.sh <prep|lakehouse|shortcut|notebook|pipeline-twa|pipeline-gw|probe|all> --container <c> [--folder <f>]";;
 esac

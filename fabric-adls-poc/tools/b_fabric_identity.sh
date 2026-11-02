@@ -32,6 +32,8 @@ echo "== Agent B plan: workspace '$WS', storage $STG/$CONTAINER"
 # 1. capacity: an F SKU is required for trusted workspace access (FB1); Trial does not work.
 if [ -n "$NEWCAP" ]; then
   CAP="$NEWCAP"
+  r="$(az provider show -n Microsoft.Fabric --query registrationState -o tsv 2>/dev/null || echo NotRegistered)"
+  if [ "$r" = Registered ]; then ok "Microsoft.Fabric provider registered"; else change "register Microsoft.Fabric resource provider (free)"; [ "$APPLY" = 1 ] && az provider register -n Microsoft.Fabric --wait; fi
   if az resource show -g "$RG" -n "$CAP" --resource-type Microsoft.Fabric/capacities >/dev/null 2>&1; then ok "capacity $CAP exists"; else
     change "create capacity $CAP F2 in $RG/$REGION, admin = you (billing starts; pause when idle, FB18/FB19)"
     if [ "$APPLY" = 1 ]; then

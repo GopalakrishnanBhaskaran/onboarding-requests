@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-02T22:42:11Z",
+  "updated": "2026-11-02T23:14:29Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -15,7 +15,8 @@
     "fabricWorkspace": "UNVERIFIED",
     "fabricWorkspaceId": "UNVERIFIED",
     "fabricCapacity": "UNVERIFIED (minimum F2)",
-    "deviceIp": "UNVERIFIED (recorded masked only)"
+    "deviceIp": "UNVERIFIED (recorded masked only)",
+    "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)"
   },
   "waves": {
     "1": {

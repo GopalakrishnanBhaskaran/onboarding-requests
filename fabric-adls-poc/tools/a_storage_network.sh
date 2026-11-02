@@ -17,6 +17,8 @@ while [ $# -gt 0 ]; do
     *) die "unknown argument $1";;
   esac
 done
+envq() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$POC_DIR/state/state.json" "$1"; }
+[ -n "$VNET" ] || VNET="$(envq vnet)"; [ -n "$SUBNET" ] || SUBNET="$(envq peSubnet)"
 [ -n "$VNET" ] && [ -n "$SUBNET" ] || die "--vnet and --pe-subnet are required (see evidence/01-vnets.json)"
 case "$SUB$RG$STG" in *UNVERIFIED*) die "run discover.sh first";; esac
 az account set --subscription "$SUB"
