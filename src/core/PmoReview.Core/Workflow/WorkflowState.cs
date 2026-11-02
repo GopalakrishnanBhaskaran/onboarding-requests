@@ -176,10 +176,12 @@ public sealed record AgentWork
     /// <summary>Agent TAP: when the one-time pass the agent created starts and expires (metadata only; never the pass).</summary>
     public DateTimeOffset? TapIssuedAt { get; init; }
     public DateTimeOffset? TapExpiresAt { get; init; }
-    /// <summary>Agent TAP: when the sign-in details mail went to the verified enterprise mail (sent once, never stored).</summary>
+    /// <summary>Agent TAP: when the sign-in details mail went out (sent once, never stored; recipient by <see cref="TapRecipient"/>).</summary>
     public DateTimeOffset? SignInDetailsSentAt { get; init; }
-    /// <summary>F2: where it went, masked (<see cref="TapRecipient.Masked"/>): the people inventory's EnterpriseEmail, checked against Entra.</summary>
+    /// <summary>Where it went, masked (<see cref="TapRecipient.Masked"/>).</summary>
     public string? SignInDetailsSentTo { get; init; }
+    /// <summary>Which source named that address (<see cref="TapRecipient.FromRequestSource"/> or <see cref="TapRecipient.FromInventorySource"/>).</summary>
+    public string? SignInDetailsFrom { get; init; }
     /// <summary>The initial password was in that mail (the account was created in the same run).</summary>
     public bool PasswordMailed { get; init; }
     /// <summary>Agent TAP: why the pass was left to the ID team (the rest of the agent's work still counts).</summary>

@@ -31,10 +31,12 @@ const useDecision = makeStyles({
  * It shows exactly what is being decided (who, tenant, environment, group, every Azure role, risk flags, the AI
  * review) above the decision. The decision is tied to the request id and to the review the approver is looking at.
  */
-export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
+export function ApprovalPanel({ request, stage, project, tap = false, onDone, onStale }: {
   request: AccessRequest;
   stage: 'owner' | 'security';
   project: ProjectSummary;
+  /** The AI agent mails a new account's sign-in details to the Enterprise ID on the request (agent TAP on). */
+  tap?: boolean;
   onDone: (v: RequestView) => void;
   /** The review or the mapping sheet changed meanwhile: reload before deciding. */
   onStale: () => void;
@@ -89,6 +91,9 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
       <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, max-content) 1fr', gap: '4px 16px', margin: 0 }}>
         {row('User', `${request.firstName ?? ''} ${request.lastName ?? ''}${request.guest ? ' (guest)' : ''}`)}
         {row('Enterprise ID', request.enterpriseId || '—')}
+        {tap && !request.guest && request.enterpriseId
+          ? row('Sign-in details go to', `${request.enterpriseId} — for a new account the AI agent mails the one-time pass and the initial password here. Reject if this is not the joiner’s own enterprise mailbox.`)
+          : null}
         {row('Sign-in name to create', request.domainId || '—')}
         {row('Tenant', project.tenantName || project.name)}
         {request.environment ? row('Environment', request.environment) : null}

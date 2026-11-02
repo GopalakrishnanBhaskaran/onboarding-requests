@@ -77,8 +77,10 @@ public sealed record DataVersion : IDocument
 public enum PersonStatus { Active, Leaver }
 
 /// <summary>
-/// One person of the people inventory (I2, uploaded by the Data Steward). The only source of the TAP recipient (F2):
-/// <see cref="EnterpriseEmail"/>, after a cross-check with the Entra user. <see cref="AlternateEmail"/> is never used for a TAP.
+/// One person of the people inventory (I2, uploaded by the Data Steward). For the TAP recipient (<see cref="Workflow.TapRecipient"/>):
+/// a listed person must be active and its <see cref="EnterpriseEmail"/> must agree with the Enterprise ID approved on the
+/// request; without a usable request address, <see cref="EnterpriseEmail"/> after a cross-check with the Entra user (F2).
+/// <see cref="AlternateEmail"/> is never used for a TAP.
 /// </summary>
 public sealed record Person : IDocument
 {

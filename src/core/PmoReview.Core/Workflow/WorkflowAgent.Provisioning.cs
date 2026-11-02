@@ -15,9 +15,9 @@ namespace PmoReview.Core.Workflow;
 /// after the named Owner and then Security approved — and re-checks both approvals before any write. Deterministic code,
 /// never the AI model. Reads before every write, so a repeat finds the object instead of creating it again. The Temporary
 /// Access Pass stays with the ID team unless the agent TAP is on (<see cref="WorkflowSettings.AgentTap"/>): then, for a user
-/// it has just created, the agent mails one one-time pass with the initial password and the MFA steps to the person's
-/// verified enterprise mail (F2: people inventory, checked against Entra; <see cref="TapRecipient"/>) — never stored,
-/// never redirected. Anything outside the safe path goes to the team with the reason and an issue.
+/// it has just created, the agent mails one one-time pass with the initial password and the MFA steps to the joiner's
+/// Enterprise ID approved on the request (Gokul, 2 Nov 2026), else the people inventory's address checked against Entra
+/// (F2; <see cref="TapRecipient"/>) — never stored, never redirected. Anything outside the safe path goes to the team with the reason and an issue.
 /// </summary>
 public sealed partial class WorkflowAgent
 {
@@ -31,11 +31,11 @@ public sealed partial class WorkflowAgent
 
     /// <summary>
     /// The agent mails the pass itself: switched on, the TAP mail sender configured (Graph, <c>TAP_MAIL_SENDER</c>) and a
-    /// member account. Where it goes is decided only by <see cref="TapRecipient"/>, never by the request.
+    /// member account. Where it goes is decided only by <see cref="TapRecipient"/>: the approved Enterprise ID, never another body field.
     /// </summary>
     private bool TapByAgent(AccessRequest r) => settings.AgentTap && directMail?.Delivers == true && !r.Guest;
 
-    /// <summary>The people inventory entry for the account the agent creates (F2: the only source of the TAP recipient).</summary>
+    /// <summary>The people inventory entry for the account the agent creates (F2: checks and backs up the TAP recipient).</summary>
     private async Task<Person?> PersonAsync(AccessRequest r, CancellationToken ct) =>
         (await stores.PeopleInventory.GetAsync(r.ProjectId, Person.MakeId(r.DomainId!), ct))?.Value;
 
@@ -158,9 +158,9 @@ public sealed partial class WorkflowAgent
             }
             if (user?.IsGuest == true)
                 return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is a guest account" }, project, now, IssueSeverity.Info);
-            // F2: before an account is created for the agent TAP, the people inventory must name a mailbox for its pass;
-            // otherwise the account is still created and the ID team hands the pass over (escalation).
-            if (user is null && work.TapLeft is null && TapByAgent(r) && TapRecipient.FromInventory(await PersonAsync(r, ct), r.DomainId!.ToLowerInvariant()) is { Ok: false } pre)
+            // Before an account is created for the agent TAP, there must be a mailbox for its pass (the approved Enterprise
+            // ID, else the people inventory); otherwise the account is still created and the ID team hands the pass over.
+            if (user is null && work.TapLeft is null && TapByAgent(r) && TapRecipient.Before(await PersonAsync(r, ct), r.DomainId!.ToLowerInvariant(), r) is { Ok: false } pre)
                 work = work with { TapLeft = await TapMismatchAsync(r, pre.Reason!, cid, ct) };
             // The password and the pass go out in one mail, so the account is created only once the TAP permission is in
             // the agent's token (a new permission can take ~24 h, F61): until then this waits like any refused write;
@@ -293,7 +293,7 @@ public sealed partial class WorkflowAgent
             MappingSheetUpdated = work.MappingUpdated,
             Tap = byMail ? new TapRecord(work.TapIssuedAt!.Value, work.TapExpiresAt!.Value, true, AgentName, now) : null,
             Notes = byMail
-                ? $"Done by the AI agent after Owner and Security approval; one-time TAP and {(work.PasswordMailed ? "initial password" : "MFA steps (no password)")} mailed to the verified enterprise mail {work.SignInDetailsSentTo} (people inventory, checked against Entra; never stored)."
+                ? $"Done by the AI agent after Owner and Security approval; one-time TAP and {(work.PasswordMailed ? "initial password" : "MFA steps (no password)")} mailed to {work.SignInDetailsSentTo} ({work.SignInDetailsFrom ?? TapRecipient.FromInventorySource}; never stored), with the instruction to change the password right after signing in with the pass."
                 : "Done by the AI agent after Owner and Security approval; existing account, no TAP needed.",
         };
         var reported = task with
@@ -303,7 +303,7 @@ public sealed partial class WorkflowAgent
         };
         var mailedNote = byMail
             ? $"The agent mailed the sign-in details (one-time Temporary Access Pass valid until {Messages.Time(work.TapExpiresAt)}" +
-              $"{(work.PasswordMailed ? ", initial password" : "")}, MFA set-up steps) to the verified enterprise mail {work.SignInDetailsSentTo}. Nobody else saw them; the app keeps no copy."
+              $"{(work.PasswordMailed ? ", initial password" : "")}, MFA set-up steps, change the password right after signing in) to {work.SignInDetailsSentTo} ({work.SignInDetailsFrom ?? TapRecipient.FromInventorySource}). Nobody else saw them; the app keeps no copy."
             : "Existing account: no Temporary Access Pass needed.";
         var verify = (flow with { Scope = newScope, IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-provisioned", $"{done} {mailedNote} Verified on the next agent run.");
@@ -329,7 +329,7 @@ public sealed partial class WorkflowAgent
         if (!BothApprovalsCurrent(r.Flow!)) return work with { TapLeft = "the Owner and Security approvals are not both current" };
         var upn = r.DomainId!.ToLowerInvariant();
         // Checked before the pass exists: a pass nobody may receive is never created.
-        var check = TapRecipient.CrossCheck(await PersonAsync(r, ct), upn, user);
+        var check = TapRecipient.After(await PersonAsync(r, ct), upn, user, r);
         if (!check.Ok) return work with { TapLeft = await TapMismatchAsync(r, check.Reason!, cid, ct) };
         var to = check.To!;
         IssuedTap tap;
@@ -359,10 +359,10 @@ public sealed partial class WorkflowAgent
             await AuditTapAsync(r, user.ObjectId, "tap-mail-failed", $"sentTo={masked}; expiresAt={tap.ExpiresAt:O}; error={e.Category}", cid, ct);
             return work with { TapLeft = $"the sign-in details mail could not be sent ({e.Category}); the pass the agent created was never shown to anyone, so the ID team issues a new one (it replaces the old one)" };
         }
-        var sent = work with { SignInDetailsSentAt = clock.UtcNow, SignInDetailsSentTo = masked, PasswordMailed = password is not null };
+        var sent = work with { SignInDetailsSentAt = clock.UtcNow, SignInDetailsSentTo = masked, SignInDetailsFrom = check.Source, PasswordMailed = password is not null };
         signInDetailsSent[r.Id] = sent;
         // F2: the audit keeps only the user id, the masked recipient, the time, the expiry and the correlation id.
-        await AuditTapAsync(r, user.ObjectId, "tap-mail-sent", $"sentTo={masked}; expiresAt={tap.ExpiresAt:O}", cid, ct);
+        await AuditTapAsync(r, user.ObjectId, "tap-mail-sent", $"sentTo={masked}; expiresAt={tap.ExpiresAt:O}; source={check.Source}", cid, ct);
         return sent;
     }
 

@@ -22,3 +22,13 @@ Also against F2 (not a misdirection): a copy of the TAP mail was stored in `noti
 - Nothing of the mail is stored: no notification copy; the audit event holds only user id, masked recipient, time, expiry and correlation id. Logs carry neither the pass nor the address.
 
 Tests: `tests/PmoReview.Tests/Unit/F2TapRecipientTests.cs` (each F2 edge case by name).
+
+## Change on 2 Nov 2026 (Gokul): the Enterprise ID on the request is the recipient again, as an approved field
+Gokul's live test: a joiner who is not in the people inventory got no mail ("TAP recipient mismatch: … not in the people inventory"), so the ID team had to hand the pass over. Decision: the address the requester enters as Enterprise ID is the recipient. Cause 1 above (the requester chose the mailbox) is reduced, not removed, by:
+- **Approved field.** The Owner and then Security approve that revision; the approval page and mail name the address as where the pass goes and tell them to reject a mailbox that is not the joiner's own. Changing it means a resubmit, which supersedes both approvals; the agent checks both are current before sending.
+- **Refused:** a guest sign-in form, a personal mail domain (cause 2), the requester's, the named Owner's or an approver's own address, a people-inventory person who is not active, an inventory EnterpriseEmail that names another mailbox, the AlternateEmail or the manager's address. Then the F2 inventory rule above applies as before; otherwise the escalation.
+- **Unchanged:** one recipient, no Cc/Bcc, never redirected (cause 3), nothing stored, masked in audit and trail (the audit now also says which source named the address).
+
+Residual risk (accepted by Gokul): a requester who enters a corporate-domain mailbox they control, which both approvers miss, receives the joiner's pass. Mitigation available if needed: a people-inventory entry for every joiner (the inventory then overrides a different typed address).
+
+Tests: `F2TapRecipientTests` (rewritten for the new order) and `AgentTapTests`.

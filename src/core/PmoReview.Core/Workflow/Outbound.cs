@@ -81,7 +81,7 @@ public sealed class OutboxOnlySender : INotificationSender
 
 /// <summary>
 /// Sends one mail now instead of through the outbox, for content that must never be stored: the agent's sign-in details
-/// (initial password + TAP). F2 (v1.1): exactly one recipient — the verified enterprise mail (<see cref="TapRecipient"/>) —
+/// (initial password + TAP). F2 (v1.1): exactly one recipient — the address <see cref="TapRecipient"/> allows —
 /// no Cc or Bcc, **never redirected** (also not in a test environment), nothing stored. Not retried: a failure goes to the
 /// ID team.
 /// </summary>

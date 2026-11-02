@@ -211,7 +211,7 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     to = sorted({agent_of(r).get("signInDetailsSentTo") or "?" for r in mailed} | {a for n in sent for a in n.get("deliveredTo") or []})
     out.append(Result("10d. Agent mailed the sign-in details (one-time TAP, initial password, MFA steps)", PASS if mailed or sent else WAIT,
                       f"{len(mailed) + len(sent)} sent, to {to or 'nobody yet'}",
-                      "" if mailed or sent else "needs step 5b, TAP_MAIL_SENDER and a people inventory entry; then a new request (the agent mails it in the run that creates the account)"))
+                      "" if mailed or sent else "needs step 5b and TAP_MAIL_SENDER; then a new request with the joiner's enterprise mail as Enterprise ID (the agent mails it in the run that creates the account)"))
     evidence("11. Agent assigned the Azure role(s)", "agent-role-assigned", "after the agent's own ID step is verified, wait 5–10 min")
     waiting = [r["id"][:8] for r in v2 if "agent-waiting-permission" in steps(r) and status(r) in ("WithIdTeam", "WithRoleTeam")]
     if waiting:

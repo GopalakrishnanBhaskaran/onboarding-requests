@@ -49,7 +49,7 @@ const useLocal = makeStyles({
   noteHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px', cursor: 'pointer' },
 });
 
-export function RequestDetailPage({ project, requestId }: { project: ProjectSummary; requestId: string }) {
+export function RequestDetailPage({ project, requestId, tap = false }: { project: ProjectSummary; requestId: string; tap?: boolean }) {
   const s = useStyles();
   const l = useLocal();
   const queue = useActionQueue();
@@ -194,8 +194,8 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
             {note && <Caption1 role="status">{note}</Caption1>}
           </section>
 
-          {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} onDone={done} onStale={() => void load()} />}
-          {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} onDone={done} onStale={() => void load()} />}
+          {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} tap={tap} onDone={done} onStale={() => void load()} />}
+          {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} tap={tap} onDone={done} onStale={() => void load()} />}
           {view.approvalHint && (
             <MessageBar intent="info" layout="multiline">
               <MessageBarBody><MessageBarTitle>Waiting for a decision</MessageBarTitle>{view.approvalHint}</MessageBarBody>

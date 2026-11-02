@@ -368,7 +368,8 @@ agent_tap() {
 
   [[ "$lifetime" =~ ^[0-9]+$ ]] || { echo "--lifetime must be minutes"; return 1; }
   # v1.1 F2 (decision 19): the pass goes only through Graph sendMail from one mailbox (TAP_MAIL_SENDER), Application Mail.Send
-  # scoped to it by Exchange RBAC for Applications (F81), to the people inventory's verified address; never redirected.
+  # scoped to it by Exchange RBAC for Applications (F81), to the Enterprise ID approved on the request (else the people
+  # inventory's verified address, TapRecipient); never redirected.
   tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
   [[ "$tap_sender" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "--sender <mailbox> is required: the shared mailbox the TAP mail is sent from (TAP_MAIL_SENDER)."; return 1; }
   prov=$(worker_setting "$name" AGENT_PROVISIONING)
@@ -377,7 +378,8 @@ agent_tap() {
   echo "Checks:"
   echo "  Agent provisioning: ${prov:-false} (must be true: the agent mails passes only for accounts it creates)"
   echo "  TAP sender mailbox: $tap_sender (Graph sendMail; the TAP mail is never redirected, also not in test)"
-  echo "  Recipient: the people inventory's EnterpriseEmail of the new account, equal to its Entra mail or UPN; otherwise an escalation"
+  echo "  Recipient: the Enterprise ID on the request (approved by the Owner and Security; not a personal domain, not the requester or an approver,"
+  echo "  not against the people inventory); else the inventory's EnterpriseEmail equal to the Entra mail or UPN; otherwise an escalation"
   [[ -z "$mailsend" ]] || echo "  WARNING: the worker holds Graph Mail.Send in Entra: it adds up with the Exchange scope and makes it useless (F81). Remove it."
   policy=$(tap_policy)
   if [[ -n "$policy" ]]; then
@@ -399,7 +401,7 @@ agent_tap() {
   echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
   echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
   echo "  Risk: the TAP permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
-  echo "  request after both approvals, mails it once to the verified enterprise mail and keeps no copy (audit: masked recipient only)."
+  echo "  request after both approvals, mails it once to the approved Enterprise ID and keeps no copy (audit: masked recipient only)."
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0

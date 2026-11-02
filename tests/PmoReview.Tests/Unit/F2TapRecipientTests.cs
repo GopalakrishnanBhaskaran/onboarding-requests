@@ -12,10 +12,11 @@ using static PmoReview.Tests.Unit.AgentTapTests;
 namespace PmoReview.Tests.Unit;
 
 /// <summary>
-/// v1.1 F2 (bug fix, docs/ROOT_CAUSE.md): the TAP mail goes only to the people inventory's EnterpriseEmail of the account,
-/// checked against the Entra user's mail / UPN. Anything else: nothing is sent, an escalation "TAP recipient mismatch" is
-/// raised and the ID team hands the pass over. One recipient, no Cc/Bcc, never redirected, never logged or stored.
-/// Each edge case of the feature pack (section B.8, F2) is one test here.
+/// Who receives the TAP mail. Gokul, 2 Nov 2026: the Enterprise ID entered on the request, approved by the Owner and
+/// Security, unless refused (guest form, personal domain, the requester's / Owner's / an approver's own address, or the people
+/// inventory says otherwise); then v1.1 F2 (docs/ROOT_CAUSE.md): the inventory's EnterpriseEmail checked against the Entra
+/// user's mail / UPN. Anything else: nothing is sent, an escalation "TAP recipient mismatch" is raised and the ID team hands
+/// the pass over. One recipient, no Cc/Bcc, never redirected, never logged or stored, never another body field.
 /// </summary>
 public class F2TapRecipientTests
 {
@@ -44,12 +45,24 @@ public class F2TapRecipientTests
     }
 
     [Fact]
-    public async Task F2_EnterpriseEmail_empty_sends_nothing_and_escalates()
+    public async Task An_inventory_entry_without_an_address_leaves_the_approved_Enterprise_ID_as_the_recipient()
     {
         var (app, id) = await Approved(On(), person: false);
         await AddPerson(app, enterpriseEmail: "  ");
         await app.RunWorker();
-        await AssertEscalatedAsync(app, id, "EnterpriseEmail of sample.e2001@sample.invalid is empty");
+        Assert.Equal([CorpMail], Assert.Single(app.Mail.Sent).To);
+        Assert.Empty(await Escalations(app));
+        Assert.Equal(TapRecipient.FromRequestSource, (await app.Request(id)).Flow!.IdTeamTask!.Agent!.SignInDetailsFrom);
+    }
+
+    [Fact]
+    public async Task A_personal_Enterprise_ID_and_no_inventory_address_send_nothing_and_escalate()
+    {
+        var (app, id) = await Approved(On(), enterpriseId: "sample.e2001@gmail.com", person: false);
+        await AddPerson(app, enterpriseEmail: "  ");
+        await app.RunWorker();
+        await AssertEscalatedAsync(app, id, "the request's Enterprise ID is in a personal mail domain (gmail.com)");
+        Assert.Contains("EnterpriseEmail of sample.e2001@sample.invalid is empty", Assert.Single(await Escalations(app)).Reason);
 
         await app.RunWorker(); // idempotent: one escalation, still no mail
         Assert.Single(await Escalations(app));
@@ -59,28 +72,83 @@ public class F2TapRecipientTests
     [Fact]
     public async Task F2_Guest_EXT_upn_is_never_a_recipient()
     {
-        var (app, id) = await Approved(On(), person: false);
+        var (app, id) = await Approved(On(), enterpriseId: "sample.e2001@gmail.com", person: false);
         await AddPerson(app, enterpriseEmail: "sample.e2001_sample-corp.invalid#EXT#@sample.invalid");
         await app.RunWorker();
         await AssertEscalatedAsync(app, id, "guest sign-in form (#EXT#)");
 
-        // The Entra side as well: a guest account (or a #EXT# UPN) is refused even when the inventory matches.
+        // A guest form typed as the Enterprise ID is no mailbox either.
+        var r = await app.Request(id);
+        Assert.Contains("guest sign-in form", TapRecipient.FromApprovedRequest(r with { EnterpriseId = "sample.e2001_sample-corp.invalid#EXT#@sample.invalid" }, null, Upn).Reason);
+        Assert.Contains("guest sign-in form", TapRecipient.FromApprovedRequest(r with { EnterpriseId = "live.com#sample.e2001@sample-corp.invalid" }, null, Upn).Reason);
+
+        // The Entra side as well: a guest account (or a #EXT# UPN) is refused even when the inventory and the request match.
         var person = new Person { Id = "p", ProjectId = TestApp.Alpha, EnterpriseId = Upn, EnterpriseEmail = Upn, DisplayName = "x", UpdatedBy = "t", UpdatedAt = DateTimeOffset.UnixEpoch };
+        var ok = r with { EnterpriseId = Upn };
         Assert.Contains("guest account", TapRecipient.CrossCheck(person, Upn, new DirectoryUser("id", Upn, "Guest", true)).Reason);
+        Assert.Contains("guest account", TapRecipient.After(person, Upn, new DirectoryUser("id", Upn, "Guest", true), ok).Reason);
         Assert.False(TapRecipient.CrossCheck(person, Upn, new DirectoryUser("id", "sample.e2001_x.invalid#EXT#@sample.invalid", "Member", true)).Ok);
+        Assert.False(TapRecipient.After(person, Upn, new DirectoryUser("id", "sample.e2001_x.invalid#EXT#@sample.invalid", "Member", true), ok).Ok);
+        Assert.Contains("Entra returned", TapRecipient.After(person, Upn, new DirectoryUser("id", "someone.else@sample.invalid", "Member", true), ok).Reason);
     }
 
     [Fact]
-    public async Task F2_Inventory_vs_Entra_mismatch_sends_nothing_and_escalates()
+    public async Task An_inventory_naming_another_mailbox_than_the_request_sends_nothing_and_escalates()
     {
-        // The inventory names the corporate mailbox, but Entra has no such mail on the account and its UPN differs.
-        var (app, id) = await Approved(On(), person: false);
+        // The requester typed one mailbox; the people inventory names another, which Entra does not confirm either.
+        var (app, id) = await Approved(On(), enterpriseId: "sample.e2001@sample-other.invalid", person: false);
         await AddPerson(app, enterpriseEmail: CorpMail);
         await app.RunWorker();
-        await AssertEscalatedAsync(app, id, "is neither the Entra mail (none) nor the UPN");
+        await AssertEscalatedAsync(app, id, "the people inventory names another enterprise mail for sample.e2001@sample.invalid (s***@sample-corp.invalid) than the request (s***@sample-other.invalid)");
         var e = Assert.Single(await Escalations(app));
+        Assert.Contains("is neither the Entra mail (none) nor the UPN", e.Reason);
         Assert.DoesNotContain(CorpMail, e.Reason); // masked
-        Assert.Contains("s***@sample-corp.invalid", e.Reason);
+        Assert.DoesNotContain("sample.e2001@sample-other.invalid", e.Reason);
+    }
+
+    [Fact]
+    public async Task The_request_and_the_inventory_agreeing_is_enough_even_without_an_Entra_mail()
+    {
+        // The usual case: the joiner's corporate mailbox is typed on the request and listed in the inventory; the new
+        // account has no mailbox of its own yet. Before 2 Nov this escalated ("neither the Entra mail nor the UPN").
+        var (app, id) = await Approved(On());
+        await app.RunWorker();
+        Assert.Equal([CorpMail], Assert.Single(app.Mail.Sent).To);
+        Assert.Empty(await Escalations(app));
+        Assert.Equal(TeamTaskState.Reported, (await app.Request(id)).Flow!.IdTeamTask!.State);
+    }
+
+    [Fact]
+    public async Task The_requester_the_Owner_and_the_approvers_never_receive_the_pass()
+    {
+        var (app, id) = await Approved(On(), person: false);
+        var r = await app.Request(id);
+        Assert.True(TapRecipient.FromApprovedRequest(r, null, Upn).Ok);
+        var owner = r.Flow!.CurrentApproval(ApprovalStage.Owner)!;
+        var security = r.Flow.CurrentApproval(ApprovalStage.Security)!;
+        foreach (var address in new[] { r.CreatedByName!, r.Owner!, owner.ByName, security.ByName })
+            Assert.Matches("the (requester|named Owner|Owner approver|Security approver)'s own address",
+                TapRecipient.FromApprovedRequest(r with { EnterpriseId = address.ToUpperInvariant() }, null, Upn).Reason);
+        Assert.Contains("the Security approver's own address", TapRecipient.FromApprovedRequest(r with { EnterpriseId = security.ByName }, null, Upn).Reason);
+        Assert.Contains("the requester's own address", TapRecipient.FromApprovedRequest(r with { EnterpriseId = r.CreatedByName }, null, Upn).Reason);
+        // Only while both approvals count: a superseded one (the reviewed scope changed) stops it.
+        Assert.Contains("not both current", TapRecipient.FromApprovedRequest(
+            r with { Flow = r.Flow with { Approvals = [.. r.Flow.Approvals.Select(a => a with { Superseded = true })] } }, null, Upn).Reason);
+        Assert.Contains("not a plain mail address", TapRecipient.FromApprovedRequest(r with { EnterpriseId = $"Jane <{CorpMail}>" }, null, Upn).Reason);
+        Assert.Contains("no Enterprise ID", TapRecipient.FromApprovedRequest(r with { EnterpriseId = " " }, null, Upn).Reason);
+    }
+
+    [Fact]
+    public async Task The_approvers_are_told_where_the_sign_in_details_go()
+    {
+        var (app, id) = await Approved(On(), person: false);
+        var asks = (await app.Notifications(id)).Where(n => n.Kind == NotificationKind.ApprovalRequested).ToList();
+        Assert.Equal(2, asks.Count); // Owner, then Security
+        foreach (var n in asks)
+            Assert.Contains($"the AI agent mails the one-time Temporary Access Pass and the initial password to {CorpMail} (the Enterprise ID on this request). Reject the request if", n.Body);
+        // Without the agent TAP the line is not there (the ID team hands the pass over).
+        var (off, offId) = await Approved(On(tap: false), person: false);
+        Assert.DoesNotContain((await off.Notifications(offId)).Where(n => n.Kind == NotificationKind.ApprovalRequested), n => n.Body.Contains("Sign-in details:"));
     }
 
     [Fact]
@@ -103,7 +171,7 @@ public class F2TapRecipientTests
         await AddPerson(app, alternate: alternate);
         await app.RunWorker();
         var mail = Assert.Single(app.Mail.Sent);
-        Assert.Equal([Upn], mail.To);
+        Assert.Equal([CorpMail], mail.To);
         Assert.DoesNotContain(alternate, mail.Body + mail.Subject);
         Assert.DoesNotContain(alternate, await Stored(app));
 
@@ -111,12 +179,21 @@ public class F2TapRecipientTests
         var p = new Person { Id = "p", ProjectId = TestApp.Alpha, EnterpriseId = Upn, EnterpriseEmail = null, AlternateEmail = alternate, DisplayName = "x", UpdatedBy = "t", UpdatedAt = DateTimeOffset.UnixEpoch };
         Assert.Null(TapRecipient.FromInventory(p, Upn).To);
         Assert.Contains("equals its AlternateEmail", TapRecipient.FromInventory(p with { EnterpriseEmail = alternate }, Upn).Reason);
+
+        // Typed on the request, the alternate address is refused as well (same local part, so the same account).
+        const string typedAlternate = "sample.e2001@sample-personal.invalid";
+        var (typed, typedId) = await Approved(On(), enterpriseId: typedAlternate, person: false);
+        await AddPerson(typed, enterpriseEmail: null, alternate: typedAlternate);
+        await typed.RunWorker();
+        await AssertEscalatedAsync(typed, typedId, "the request's Enterprise ID is the AlternateEmail of sample.e2001@sample.invalid");
     }
 
     [Fact]
     public async Task F2_Body_tries_to_override_recipient()
     {
-        // The requester types another domain and adds recipient fields: the body never decides where the pass goes.
+        // The requester types another domain and adds recipient fields. The extra fields never count; the typed Enterprise ID
+        // counts only when the people inventory does not name another mailbox — here it names the account's own UPN, which
+        // Entra confirms, so the pass goes there.
         const string attacker = "sample.attacker@sample-evil.invalid";
         var intake = new
         {
@@ -127,7 +204,8 @@ public class F2TapRecipientTests
             recipient = attacker, to = new[] { attacker }, cc = new[] { attacker }, bcc = new[] { attacker }, notifyTo = attacker, tapRecipient = attacker,
             alternateEmail = attacker, enterpriseEmail = attacker,
         };
-        var (app, id) = await Approved(On(), intake: intake);
+        var (app, id) = await Approved(On(), intake: intake, person: false);
+        await AddPerson(app, enterpriseEmail: Upn);
         Assert.Equal(Upn, (await app.Request(id)).DomainId); // the account in the tenant's domain
 
         await app.RunWorker();
@@ -146,7 +224,7 @@ public class F2TapRecipientTests
         Assert.Equal(TeamTaskState.Open, task.State);
         Assert.Contains("could not be sent (MailForbidden)", task.Agent!.TapLeft);
         var audit = Assert.Single((await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value), a => a.Action == "tap-mail-failed");
-        Assert.Equal("sentTo=s***@sample.invalid; expiresAt=" + app.Clock.UtcNow.AddMinutes(480).ToString("O") + "; error=MailForbidden", audit.Details);
+        Assert.Equal("sentTo=s***@sample-corp.invalid; expiresAt=" + app.Clock.UtcNow.AddMinutes(480).ToString("O") + "; error=MailForbidden", audit.Details);
         Assert.DoesNotContain(app.Writer.Passes[0], await Stored(app));
         Assert.Empty(await Escalations(app)); // the recipient was right; the ID team re-issues the pass
     }
@@ -170,11 +248,18 @@ public class F2TapRecipientTests
     }
 
     [Fact]
-    public async Task F2_Not_in_the_inventory_or_a_leaver_is_never_mailed()
+    public async Task Not_in_the_inventory_the_approved_Enterprise_ID_gets_it_but_a_leaver_never_does()
     {
+        // Gokul, 2 Nov 2026: the joiner is usually not in the inventory yet; the Enterprise ID on the request is the mailbox.
         var (app, id) = await Approved(On(), person: false);
         await app.RunWorker();
-        await AssertEscalatedAsync(app, id, "is not in the people inventory");
+        Assert.Equal([CorpMail], Assert.Single(app.Mail.Sent).To);
+        Assert.Empty(await Escalations(app));
+
+        var (leaver, leaverId) = await Approved(On(), person: false);
+        await AddPerson(leaver, status: PersonStatus.Leaver);
+        await leaver.RunWorker();
+        await AssertEscalatedAsync(leaver, leaverId, "is not an active person in the people inventory (Leaver)");
 
         var p = new Person { Id = "p", ProjectId = TestApp.Alpha, EnterpriseId = Upn, EnterpriseEmail = Upn, DisplayName = "x", UpdatedBy = "t", UpdatedAt = DateTimeOffset.UnixEpoch };
         Assert.Contains("not an active person", TapRecipient.FromInventory(p with { Status = PersonStatus.Leaver }, Upn).Reason);
@@ -225,7 +310,7 @@ public class F2TapRecipientTests
     [Fact]
     public async Task F2_The_escalation_is_listed_for_the_id_team_and_pmo_without_the_address()
     {
-        var (app, id) = await Approved(On(), person: false);
+        var (app, id) = await Approved(On(), enterpriseId: "sample.e2001@sample-other.invalid", person: false);
         await AddPerson(app, enterpriseEmail: CorpMail);
         await app.RunWorker();
         var list = await app.Call(TestApp.Ivan, "GET", $"projects/{TestApp.Alpha}/escalations");

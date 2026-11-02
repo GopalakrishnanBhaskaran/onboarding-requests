@@ -18,7 +18,7 @@ public static class ContainerNames
     // v1.1 (30 Oct 2026)
     /// <summary>F4: mapping sheet upload versions (+ before-images for rollback).</summary>
     public const string MappingVersions = "mappingVersions";
-    /// <summary>F4/F2: the people inventory (I2). The only source of a TAP recipient.</summary>
+    /// <summary>F4/F2: the people inventory (I2). Checks the TAP recipient (and is its fallback, <see cref="Workflow.TapRecipient"/>).</summary>
     public const string PeopleInventory = "peopleInventory";
     /// <summary>F4: people inventory upload versions.</summary>
     public const string InventoryVersions = "inventoryVersions";

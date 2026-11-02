@@ -92,8 +92,19 @@ public static class Messages
         $"{(stage == ApprovalStage.Owner ? "As the named Owner, approve or reject the business need." : "As Security, approve or reject the risk and access level.")}\n\n" +
         $"AI review summary:\n{scope.Summary}\n" +
         AzureRoleLine(scope, s) +
+        TapRecipientLine(r, s) +
         (owner is null ? "" : $"\nOwner approval: {owner.ByName} on {Time(owner.At)}{(owner.Remarks is null ? "" : $" — {owner.Remarks}")}\n") +
         $"\nRespond in the app (the only channel that counts): {Link(s, r)}");
+
+    /// <summary>
+    /// Gokul, 2 Nov 2026: with the agent TAP on, the approvers approve the address the sign-in details go to — the
+    /// Enterprise ID on the request — so they are told, and told to reject a mailbox that is not the joiner's own.
+    /// </summary>
+    public static string TapRecipientLine(AccessRequest r, WorkflowSettings s) =>
+        s.AgentProvisioning && s.AgentTap && s.MailEnabled && !r.Guest && !string.IsNullOrWhiteSpace(r.EnterpriseId)
+            ? $"\nSign-in details: for a new account the AI agent mails the one-time Temporary Access Pass and the initial password to {r.EnterpriseId.Trim()} " +
+              "(the Enterprise ID on this request). Reject the request if that is not the joiner's own enterprise mailbox.\n"
+            : "";
 
     /// <summary>v1.1 (F3): a ProdApprover decides a production request above Read, after Owner and Security.</summary>
     public static (string, string) ProdApprovalRequested(AccessRequest r, ReviewedScope scope, Escalation e, WorkflowSettings s) => (
@@ -190,20 +201,24 @@ public static class Messages
             "",
             $"Your account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created after the Owner and Security approved request {Short(r)}.",
             "",
+            password is null
+                ? "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then set your own password (steps 3 and 4). Do it now, before the pass expires."
+                : "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then change the temporary password to your own (steps 3 and 4). Do it now, before the pass expires.",
+            "",
             $"Sign-in name: {upn}",
-            password is null ? "Temporary password (not included): see step 6" : $"Temporary password: {password}",
+            password is null ? "Temporary password (not included): you set your own in step 4" : $"Temporary password: {password}",
             $"Temporary Access Pass: {pass}",
             $"The Temporary Access Pass works once and expires {Time(expires)}.",
             "",
-            "Set up multi-factor authentication (MFA) first, before the pass expires:",
+            "Steps:",
             "1. Open a private (InPrivate / Incognito) browser window and go to https://aka.ms/mysecurityinfo",
             "2. Enter your sign-in name. When asked, enter the Temporary Access Pass (not the password).",
             "3. Select \"Add sign-in method\" and choose Microsoft Authenticator. Install the Microsoft Authenticator app on your phone, add a work or school account, and scan the QR code. Approve the test notification. Finish within 10 minutes of signing in.",
-            "4. Still on Security info: delete the Temporary Access Pass entry if you see one.",
-            "5. Sign out and close the private window.",
             password is null
-                ? "6. Set your password at https://aka.ms/sspr (it uses the Microsoft Authenticator you just added). If that page is not available to you, ask the ID team."
-                : "6. Sign in again at https://myapps.microsoft.com with your sign-in name and the temporary password. Choose a new password when asked and approve the sign-in in Microsoft Authenticator.",
+                ? "4. Set your password now: go to https://aka.ms/sspr, enter your sign-in name and confirm with Microsoft Authenticator. If that page is not available to you, ask the ID team."
+                : "4. Change your password now, still signed in: open https://mysignins.microsoft.com/security-info/password/change (or select Password on the left). If asked for the current password, enter the temporary password above. Choose a new password of your own and submit.",
+            "5. Back on Security info: delete the Temporary Access Pass entry if you see one.",
+            "6. Sign out and close the private window. From now on sign in with your new password and approve in Microsoft Authenticator.",
             "",
             $"Your access: '{r.AccessLevel}' on '{r.Resource}' through group {scope.EntraGroup} ({access}). You get another mail when the access is ready.",
             "",
@@ -212,7 +227,7 @@ public static class Messages
             "",
             $"Request {Short(r)} · requested by {r.CreatedByName}.",
         };
-        return ($"Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details and MFA set-up", string.Join("\n", lines));
+        return ($"Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in", string.Join("\n", lines));
     }
 
     public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null, bool signInDetailsMailed = false)

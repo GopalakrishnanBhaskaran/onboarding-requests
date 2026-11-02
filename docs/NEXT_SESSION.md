@@ -19,6 +19,10 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - No Azure leftover: the worker could list the subscription's role assignments; the account had no direct Azure role.
   - The test account is still enabled until tomorrow's re-run, unless Gokul disabled it by hand.
 - **New on 2 Nov (code only, not deployed; branch `claude/portal-ux-redesign`):**
+  - **Agent TAP to the Enterprise ID on the request** (Gokul: "send the tap … to the user enterprise id which was asked for … automatic … ask them to reset the password immediately"). Live symptom: the joiner was not in the people inventory, so F2 escalated *TAP recipient mismatch* and the ID team had to hand the pass over.
+    - Recipient now: the Enterprise ID entered on the request, approved by the Owner and Security; the approval page and mail name it. Refused for a guest form, a personal domain, the requester's / Owner's / an approver's own address, or when the people inventory says otherwise. Then the old F2 inventory rule; else the escalation (`docs/ROOT_CAUSE.md`, "Change on 2 Nov 2026").
+    - Mail: "IMPORTANT: right after you sign in with the Temporary Access Pass … change the temporary password" + step 4 `https://mysignins.microsoft.com/security-info/password/change` (F119).
+    - Requests already left to the ID team keep their pass with the ID team (hand back does not re-send); test with a new request, with an Enterprise ID mailbox you control.
   - **Returned "Admin-level" for Data Engineer, fixed** (Gokul's live test, 2 Nov: Data Engineer on PEST ph returned with "Admin-level access is requested …").
     - Cause: rows whose roles include Contributor are flagged Privileged on import, and the review ranked every Privileged row as admin.
     - Now: an admin level (Admin, Owner …) still needs an administrative task. A job-role level on a Privileged row (Data Engineer …) needs the tasks that use the access (build or run pipelines, ingest, transform, deploy, support …). The reason names the row and its roles; the form warns before submit.

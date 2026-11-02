@@ -10,7 +10,7 @@ export const AGENT_BANNER =
 
 /** Agent TAP switched on (approved) as well: the agent mails a new account's sign-in details itself. */
 export const AGENT_TAP_BANNER =
-  'The AI agent reviews, routes, verifies and reports. It never approves: only the named Owner and Security approve. Only after both approvals it creates the user, group and membership, assigns the approved role where allowed, and mails a new joiner a one-time Temporary Access Pass with the MFA set-up steps.';
+  'The AI agent reviews, routes, verifies and reports. It never approves: only the named Owner and Security approve. Only after both approvals it creates the user, group and membership, assigns the approved role where allowed, and mails a new joiner a one-time Temporary Access Pass with the MFA set-up steps to the Enterprise ID on the request.';
 
 /** Stated to every requester upfront (the server sends the same text). */
 export const FLOW_OVERVIEW = [
@@ -39,7 +39,7 @@ export function whoDoesWhat(agent: boolean, tap = false, privileged = false): [s
   return WHO_DOES_WHAT.map(([who, what]): [string, string] => {
     if (who === 'AI agent') return [who, 'Reviews, validates, summarises, routes, tracks, verifies, reports. Never approves. Only after both approvals: creates the user ID, group and membership and assigns the approved role where the mapping sheet allows it' +
       (privileged ? ' (privileged rows too, never Owner, Contributor, User Access Administrator or the like)' : '') +
-      (tap ? '; mails a new joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps (once, to the Enterprise ID mail).' : '.')];
+      (tap ? '; mails a new joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps (once, to the Enterprise ID mail on the request), with the instruction to change the password right after signing in.' : '.')];
     if (who === 'ID team') return [who, tap
       ? `Does the user/group work and Temporary Access Pass the agent leaves to it (${left}).`
       : `Issues the Temporary Access Pass; does the user/group work the agent leaves to it (${left}).`];

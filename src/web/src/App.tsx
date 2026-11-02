@@ -285,7 +285,7 @@ function Page({ route, project, projects, onOpenProject, agent, tap, privileged 
     case 'edit':
       return <RequestFormPage key={route.requestId} project={project} requestId={route.requestId} agent={agent} tap={tap} privileged={privileged} />;
     case 'request':
-      return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} />;
+      return <RequestDetailPage key={`${project.projectId}/${route.requestId}`} project={project} requestId={route.requestId} tap={agent && tap} />;
     case 'queue':
       return <QueuePage onOpen={onOpenProject} projects={projects} />;
     case 'sheet':

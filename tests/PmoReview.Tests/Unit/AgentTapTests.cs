@@ -10,8 +10,9 @@ namespace PmoReview.Tests.Unit;
 /// <summary>
 /// Agent TAP (Gokul, 22 Oct 2026; off until approved): for an account the agent has just created after both approvals, it
 /// issues one one-time Temporary Access Pass and mails it with the initial password and the MFA set-up steps — once,
-/// directly. v1.1 F2: only to the people inventory's EnterpriseEmail checked against Entra, never redirected, nothing of
-/// the mail stored (an audit event only). Every failure leaves the pass to the ID team, as before. The F2 edge cases are
+/// directly. Gokul, 2 Nov 2026: to the Enterprise ID entered on the request (approved by the Owner and Security; the people
+/// inventory must agree), else (v1.1 F2) the inventory's EnterpriseEmail checked against Entra; never redirected, nothing of
+/// the mail stored (an audit event only). The mail tells the joiner to change the password right after the TAP sign-in. Every failure leaves the pass to the ID team, as before. The F2 edge cases are
 /// in <see cref="F2TapRecipientTests"/>.
 /// </summary>
 public class AgentTapTests
@@ -32,7 +33,7 @@ public class AgentTapTests
     };
 
     /// <summary>The people inventory entry for the account the agent creates (F2: the only source of the TAP recipient).</summary>
-    internal static async Task AddPerson(TestApp app, string upn = Upn, string? enterpriseEmail = Upn, string? alternate = null, PersonStatus status = PersonStatus.Active,
+    internal static async Task AddPerson(TestApp app, string upn = Upn, string? enterpriseEmail = EnterpriseMail, string? alternate = null, PersonStatus status = PersonStatus.Active,
         string? manager = "sample-user-olivia@sample.invalid", string project = TestApp.Alpha) =>
         await app.Stores.PeopleInventory.CreateAsync(new Person
         {
@@ -104,20 +105,23 @@ public class AgentTapTests
         Assert.Equal([$"create-group {Group}", $"create-user {Upn}", $"create-tap {Upn} 480", $"add-member {Upn} {Group}"], app.Writer.Calls);
         var mail = Assert.Single(app.Mail.Sent);
         var (password, pass) = (Assert.Single(app.Writer.Passwords), Assert.Single(app.Writer.Passes));
-        Assert.Equal([Upn], mail.To); // F2: the inventory's EnterpriseEmail, equal to the Entra UPN — not the typed Enterprise ID
+        Assert.Equal([EnterpriseMail], mail.To); // the Enterprise ID entered on the request, approved by the Owner and Security
         Assert.Equal(NotificationKind.SignInDetails, mail.Kind);
         Assert.Contains($"Sign-in name: {Upn}", mail.Body);
         Assert.Contains($"Temporary password: {password}", mail.Body);
         Assert.Contains($"Temporary Access Pass: {pass}", mail.Body);
-        foreach (var step in new[] { "https://aka.ms/mysecurityinfo", "Microsoft Authenticator", "scan the QR code", "https://myapps.microsoft.com", "delete the Temporary Access Pass" })
+        foreach (var step in new[] { "https://aka.ms/mysecurityinfo", "Microsoft Authenticator", "scan the QR code", "delete the Temporary Access Pass",
+                     "IMPORTANT: right after you sign in with the Temporary Access Pass", "4. Change your password now, still signed in: open https://mysignins.microsoft.com/security-info/password/change" })
             Assert.Contains(step, mail.Body);
+        Assert.Contains("change your password right after you sign in", mail.Subject);
+        Assert.True(mail.Body.IndexOf("Change your password now", StringComparison.Ordinal) < mail.Body.IndexOf("Sign out", StringComparison.Ordinal));
 
         // F2: no copy of the mail is kept; the audit event holds the user id, the masked recipient, the time, the expiry
         // and the correlation id. Nothing the app stored holds either value.
         Assert.DoesNotContain(await app.Notifications(id), n => n.Kind == NotificationKind.SignInDetails);
         var audit = Assert.Single((await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value), a => a.Action == "tap-mail-sent");
         Assert.Equal((app.Directory.UpnOf(audit.Target), "test-cycle"), (Upn, audit.CorrelationId));
-        Assert.Equal($"sentTo=s***@sample.invalid; expiresAt={app.Clock.UtcNow.AddMinutes(480):O}", audit.Details);
+        Assert.Equal($"sentTo=s***@sample-corp.invalid; expiresAt={app.Clock.UtcNow.AddMinutes(480):O}; source={TapRecipient.FromRequestSource}", audit.Details);
         var stored = await Stored(app);
         Assert.DoesNotContain(password, stored);
         Assert.DoesNotContain(pass, stored);
@@ -133,7 +137,7 @@ public class AgentTapTests
         var summary = Assert.Single(await app.Notifications(id), n => n.Kind == NotificationKind.ProvisioningSummary);
         Assert.Contains("sample.idteam.alpha@sample.invalid", summary.To);
         Assert.Contains($"mailed the sign-in details", summary.Body);
-        Assert.Contains("the verified enterprise mail s***@sample.invalid", summary.Body);
+        Assert.Contains($"to s***@sample-corp.invalid ({TapRecipient.FromRequestSource})", summary.Body);
         Assert.DoesNotContain(EnterpriseMail, summary.Body);
 
         // Next run: the agent verifies its own ID step (8-hour pass allowed for a mailed pass), assigns the role, verifies the
@@ -159,7 +163,7 @@ public class AgentTapTests
         await app.RunWorker();
 
         var mail = Assert.Single(app.Mail.Sent);
-        Assert.Equal([Upn], mail.To);
+        Assert.Equal([EnterpriseMail], mail.To);
         Assert.StartsWith("Your new account", mail.Subject, StringComparison.Ordinal);
         Assert.DoesNotContain(Tester, mail.Body);
         Assert.Equal(TeamTaskState.Reported, (await app.Request(id)).Flow!.IdTeamTask!.State);
@@ -273,8 +277,8 @@ public class AgentTapTests
         await app.RunWorker();
         var mail = Assert.Single(app.Mail.Sent);
         Assert.DoesNotContain(app.Writer.Passwords[0], mail.Body);
-        Assert.Contains("Temporary password (not included): see step 6", mail.Body);
-        Assert.Contains("https://aka.ms/sspr", mail.Body);
+        Assert.Contains("Temporary password (not included): you set your own in step 4", mail.Body);
+        Assert.Contains("4. Set your password now: go to https://aka.ms/sspr", mail.Body);
         Assert.Contains($"Temporary Access Pass: {app.Writer.Passes[0]}", mail.Body);
         Assert.Single(app.Writer.Users); // the account was created once
         Assert.True((await app.Request(id)).Flow!.IdTeamTask!.Agent is { PasswordMailed: false, SignInDetailsSentAt: not null });
