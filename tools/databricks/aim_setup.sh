@@ -2,9 +2,9 @@
 # Automatic identity management (AIM) for Azure Databricks: the account reads users, groups, nested groups and service
 # principals straight from Microsoft Entra ID, with no SCIM app. Runs in Azure Cloud Shell (Bash).
 #
-#   aim_setup.sh plan   --account-id <id> [--workspace <name|id> --group <name|object id>...]
-#   aim_setup.sh apply  --account-id <id> --workspace <name|id> --group <name|object id>... [--admin] --approved-by "<name> <date>"
-#   aim_setup.sh status --account-id <id> --workspace <name|id>
+#   aim_setup.sh plan   --account-id <id> [--workspace <name|id|URL> --group <name|object id>...]
+#   aim_setup.sh apply  --account-id <id> --workspace <name|id|URL> --group <name|object id>... [--admin] --approved-by "<name> <date>"
+#   aim_setup.sh status --account-id <id> --workspace <name|id|URL>
 #   aim_setup.sh self-test                                   offline, against mocked Azure CLI and Databricks
 #   Option for all: --subscription <id> (where the workspaces are; default: the Azure CLI's current one)
 #
@@ -78,9 +78,11 @@ check_account_admin() {
   fi
 }
 
-workspace_id() {  # a workspace name in the subscription, or its numeric id → the numeric workspace id
+workspace_id() {  # a workspace name in the subscription, its numeric id, or its URL → the numeric workspace id
   local w="$1" ids n
   if [[ "$w" =~ ^[0-9]+$ ]]; then printf '%s' "$w"; return; fi
+  # The workspace URL (https://adb-<id>.<n>.azuredatabricks.net/…, with or without https:// or a trailing slash) names the id.
+  if [[ "$w" =~ adb-([0-9]+)\.[0-9]+\.azuredatabricks\.net ]]; then printf '%s' "${BASH_REMATCH[1]}"; return; fi
   mapfile -t ids < <(azq resource list --resource-type Microsoft.Databricks/workspaces ${SUB_ARGS[@]+"${SUB_ARGS[@]}"} --query "[?name=='$w'].id" -o tsv)
   n=${#ids[@]}
   (( n == 1 )) || die "workspace \"$w\": $n found in this subscription (use --subscription, or the numeric workspace id from the URL adb-<id>.<n>.azuredatabricks.net)"
@@ -267,6 +269,10 @@ self_test() {
   check "a USER run never lowers ADMIN" '[[ "$(puts)" == 0 && "$out" == *"already ADMIN"* ]]'
   out=$(run status --account-id "$acc" --workspace ws-sample)
   check "status lists both groups" '[[ "$out" == *"SAMPLE-GRP-DBX-USERS"*"USER"* && "$out" == *"SAMPLE-GRP-DBX-ADMINS"*"ADMIN"* ]]'
+  out=$(run plan --account-id "$acc" --workspace "adb-1234567890123456.0.azuredatabricks.net/" "${G[@]}" || true)
+  check "plan: the workspace URL (no https, trailing slash) names the same workspace" '[[ "$out" == *"SAMPLE-GRP-DBX-USERS"*"already USER"* && "$out" == *"SAMPLE-GRP-DBX-ADMINS"*"already ADMIN"* && "$out" != *"found in this subscription"* ]]'
+  out=$(run status --account-id "$acc" --workspace "https://adb-1234567890123456.7.azuredatabricks.net/?o=1234567890123456" || true)
+  check "status: the full https workspace URL works" '[[ "$out" == *"SAMPLE-GRP-DBX-USERS"*"USER"* ]]'
   check "unknown Entra group refused" '! run plan --account-id "$acc" --workspace ws-sample --group NOPE >/dev/null'
   check "the Databricks token never appears in any output" '[[ "$all" != *"$token"* ]]'
   if (( fails == 0 )); then say "self-test passed"; else say "self-test: $fails failed"; exit 1; fi

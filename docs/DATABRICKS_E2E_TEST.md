@@ -51,10 +51,13 @@ Then **Edit** the row and paste the **Group object id** from A1. Leave the *Azur
 
 **A3. Databricks account and workspace** (Cloud Shell, as a Databricks account admin):
 ```bash
-ACC='<Databricks account id>'; WS='<workspace resource name>'; G='azr-pes-rg-data-dev-dbw-weu-datareaders'
+ACC='<Databricks account id>'
+WS='<workspace resource name, numeric id or URL>'      # pilot: dbw-pmo-pkt2ofpqmlf3e
+G='azr-pes-rg-data-dev-dbw-weu-datareaders'
+az ad group show --group "$G" --query "{name:displayName, id:id}" -o table   # A1 must exist first
 A=tools/databricks/aim_setup.sh
 bash $A plan  --account-id "$ACC" --workspace "$WS" --group "$G"
-bash $A apply --account-id "$ACC" --workspace "$WS" --group "$G" --approved-by "Gokul <date>"
+bash $A apply --account-id "$ACC" --workspace "$WS" --group "$G" --approved-by "Gokul 2026-11-02"
 bash $A status --account-id "$ACC" --workspace "$WS"      # the group: USER
 ```
 

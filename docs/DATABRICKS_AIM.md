@@ -60,7 +60,7 @@ bash $A apply --account-id "$ACC" --workspace <workspace name> --group "<Entra a
 bash $A status --account-id "$ACC" --workspace <workspace name>
 ```
 
-- `--workspace` takes the workspace's Azure resource name (in the current subscription; `--subscription` for another) or its numeric id (the number in `adb-<id>.<n>.azuredatabricks.net`).
+- `--workspace` takes the workspace's Azure resource name (in the current subscription; `--subscription` for another), its numeric id, or its URL (`adb-<id>.<n>.azuredatabricks.net`, with or without `https://`).
 - `--group` takes the Entra group's display name or object id.
 - `apply`:
   - adds each group to the Databricks account through the external group API, which is also the proof that AIM is on. While AIM is off it stops before assigning anything (F111).
