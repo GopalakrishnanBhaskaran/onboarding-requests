@@ -7,7 +7,7 @@ set +e; trap - ERR            # a scan must not stop on one unreadable subscript
 FRAGS=("${@:-pvdbx purview}"); FRAGS=(${FRAGS[*]})
 exec 3>&2                     # progress goes to the screen; the scan output goes to the file
 echo "$(date -u +%H:%M:%SZ) starting scan (each az call times out after 90 s)" >&3
-az() { timeout 90 command az "$@"; }   # a stuck call (e.g. a token-cache lock held by a stopped job) cannot hang the scan
+AZ_BIN="$(command -v az)"; az() { timeout 90 "$AZ_BIN" "$@"; }   # a stuck call (e.g. a token-cache lock held by a stopped job) cannot hang the scan
 az account show >/dev/null 2>&1 || die "not signed in, or az is blocked: run 'jobs -l' and 'kill -9 %1' for any stopped job"
 {
   echo "## signed in: tenant $(az account show --query tenantId -o tsv) user type $(az account show --query user.type -o tsv)"
