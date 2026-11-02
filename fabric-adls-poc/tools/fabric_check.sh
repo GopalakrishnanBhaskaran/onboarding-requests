@@ -5,7 +5,7 @@
 source "$(dirname "$0")/lib.sh"
 set +e; trap - ERR
 REGION="${1:-centralindia}"
-AZ_BIN="$(command -v az)"; az() { timeout 90 "$AZ_BIN" --only-show-errors "$@"; }
+AZ_BIN="$(command -v az)"; az() { timeout 90 "$AZ_BIN" "$@" --only-show-errors; }
 SUB="$(az account show --query id -o tsv)"
 exec 3>&2
 {
