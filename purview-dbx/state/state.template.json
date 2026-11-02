@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "project": "purview-dbx: Purview -> Azure Databricks Unity Catalog over private endpoints (system-assigned MI)",
+  "inputs": {
+    "workspace_id": "7405607339118600",
+    "workspace_url": "https://adb-7405607339118600.0.azuredatabricks.net/",
+    "databricks_account_id": "fcc0cc18-91a7-49d5-8d99-e2589f275756",
+    "scan_catalog": "dbw_pmo_pkt2ofpqmlf3e",
+    "scan_schema": "default",
+    "scan_table": "sample_access_test",
+    "purview_account_name": null,
+    "my_ip": {"value": null, "confirmed_by_user": false, "dynamic_warning": null, "source": null},
+    "name_prefix": "pvdbx-"
+  },
+  "discovery": {},
+  "design": {
+    "status": "draft (waiting for the user's OK)",
+    "decisions": {}
+  },
+  "network": {},
+  "identity": {},
+  "access": {"before": {}, "after": {}},
+  "validation": {},
+  "scans": {},
+  "approvals": [],
+  "waves": {
+    "0-discovery": {"status": "pending"},
+    "1": {"agents": ["A", "B", "D-vm", "E"], "status": "pending"},
+    "2": {"agents": ["C", "D-shir", "F"], "status": "pending"},
+    "3": {"agents": ["V", "S", "R"], "status": "pending"}
+  },
+  "agents": {},
+  "locks": {},
+  "errors": []
+}

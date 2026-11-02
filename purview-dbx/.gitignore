@@ -1,0 +1,9 @@
+# Real tenant data never goes into git (repo rule 7/10): state, logs, screenshots, reports, sign-in state.
+state/state.json
+state/state.json.lock
+state/.state-*
+logs/*.log
+evidence/*.png
+report/*.md
+.local/
+.playwright-cli/
