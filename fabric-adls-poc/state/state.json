@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "updated": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-02T22:42:11Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
-  "runMode": "Remote Control on the owner's Mac (az CLI + headed Playwright; the owner signs in, Claude never types credentials)",
+  "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
     "tenant": "UNVERIFIED",
     "subscription": "UNVERIFIED",
@@ -18,16 +18,54 @@
     "deviceIp": "UNVERIFIED (recorded masked only)"
   },
   "waves": {
-    "1": {"agents": ["A", "B"], "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule", "approvedBy": null, "approvedAt": null},
-    "2": {"agents": ["C", "D"], "scope": "Fabric managed PE (+ approval on storage) + VNet data gateway (subnet delegation, provider, gateway, connection)", "approvedBy": null, "approvedAt": null},
-    "3": {"agents": ["E"], "scope": "tests (shortcut, notebook, pipeline, other-IP block) + report", "approvedBy": null, "approvedAt": null}
+    "1": {
+      "agents": [
+        "A",
+        "B"
+      ],
+      "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule",
+      "approvedBy": null,
+      "approvedAt": null
+    },
+    "2": {
+      "agents": [
+        "C",
+        "D"
+      ],
+      "scope": "Fabric managed PE (+ approval on storage) + VNet data gateway (subnet delegation, provider, gateway, connection)",
+      "approvedBy": null,
+      "approvedAt": null
+    },
+    "3": {
+      "agents": [
+        "E"
+      ],
+      "scope": "tests (shortcut, notebook, pipeline, other-IP block) + report",
+      "approvedBy": null,
+      "approvedAt": null
+    }
   },
   "agents": {
-    "A": {"name": "storage network", "status": "pending"},
-    "B": {"name": "Fabric identity", "status": "pending"},
-    "C": {"name": "Fabric managed private endpoint", "status": "pending"},
-    "D": {"name": "VNet data gateway", "status": "pending"},
-    "E": {"name": "tests + report", "status": "pending"}
+    "A": {
+      "name": "storage network",
+      "status": "pending"
+    },
+    "B": {
+      "name": "Fabric identity",
+      "status": "pending"
+    },
+    "C": {
+      "name": "Fabric managed private endpoint",
+      "status": "pending"
+    },
+    "D": {
+      "name": "VNet data gateway",
+      "status": "pending"
+    },
+    "E": {
+      "name": "tests + report",
+      "status": "pending"
+    }
   },
   "locks": {
     "storage-account": null,
@@ -37,5 +75,12 @@
     "fabric-capacity": null
   },
   "decisions": [],
-  "handoff": []
+  "handoff": [
+    {
+      "at": "2026-11-02T22:42:11Z",
+      "from": "Claude",
+      "to": "Owner",
+      "text": "discovery ready: run discover.sh in Cloud Shell with --device-ip"
+    }
+  ]
 }

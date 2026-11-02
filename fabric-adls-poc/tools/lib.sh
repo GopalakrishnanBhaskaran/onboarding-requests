@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Shared helpers for the Fabric -> ADLS Gen2 (private) POC.
 # Read-only by default. Nothing here changes Azure or Fabric.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "%s ERROR line %s: %s\n" "$(date -u +%H:%M:%SZ)" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 POC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "$POC_DIR/.." && pwd)"

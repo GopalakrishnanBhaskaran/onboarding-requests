@@ -5,18 +5,29 @@
 source "$(dirname "$0")/lib.sh"
 need az; need python3; need curl
 
-SUB="" ; STG="" ; PREFIX="pvdbx-"
+SUB="" ; STG="" ; PREFIX="pvdbx-" ; DEVICE_IP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --sub) SUB="$2"; shift 2;;
     --storage) STG="$2"; shift 2;;
     --prefix) PREFIX="$2"; shift 2;;
+    --device-ip) DEVICE_IP="$2"; shift 2;;   # your device's public IP (in Cloud Shell, the shell's own IP is NOT your device)
     *) die "unknown argument $1";;
   esac
 done
 
 az account show >/dev/null 2>&1 || die "not signed in: run 'az login' yourself first (Claude never signs in for you)"
+if [ -z "$SUB" ]; then  # find the subscription that holds the $PREFIX VNets
+  for s in $(az account list --query "[?state=='Enabled'].id" -o tsv); do
+    n="$(az network vnet list --subscription "$s" --query "length([?starts_with(name,'$PREFIX')])" -o tsv 2>/dev/null || echo 0)"
+    [ "${n:-0}" != 0 ] && { SUB="$s"; log "found $n $PREFIX VNet(s) in subscription $(echo "$s" | mask)"; break; }
+  done
+fi
 [ -n "$SUB" ] && az account set --subscription "$SUB"
+if [ -z "$DEVICE_IP" ]; then
+  if [ -n "${ACC_CLOUD:-}${AZUREPS_HOST_ENVIRONMENT:-}" ]; then DEVICE_IP="unknown"; log "Cloud Shell: pass --device-ip <your IP from https://api.ipify.org> to check your firewall rule"
+  else DEVICE_IP="$(device_ip || echo unknown)"; fi
+fi
 SUB="$(az account show --query id -o tsv)"
 TENANT="$(az account show --query tenantId -o tsv)"
 
@@ -42,7 +53,7 @@ pick=(pe or rows)
 print(pick[0]["name"] if len(pick)==1 else "")
 PY
 )"
-  [ -n "$STG" ] || { log "several or no HNS accounts: re-run with --storage <name> (see evidence/01-storage-hns.json)"; exit 3; }
+  [ -n "$STG" ] || { log "several or no HNS accounts: re-run with --storage <name>"; echo "== PASTE THIS BACK =="; mask < "$RAW_DIR/01-storage-hns.json"; exit 3; }
 fi
 RG="$(az storage account list --query "[?name=='$STG'].resourceGroup | [0]" -o tsv)"
 STG_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STG"
@@ -75,8 +86,8 @@ PY
 {
   while read -r zrg zname; do
     echo "## $zname ($zrg)"
-    az network private-dns link vnet list -g "$zrg" -z "$zname" --query "[].{link:name,vnet:virtualNetwork.id,registration:registrationEnabled,state:virtualNetworkLinkState}" -o json
-    az network private-dns record-set a list -g "$zrg" -z "$zname" --query "[].{name:name,ips:aRecords[].ipv4Address}" -o json
+    az network private-dns link vnet list -g "$zrg" -z "$zname" --query "[].{link:name,vnet:virtualNetwork.id,registration:registrationEnabled,state:virtualNetworkLinkState}" -o json || true
+    az network private-dns record-set a list -g "$zrg" -z "$zname" --query "[].{name:name,ips:aRecords[].ipv4Address}" -o json || true
   done < "$RAW_DIR/.zones.tsv"
 } | save 01-dns-links-records.txt
 
@@ -116,11 +127,15 @@ PY
 
 log "12/12 device IP + DNS from this machine"
 {
-  echo "deviceIp=$(device_ip || echo unknown)"
+  echo "deviceIp=$DEVICE_IP"
+  echo "shellIp=$(device_ip || echo unknown)"
   echo "ipRulesOnStorage=$(az storage account show -n "$STG" -g "$RG" --query "networkRuleSet.ipRules[].ipAddressOrRange" -o tsv | tr '\n' ' ')"
   for ep in blob dfs; do
-    echo "## $STG.$ep.core.windows.net"
-    (nslookup "$STG.$ep.core.windows.net" 2>&1 || true) | sed -n '1,12p'
+    python3 -c 'import socket,sys
+h=sys.argv[1]
+try:
+    cn,al,ips=socket.gethostbyname_ex(h); print(f"dns {h} -> {ips} via {al[-3:]}")
+except Exception as e: print(f"dns {h} -> error {e}")' "$STG.$ep.core.windows.net"
   done
 } > "$RAW_DIR/01-device.txt"
 # The device IP is compared in raw form only, then masked in evidence.
@@ -137,4 +152,8 @@ python3 "$POC_DIR/tools/state.py" set env.tenant "$TENANT" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.subscription "$SUB" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.resourceGroup "$RG" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.storageAccount "$STG" >/dev/null
+python3 "$POC_DIR/tools/summarize_discovery.py" "$RAW_DIR" "$STG" "$PREFIX" | mask > "$EVIDENCE_DIR/01-summary.txt"
 log "done. Masked evidence: fabric-adls-poc/evidence/01-*  Raw: $RAW_DIR"
+echo "=================== PASTE EVERYTHING BELOW THIS LINE BACK TO CLAUDE ==================="
+cat "$EVIDENCE_DIR/01-summary.txt"
+echo "=================== END ==================="
