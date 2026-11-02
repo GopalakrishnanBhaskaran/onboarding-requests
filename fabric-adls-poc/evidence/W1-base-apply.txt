@@ -1,0 +1,9 @@
+# Owner's Cloud Shell paste, 2026-11-02 ~23:49Z (commit 892fdea). Device IP masked.
+== Wave 1 base plan (subscription 5b9f****-****, region centralindia)
+CHANGE  resource group rg-pvdbx-fabric-poc (tag purpose=fabric-adls-poc)            done
+CHANGE  budget bud-rg-pvdbx-fabric-poc: INR 1000/month, alerts 50/80/100% to you     done
+CHANGE  VNet pvdbx-vnet-fabricpoc 10.60.0.0/24 with subnet snet-pe 10.60.0.0/27      done
+CHANGE  storage stpvdbxfabb5731f: ADLS Gen2 (HNS), Standard_LRS Hot, TLS1.2, no shared key, no blob public access,
+        public access = selected networks, default Deny, bypass None                  done
+CHANGE  container poc                                                                  done
+== 5 change(s) applied

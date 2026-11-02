@@ -154,13 +154,19 @@ do_pipeline() { # do_pipeline <label> <connectionId> <pipelineName> <sinkFolder>
   out="$(onelake_get "$WS_ID/$lh/Files/$sink/input.csv")"; echo "$out" | save "E-$label-lakehouse-file.txt"
   if echo "$out" | grep -q "gamma,30"; then result "$label" "PASS copied input.csv ADLS -> Lakehouse Files/$sink; job: ${st%% *}"; else result "$label" "FAIL job: $st"; fi
 }
-do_probe() { # unauthenticated request: 403 AuthorizationFailure = blocked by the firewall; anything else = network allowed
-  local h code err ip
+do_probe() { # anonymous requests. On blob, 403 AuthorizationFailure = blocked by the firewall. dfs answers 401
+  # NoAuthenticationInformation before the firewall check, so only the blob result decides (observed 2026-11-02).
+  local ip code err h ep url
   ip="$(device_ip || echo unknown)"
-  h="$(curl -sS -m 20 -o /dev/null -D - "$DFS/$CONTAINER?resource=filesystem&recursive=false" 2>&1)"
-  code="$(echo "$h" | awk 'toupper($1) ~ /^HTTP/ {c=$2} END{print c}')"; err="$(echo "$h" | grep -i '^x-ms-error-code' | tr -d '\r' | cut -d' ' -f2)"
-  echo "from $ip: HTTP $code $err" | save "E-probe-$(echo "$ip" | tr . -).txt"
-  if [ "$code" = 403 ] && [ "$err" = AuthorizationFailure ]; then result PROBE "BLOCKED from $(echo "$ip" | mask) (403 AuthorizationFailure)"; else result PROBE "REACHABLE from $(echo "$ip" | mask) (HTTP $code $err)"; fi
+  for ep in blob dfs; do
+    [ "$ep" = blob ] && url="https://$STG.blob.core.windows.net/$CONTAINER?restype=container&comp=list" || url="$DFS/$CONTAINER?resource=filesystem&recursive=false"
+    h="$(curl -sS -m 20 -o /dev/null -D - -H 'x-ms-version: 2023-11-03' "$url" 2>&1)"
+    code="$(echo "$h" | awk 'toupper($1) ~ /^HTTP/ {c=$2} END{print c}')"; err="$(echo "$h" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-ms-error-code"{print $2}')"
+    echo "$(date -u +%FT%TZ) $ep from $ip: HTTP $code $err"
+    if [ "$ep" = blob ]; then
+      if [ "$code" = 403 ] && [ "$err" = AuthorizationFailure ]; then result PROBE "BLOCKED from $(echo "$ip" | mask) (blob 403 AuthorizationFailure)"; else result PROBE "REACHABLE from $(echo "$ip" | mask) (blob HTTP $code $err)"; fi
+    fi
+  done | save "E-probe-$(echo "$ip" | mask | tr . -).txt"
 }
 case "$CMD" in
   prep) do_prep;; lakehouse) do_lakehouse;; shortcut) do_shortcut;; notebook) do_notebook;;

@@ -1,0 +1,16 @@
+# Owner's Cloud Shell paste, 2026-11-02 23:49:40Z. Device IP masked.
+== Agent A plan for stpvdbxfabb5731f (rg rg-pvdbx-fabric-poc, centralindia); VNet pvdbx-vnet-fabricpoc/snet-pe (centralindia)
+   device IP: 45.119.x.x (bare IP rule; /32 is not accepted, FB15)
+CHANGE  device IP rule on the storage firewall
+CHANGE  private endpoint (blob) Approved
+CHANGE  private DNS zone privatelink.blob.core.windows.net
+CHANGE  zone privatelink.blob linked to pvdbx-vnet-fabricpoc
+CHANGE  A record stpvdbxfabb5731f in privatelink.blob
+CHANGE  private endpoint (dfs) Approved
+CHANGE  private DNS zone privatelink.dfs.core.windows.net
+CHANGE  zone privatelink.dfs linked to pvdbx-vnet-fabricpoc
+CHANGE  A record stpvdbxfabb5731f in privatelink.dfs
+OK      public network access = Enabled from selected networks (default Deny)
+   bypass (trusted Azure services) stays: None
+== 9 change(s) planned; nothing changed
+(apply attempt rejected by the IP guard: "<ip>--apply" typed without a space; nothing changed)

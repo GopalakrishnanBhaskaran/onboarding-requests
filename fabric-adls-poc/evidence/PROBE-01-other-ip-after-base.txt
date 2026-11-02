@@ -1,0 +1,5 @@
+# Probe from the Claude cloud container (a public IP that is NOT on the storage firewall), anonymous requests,
+# after the base build (default Deny, no IP rule, no PE yet). Run by Claude.
+2026-11-02T23:50:16Z dfs  HTTP 401 x-ms-error-code=NoAuthenticationInformation   (dfs checks auth before the firewall: not decisive)
+2026-11-02T23:50:17Z blob HTTP 403 x-ms-error-code=AuthorizationFailure          "This request is not authorized to perform this operation."  => BLOCKED by firewall
+DNS (public resolver): stpvdbxfabb5731f.dfs.core.windows.net (no privatelink CNAME yet; PEs not created)

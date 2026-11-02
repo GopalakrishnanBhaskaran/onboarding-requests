@@ -1,22 +1,24 @@
 {
   "version": 1,
-  "updated": "2026-11-02T23:32:46Z",
+  "updated": "2026-11-02T23:50:55Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
-    "tenant": "UNVERIFIED",
-    "subscription": "UNVERIFIED",
-    "resourceGroup": "UNVERIFIED",
-    "storageAccount": "UNVERIFIED",
-    "container": "UNVERIFIED",
-    "testFolder": "UNVERIFIED",
-    "region": "UNVERIFIED",
+    "tenant": "5240****-**** (masked)",
+    "subscription": "5b9f****-**** (masked)",
+    "resourceGroup": "rg-pvdbx-fabric-poc",
+    "storageAccount": "stpvdbxfabb5731f",
+    "container": "poc",
+    "testFolder": "input",
+    "region": "centralindia",
     "networkPrefix": "pvdbx-",
     "fabricWorkspace": "UNVERIFIED",
     "fabricWorkspaceId": "UNVERIFIED",
     "fabricCapacity": "UNVERIFIED (minimum F2)",
     "deviceIp": "UNVERIFIED (recorded masked only)",
-    "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)"
+    "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)",
+    "vnet": "pvdbx-vnet-fabricpoc",
+    "peSubnet": "snet-pe"
   },
   "waves": {
     "1": {
@@ -49,7 +51,11 @@
   "agents": {
     "A": {
       "name": "storage network",
-      "status": "pending"
+      "status": "running",
+      "at": "2026-11-02T23:50:55Z",
+      "notes": [
+        "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending"
+      ]
     },
     "B": {
       "name": "Fabric identity",
@@ -88,6 +94,12 @@
       "from": "Claude",
       "to": "Owner",
       "text": "wave 1 approved; run fabric_check, w1_build_env --apply, then Agent A plan/apply with --device-ip"
+    },
+    {
+      "at": "2026-11-02T23:50:55Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "w1_build_env applied (5/5 done); A plan OK; apply retried after a missing-space typo"
     }
   ]
 }
