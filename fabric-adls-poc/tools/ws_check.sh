@@ -77,6 +77,7 @@ case "$SKU" in
   "")  say "UNVERIFIED  capacity SKU unknown: ask the capacity admin, or run this as a capacity admin/contributor";;
   *)   say "NO      SKU $SKU is not an F SKU";;
 esac
-[ -n "$REGION" ] && say "        capacity region $REGION, storage region centralindia (cross-region works; the gateway runs in the VNet region, FB12)"
+SREG="$(az storage account list --subscription "${STG_SUB:-x}" --query "[?name=='$STG'].location | [0]" -o tsv 2>/dev/null || true)"
+[ -n "$REGION" ] && say "        capacity region $REGION, storage region ${SREG:-unknown} (cross-region works; the gateway runs in the VNet region, FB12)"
 save "WS-check.txt" < "$OUT" >/dev/null
 echo "Paste this output back. Next, if it is usable: Agent B with --workspace \"$NAME\"${CNAME:+ and --capacity $CNAME}."

@@ -1,25 +1,26 @@
 {
   "stateGeneration": 2,
   "version": 1,
-  "updated": "2026-11-03T01:17:23Z",
+  "updated": "2026-11-03T01:27:09Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
-    "tenant": "UNVERIFIED (tenant 2; recorded masked after discovery)",
-    "subscription": "UNVERIFIED (scripts find the storage account's subscription: lib.sh stg_sub)",
-    "resourceGroup": "UNVERIFIED",
+    "tenant": "af3a****-**** (masked; tenant 2)",
+    "subscription": "bde5****-**** (masked; scripts find it with stg_sub)",
+    "resourceGroup": "pes-rg-data-dev-dai-weu-001",
     "storageAccount": "pesstddevdaiweu01",
-    "container": "UNVERIFIED",
+    "container": "fabric-poc (proposed: new empty POC container; adlspdp-dev holds real data and is not touched)",
     "testFolder": "input",
-    "region": "UNVERIFIED (name suggests West Europe)",
-    "networkPrefix": "pvdbx-",
-    "fabricWorkspace": "UNVERIFIED (owner proposed an existing dev workspace on F16 West Europe; a separate POC workspace on the same capacity is recommended)",
-    "fabricWorkspaceId": "UNVERIFIED",
-    "fabricCapacity": "UNVERIFIED (F16 West Europe seen by ws_check)",
+    "region": "westeurope",
+    "networkPrefix": "pes- (no pvdbx- VNet in tenant 2)",
+    "fabricWorkspace": "pending owner choice (proposed: pes-fab-data-dev-local-weu-1, Admin, identity yes, 0 MPEs)",
+    "fabricWorkspaceId": "856a****-**** (proposed)",
+    "fabricCapacity": "pesfabdatadevweu001 (F16, West Europe, Active; owner is capacity admin or contributor)",
     "deviceIp": "UNVERIFIED (recorded masked only)",
     "decision": "owner 2026-11-03: Fabric workspace is in another tenant than the tenant-1 storage; use storage account pesstddevdaiweu01 in the Fabric tenant (TWA isn't compatible with cross-tenant requests, FB32)",
-    "vnet": "UNVERIFIED (discover pvdbx- VNets in this tenant)",
-    "peSubnet": "UNVERIFIED"
+    "vnet": "pes-vnet-data-dev-weu-001 (existing)",
+    "peSubnet": "pes-snet-data-dev-pep-weu-001 (existing blob+dfs PEs, Approved)",
+    "gateway": "existing VNet data gateway on pes-vnet-data-dev-weu-001 / pes-snet-data-dev-vnetdgw-weu-001"
   },
   "waves": {
     "1": {
@@ -148,6 +149,18 @@
       "from": "Owner",
       "to": "Claude",
       "text": "workspace is in a different tenant; use storage account pesstddevdaiweu01 there. Claude: approvals reset (new storage = new approval); next discover.sh --storage pesstddevdaiweu01 (read-only)"
+    },
+    {
+      "at": "2026-11-03T01:27:09Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "discovery + ws_check pasted: storage public Disabled, blob+dfs PEs Approved, 2 Fabric MPEs Approved (another workspace), VNet gateway exists; same tenant OK; F16"
+    },
+    {
+      "at": "2026-11-03T01:27:09Z",
+      "from": "Claude",
+      "to": "Owner",
+      "text": "other-IP probe from Claude's container: blob 403 AuthorizationFailure (PROBE-T2-01). Next: access_check.sh, A verify-only, B plan; wave 1 approval needed (container + identity RBAC + resource instance rule)"
     }
   ],
   "history": [

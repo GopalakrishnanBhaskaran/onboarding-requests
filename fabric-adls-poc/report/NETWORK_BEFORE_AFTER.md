@@ -21,3 +21,23 @@ There was no `pvdbx-` network to reuse (FB23), so **before** means the subscript
 | Owner device: portal / data access | n/a | blocked (no IP rule) | *(to test in wave 3: Storage browser with Entra auth)* | | | |
 
 Note: an anonymous **dfs** request returns `401 NoAuthenticationInformation` before the firewall check. Only the blob result proves the firewall block (PROBE-01).
+
+---
+
+# Tenant 2: `pesstddevdaiweu01` (current POC target)
+
+Before = discovery 2026-11-03 01:22Z (FB34). The planned column shows the wave 1/2 plan. It isn't applied until approved, and its cells fill in from apply evidence.
+
+| Setting | Before POC | Planned (wave 1 / 2) | After | Evidence |
+|---|---|---|---|---|
+| Public network access | **Disabled** | **kept Disabled** (TWA supports it, FB32) | | discovery, A-verify-existing |
+| Default action / bypass | Deny / AzureServices | unchanged | | discovery |
+| IP rules | none | none (no effect while Disabled) | | discovery |
+| VNet rules | none | unchanged | | discovery |
+| Resource instance rules | Defender for Storage data scanner | **+ Microsoft.Fabric/workspaces/<POC workspace id>** (wave 1) | | |
+| Private endpoints (customer) | blob + dfs in `pes-vnet-data-dev-weu-001/pes-snet-data-dev-pep-weu-001`, Approved | reused, unchanged | | discovery |
+| Managed PEs (Fabric) | dfs + blob from another workspace, Approved | **+ dfs from the POC workspace** (wave 2; only if that workspace has none) | | |
+| Private DNS | zones not visible to the owner (hub, UNVERIFIED) | unchanged, no new zone | | discovery |
+| VNet data gateway | exists on the dev VNet (`pes-snet-data-dev-vnetdgw-weu-001`) | reused (no subnet, provider or gateway change) | | discovery |
+| Containers | `adlspdp-dev` (real data) | **+ `fabric-poc`** (empty, POC only); `adlspdp-dev` untouched | | |
+| Anonymous request from another public IP | blob **403 AuthorizationFailure** | same expected after | | PROBE-T2-01 |

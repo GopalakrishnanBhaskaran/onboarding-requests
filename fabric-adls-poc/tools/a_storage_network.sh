@@ -20,6 +20,41 @@ while [ $# -gt 0 ]; do
   esac
 done
 envq() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$STATE_FILE" "$1"; }
+# --- Existing private network (enterprise tenants): VERIFY ONLY, never weaken, never add DNS zones -------------
+# If the account already has Approved blob + dfs private endpoints, Agent A changes nothing:
+#  - public access Disabled stays Disabled (stricter than "selected networks"; TWA supports Disabled, FB32)
+#  - no device IP rule while Disabled (it would have no effect)
+#  - no private DNS zone is created: enterprise DNS is usually central (hub), and a second zone breaks resolution
+case "$SUB$RG$STG" in *UNVERIFIED*) die "run discover.sh first";; esac
+az account set --subscription "$SUB"
+STG_ID0="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STG"
+PNA="$(az storage account show -n "$STG" -g "$RG" --query "[publicNetworkAccess,networkRuleSet.defaultAction,networkRuleSet.bypass]" -o tsv | tr '\n\t' '  ')"
+EXV="$RAW_DIR/A-existing.txt"; : > "$EXV"; HAVE_BLOB=0; HAVE_DFS=0
+for peid in $(az network private-endpoint-connection list --id "$STG_ID0" --query "[?properties.privateLinkServiceConnectionState.status=='Approved'].properties.privateEndpoint.id" -o tsv); do
+  pe="${peid##*/}"
+  info="$(az network private-endpoint show --ids "$peid" --query "{g:privateLinkServiceConnections[0].groupIds[0] || manualPrivateLinkServiceConnections[0].groupIds[0], subnet:subnet.id, rg:resourceGroup}" -o tsv 2>/dev/null | tr '\t' ' ' || true)"
+  if [ -z "$info" ]; then echo "OK      $pe Approved (managed endpoint: Fabric/Databricks/Purview; not readable from here)" >> "$EXV"; continue; fi
+  read -r g subnet perg <<< "$info"
+  zones="$(az network private-endpoint dns-zone-group list --endpoint-name "$pe" -g "$perg" --query "[].privateDnsZoneConfigs[].privateDnsZoneId" -o tsv 2>/dev/null | sed -E 's#.*/resourceGroups/([^/]+)/.*/privateDnsZones/(.*)#\2 (rg \1)#I' | tr '\n' ';' || true)"
+  echo "OK      $pe ($g) Approved in ${subnet#*/virtualNetworks/}; DNS zone group: ${zones:-none (DNS by custom/hub DNS: UNVERIFIED)}" >> "$EXV"
+  [ "$g" = blob ] && HAVE_BLOB=1; [ "$g" = dfs ] && HAVE_DFS=1
+done
+if [ "$HAVE_BLOB$HAVE_DFS" = 11 ]; then
+  echo "== Agent A: $STG already has Approved blob + dfs private endpoints -> VERIFY ONLY (no network change)"
+  cat "$EXV"
+  case "$PNA" in
+    Disabled*) echo "OK      public network access Disabled ($PNA): kept. Stricter than 'selected networks'; trusted workspace access supports it (FB32)."
+               echo "        No device IP rule: it has no effect while public access is Disabled. Data-plane access from your device needs the private network (VPN/jump host);"
+               echo "        the Azure portal control plane (resource, networking, IAM pages) still works.";;
+    "Enabled Deny"*) echo "OK      public access from selected networks, default Deny ($PNA): kept. Add your device IP only if you need data-plane access from it.";;
+    *) echo "WARN    public access is open ($PNA). Restricting it is a separate, approved change: re-run with the build mode (not automatic here).";;
+  esac
+  { echo "mode=verify-existing changes=0"; echo "network: $PNA"; cat "$EXV"; } | save "A-verify-existing.txt"
+  python3 "$ST" agent A done "existing private network verified (blob+dfs PEs Approved, public $PNA); 0 changes" >/dev/null
+  echo "== 0 changes (existing private network kept as it is)"
+  exit 0
+fi
+# --- Build mode (no Approved blob+dfs PEs yet): the original flow below -------------------------------------
 [ -n "$VNET" ] || VNET="$(envq vnet)"; [ -n "$SUBNET" ] || SUBNET="$(envq peSubnet)"
 [ -n "$VNET" ] && [ -n "$SUBNET" ] || die "--vnet and --pe-subnet are required (see evidence/01-vnets.json)"
 case "$SUB$RG$STG" in *UNVERIFIED*) die "run discover.sh first";; esac

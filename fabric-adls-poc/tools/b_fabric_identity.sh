@@ -74,6 +74,7 @@ if [ -n "$NEWCAP" ]; then
 fi
 [ -n "$CAP" ] || die "--capacity <existing F capacity> or --create-capacity <name> --region <loc> is required"
 SKU="$(az resource list --resource-type Microsoft.Fabric/capacities --query "[?name=='$CAP'].sku.name | [0]" -o tsv)"
+[ -n "$SKU" ] || SKU="$(fab /capacities 2>/dev/null | j "next((c['sku'] for c in d['value'] if c['displayName']=='$CAP'),'')" 2>/dev/null || true)"   # capacity in another subscription
 case "$SKU" in F*) ok "capacity $CAP is an F SKU ($SKU)";; "") [ "$APPLY" = 1 ] && die "capacity $CAP not found";; *) die "capacity $CAP is $SKU, not an F SKU";; esac
 if [ "$CAP_ONLY" = 1 ]; then
   M="$([ "$APPLY" = 1 ] && echo apply || echo plan)"
@@ -143,6 +144,11 @@ if [ -n "$SP_ID" ]; then
   fi
 fi
 
+# 3b. POC container (isolated from the real-data containers; ARM create, not blocked by the firewall)
+if az storage container-rm show --storage-account "$STG" -g "$RG" -n "$CONTAINER" >/dev/null 2>&1; then ok "container $CONTAINER exists"; else
+  change "create container $CONTAINER in $STG (empty, private, for the POC only)"
+  if [ "$APPLY" = 1 ]; then az storage container-rm create --storage-account "$STG" -g "$RG" -n "$CONTAINER" --public-access off -o none; fi
+fi
 # 4. RBAC, least privilege (FB3): Delegator at account + Data Contributor on the container
 rbac() { # rbac <principalId> <type> <role> <scope> <label>
   if [ -z "$1" ]; then change "$5 (after the identity exists)"; return; fi
@@ -155,7 +161,8 @@ rbac() { # rbac <principalId> <type> <role> <scope> <label>
 rbac "$SP_ID" ServicePrincipal "Storage Blob Delegator" "$STG_ID" "identity: Storage Blob Delegator @ account"
 rbac "$SP_ID" ServicePrincipal "Storage Blob Data Contributor" "$CONT_SCOPE" "identity: Storage Blob Data Contributor @ container $CONTAINER"
 # the owner needs a data role to upload test files and to browse in the portal with Entra auth
-if az role assignment list --scope "$CONT_SCOPE" --include-inherited --query "[?principalId=='$ME_OID' && contains(roleDefinitionName,'Storage Blob Data')] | length(@)" -o tsv | grep -qv '^0$'; then ok "you: a Storage Blob Data role on $CONTAINER"; else
+MYROLES="$(az role assignment list --assignee "$ME_OID" --include-groups --include-inherited --scope "$CONT_SCOPE" --query "[?contains(roleDefinitionName,'Storage Blob Data')].roleDefinitionName" -o tsv 2>/dev/null | sort -u | tr '\n' ' ' || true)"
+if [ -n "$MYROLES" ]; then ok "you: $MYROLES(direct or through a group) on $CONTAINER"; else
   rbac "$ME_OID" User "Storage Blob Data Contributor" "$CONT_SCOPE" "you: Storage Blob Data Contributor @ container $CONTAINER"
 fi
 

@@ -1,0 +1,11 @@
+probe from Claude's container (a public IP not on any allow-list), anonymous, read-only, 2026-11-03T01:24:27Z
+egress ip: 160.79.x.x
+--- GET https://pesstddevdaiweu01.blob.core.windows.net/adlspdp-dev
+http=403
+<Code>AuthorizationFailure</Code>
+<Message>This request is not authorized to perform this operation.
+--- GET https://pesstddevdaiweu01.dfs.core.windows.net/adlspdp-dev
+http=401
+"code":"NoAuthenticationInformation"
+dns pesstddevdaiweu01.blob.core.windows.net -> ['20.209.x.x'] via ['pesstddevdaiweu01.blob.core.windows.net', 'pesstddevdaiweu01.privatelink.blob.core.windows.net']
+dns pesstddevdaiweu01.dfs.core.windows.net -> ['20.209.x.x'] via ['pesstddevdaiweu01.dfs.core.windows.net', 'pesstddevdaiweu01.privatelink.dfs.core.windows.net']
