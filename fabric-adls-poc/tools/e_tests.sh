@@ -8,6 +8,7 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(env_get fabricWorkspaceId)"
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
 CMD="${1:-}"; shift || true
 CONTAINER="$(env_get container)" ; FOLDER="$(env_get testFolder)" ; GWCONN=""
 case "$CONTAINER" in UNVERIFIED) CONTAINER="";; esac; case "$FOLDER" in UNVERIFIED|"") FOLDER="input";; esac

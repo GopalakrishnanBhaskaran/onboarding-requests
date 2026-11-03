@@ -10,6 +10,7 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; CAPNAME="$(env_get fabricCapacity | cut -d' ' -f1)"
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
 VNET="" ; SUBNET="" ; PREFIX="" ; VNET_RG="" ; APPLY=0
 while [ $# -gt 0 ]; do case "$1" in --vnet) VNET="$2"; shift 2;; --vnet-rg) VNET_RG="$2"; shift 2;; --subnet) SUBNET="$2"; shift 2;; --prefix) PREFIX="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
 [ -n "$VNET" ] && [ -n "$SUBNET" ] && [ -n "$PREFIX" ] || die "--vnet, --subnet and --prefix are required"
@@ -32,7 +33,7 @@ if az network vnet subnet show -g "$VNET_RG" --vnet-name "$VNET" -n "$SUBNET" >/
   [ "$d" = "Microsoft.PowerPlatform/vnetaccesslinks" ] && echo "OK      subnet $SUBNET delegated" || { chg "delegate $SUBNET to Microsoft.PowerPlatform/vnetaccesslinks"; [ "$APPLY" = 1 ] && az network vnet subnet update -g "$VNET_RG" --vnet-name "$VNET" -n "$SUBNET" --delegations Microsoft.PowerPlatform/vnetaccesslinks -o none; }
 else
   chg "create subnet $SUBNET $PREFIX delegated to Microsoft.PowerPlatform/vnetaccesslinks (no NSG change, IPv4 only)"
-  [ "$APPLY" = 1 ] && az network vnet subnet create -g "$VNET_RG" --vnet-name "$VNET" -n "$SUBNET" --address-prefixes "$PREFIX" --delegations Microsoft.PowerPlatform/vnetaccesslinks -o none
+  if [ "$APPLY" = 1 ]; then az network vnet subnet create -g "$VNET_RG" --vnet-name "$VNET" -n "$SUBNET" --address-prefixes "$PREFIX" --delegations Microsoft.PowerPlatform/vnetaccesslinks -o none; fi
 fi
 CAP_ID="$(fab /capacities | j "[c['id'] for c in d['value'] if c['displayName']=='$CAPNAME'][0]")"
 GW_NAME="vnetgw-fabric-adls-poc"

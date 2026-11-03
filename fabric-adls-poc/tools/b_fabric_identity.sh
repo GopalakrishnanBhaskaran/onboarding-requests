@@ -8,6 +8,8 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; TENANT="$(env_get tenant)"
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
+case "${TENANT:-}" in *'*'*|*UNVERIFIED*|"") TENANT="$(az account show --query tenantId -o tsv)";; esac
 WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,7 +39,7 @@ echo "== Agent B plan: workspace '$WS', storage $STG/$CONTAINER"
 if [ -n "$NEWCAP" ]; then
   CAP="$NEWCAP"
   r="$(az provider show -n Microsoft.Fabric --query registrationState -o tsv 2>/dev/null || echo NotRegistered)"
-  if [ "$r" = Registered ]; then ok "Microsoft.Fabric provider registered"; else change "register Microsoft.Fabric resource provider (free)"; [ "$APPLY" = 1 ] && az provider register -n Microsoft.Fabric --wait; fi
+  if [ "$r" = Registered ]; then ok "Microsoft.Fabric provider registered"; else change "register Microsoft.Fabric resource provider (free)"; if [ "$APPLY" = 1 ]; then az provider register -n Microsoft.Fabric --wait; fi; fi
   if az resource show -g "$RG" -n "$CAP" --resource-type Microsoft.Fabric/capacities >/dev/null 2>&1; then ok "capacity $CAP exists"; else
     change "create capacity $CAP F2 in $RG/$REGION, admin = $(echo "$CAP_ADMIN" | sed -E 's/^[^@#]+/***/') (billing starts; pause when idle, FB18/FB19)"
     if [ "$APPLY" = 1 ]; then
@@ -51,24 +53,40 @@ fi
 [ -n "$CAP" ] || die "--capacity <existing F capacity> or --create-capacity <name> --region <loc> is required"
 SKU="$(az resource list --resource-type Microsoft.Fabric/capacities --query "[?name=='$CAP'].sku.name | [0]" -o tsv)"
 case "$SKU" in F*) ok "capacity $CAP is an F SKU ($SKU)";; "") [ "$APPLY" = 1 ] && die "capacity $CAP not found";; *) die "capacity $CAP is $SKU, not an F SKU";; esac
-cap_id() { fab /capacities 2>/dev/null | j "[c['id'] for c in d['value'] if c['displayName']=='$CAP'][0] if any(c['displayName']=='$CAP' for c in d['value']) else ''" || true; }
-CAP_ID="$(cap_id)"
-if [ "$APPLY" = 1 ] && [ -z "$CAP_ID" ]; then  # a new capacity can take a few minutes to appear in the Fabric API
-  for i in $(seq 1 20); do sleep 15; CAP_ID="$(cap_id)"; [ -n "$CAP_ID" ] && break; done
-  [ -n "$CAP_ID" ] || die "capacity $CAP is not visible in Fabric for you (are you its admin? see --capacity-admin)"
+# capacity id: from the Fabric API when you are a capacity admin/contributor, else from the Power BI admin API
+# (you are a Fabric administrator, FB25; "Admin - Capacities AssignWorkspacesToCapacity: the user must be a Fabric administrator").
+PBI="https://analysis.windows.net/powerbi/api"
+cap_id_member() { fab /capacities 2>/dev/null | j "[c['id'].lower() for c in d['value'] if c['displayName']=='$CAP'][0] if any(c['displayName']=='$CAP' for c in d['value']) else ''" 2>/dev/null || true; }
+cap_id_admin() { az rest --method get --resource "$PBI" --url "https://api.powerbi.com/v1.0/myorg/admin/capacities" --query "value[?displayName=='$CAP'].id | [0]" -o tsv 2>/dev/null | tr '[:upper:]' '[:lower:]' || true; }
+CAP_ID="$(cap_id_member)"; CAP_ACCESS=member
+[ -n "$CAP_ID" ] || { CAP_ID="$(cap_id_admin)"; CAP_ACCESS=fabric-admin; }
+if [ "$APPLY" = 1 ] && [ -z "$CAP_ID" ]; then  # a new capacity can take a few minutes to appear in Fabric
+  for i in $(seq 1 20); do sleep 15; CAP_ID="$(cap_id_member)"; CAP_ACCESS=member; [ -n "$CAP_ID" ] && break; CAP_ID="$(cap_id_admin)"; CAP_ACCESS=fabric-admin; [ -n "$CAP_ID" ] && break; done
+  [ -n "$CAP_ID" ] || die "capacity $CAP is not visible in Fabric (neither as capacity member nor through the admin API)"
 fi
+[ -n "$CAP_ID" ] && echo "        capacity visible to you as: $CAP_ACCESS"
 
 # 2. workspace on that capacity
 WS_ID="$(fab /workspaces | j "[w['id'] for w in d['value'] if w['displayName']=='$WS'][0] if any(w['displayName']=='$WS' for w in d['value']) else ''")"
 if [ -n "$WS_ID" ]; then ok "workspace $WS exists"; else
   change "create workspace $WS on $CAP"
-  [ "$APPLY" = 1 ] && WS_ID="$(fab /workspaces POST --body "{\"displayName\":\"$WS\",\"capacityId\":\"$CAP_ID\"}" | j "d['id']")"
+  if [ "$APPLY" = 1 ]; then
+    if [ "$CAP_ACCESS" = member ]; then WS_ID="$(fab /workspaces POST --body "{\"displayName\":\"$WS\",\"capacityId\":\"$CAP_ID\"}" | j "d['id']")"
+    else WS_ID="$(fab /workspaces POST --body "{\"displayName\":\"$WS\"}" | j "d['id']")"; fi   # assigned below through the admin API
+  fi
 fi
 if [ -n "$WS_ID" ]; then
-  WCAP="$(fab "/workspaces/$WS_ID" | j "d.get('capacityId','')")"
-  if [ "$WCAP" = "$CAP_ID" ]; then ok "workspace on $CAP"; else
-    change "assign workspace to $CAP"
-    [ "$APPLY" = 1 ] && fab "/workspaces/$WS_ID/assignToCapacity" POST --body "{\"capacityId\":\"$CAP_ID\"}" -o none
+  wcap() { fab "/workspaces/$WS_ID" | j "(d.get('capacityId') or '').lower()"; }
+  if [ -n "$CAP_ID" ] && [ "$(wcap)" = "$CAP_ID" ]; then ok "workspace on $CAP"; else
+    change "assign workspace to $CAP ($([ "$CAP_ACCESS" = member ] && echo 'Fabric API' || echo 'Power BI admin API, as Fabric administrator'))"
+    if [ "$APPLY" = 1 ]; then
+      if [ "$CAP_ACCESS" = member ]; then fab "/workspaces/$WS_ID/assignToCapacity" POST --body "{\"capacityId\":\"$CAP_ID\"}" -o none
+      else az rest --method post --resource "$PBI" --url "https://api.powerbi.com/v1.0/myorg/admin/capacities/AssignWorkspaces" \
+             --body "{\"capacityMigrationAssignments\":[{\"targetCapacityObjectId\":\"$CAP_ID\",\"workspacesToAssign\":[\"$WS_ID\"]}]}" -o none; fi
+      for i in $(seq 1 12); do [ "$(wcap)" = "$CAP_ID" ] && break; sleep 15; done
+      [ "$(wcap)" = "$CAP_ID" ] || die "workspace is not on $CAP after assignment"
+      echo "        done"
+    fi
   fi
   python3 "$ST" set env.fabricWorkspace "$WS" >/dev/null; python3 "$ST" set env.fabricWorkspaceId "$WS_ID" >/dev/null; python3 "$ST" set env.fabricCapacity "$CAP ($SKU)" >/dev/null
 fi
@@ -87,7 +105,7 @@ fi
 if [ -n "$SP_ID" ]; then
   if fab "/workspaces/$WS_ID/roleAssignments" | j "any(r['principal']['id']=='$SP_ID' and r['role'] in ('Admin','Member','Contributor') for r in d['value'])" | grep -q True; then ok "identity has a workspace role"; else
     change "workspace identity = Contributor in $WS"
-    [ "$APPLY" = 1 ] && fab "/workspaces/$WS_ID/roleAssignments" POST --body "{\"principal\":{\"id\":\"$SP_ID\",\"type\":\"ServicePrincipal\"},\"role\":\"Contributor\"}" -o none
+    if [ "$APPLY" = 1 ]; then fab "/workspaces/$WS_ID/roleAssignments" POST --body "{\"principal\":{\"id\":\"$SP_ID\",\"type\":\"ServicePrincipal\"},\"role\":\"Contributor\"}" -o none; fi
   fi
 fi
 
@@ -96,8 +114,9 @@ rbac() { # rbac <principalId> <type> <role> <scope> <label>
   if [ -z "$1" ]; then change "$5 (after the identity exists)"; return; fi
   n="$(az role assignment list --scope "$4" --query "[?principalId=='$1' && roleDefinitionName=='$3'] | length(@)" -o tsv 2>/dev/null || echo 0)"
   if [ "$n" != 0 ]; then ok "$5"; else change "$5"
-    [ "$APPLY" = 1 ] && az role assignment create --assignee-object-id "$1" --assignee-principal-type "$2" --role "$3" --scope "$4" -o none
+    if [ "$APPLY" = 1 ]; then az role assignment create --assignee-object-id "$1" --assignee-principal-type "$2" --role "$3" --scope "$4" -o none; fi
   fi
+  return 0
 }
 rbac "$SP_ID" ServicePrincipal "Storage Blob Delegator" "$STG_ID" "identity: Storage Blob Delegator @ account"
 rbac "$SP_ID" ServicePrincipal "Storage Blob Data Contributor" "$CONT_SCOPE" "identity: Storage Blob Data Contributor @ container $CONTAINER"
@@ -124,3 +143,7 @@ fi
 } | save "B-$([ "$APPLY" = 1 ] && echo apply || echo plan).txt"
 [ "$APPLY" = 1 ] && python3 "$ST" agent B done "identity, RBAC, resource rule in place" >/dev/null
 echo "== ${#PLAN[@]} change(s) $([ "$APPLY" = 1 ] && echo applied || echo 'planned; nothing changed')"
+if [ "${CAP_ACCESS:-member}" != member ]; then
+  echo "NOTE for wave 2: you are not a capacity admin/contributor on $CAP. The capacity admin should add you once:"
+  echo "     app.fabric.microsoft.com > Settings > Admin portal > Capacity settings > Fabric capacity > $CAP > Contributor permissions > Specific users > you > Apply"
+fi

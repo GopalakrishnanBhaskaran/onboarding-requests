@@ -1,0 +1,13 @@
+# Owner's Cloud Shell paste, 2026-11-03 ~00:00-00:02Z (commit bfb17c8)
+## plan run: stopped early by a script bug (rbac() returned 1 in plan mode -> set -e exit at line 101); fixed in the next commit
+CHANGE  create workspace ws-fabric-adls-poc on fabpocf2
+CHANGE  create workspace identity
+CHANGE  identity: Storage Blob Delegator @ account (after the identity exists)
+CHANGE  identity: Storage Blob Data Contributor @ container poc (after the identity exists)
+CHANGE  you: Storage Blob Data Contributor @ container poc
+00:00:29Z ERROR line 101: [ "$APPLY" = 1 ]
+## apply run
+CHANGE  register Microsoft.Fabric resource provider (free)
+CHANGE  create capacity fabpocf2 F2 in rg-pvdbx-fabric-poc/centralindia, admin = ***#EXT#@gopalakrishnanbaskarangmail.onmicrosoft.com
+Bad Request({"error":{"code":"BadRequest","subCode":14,"message":"Invalid principal name","httpStatusCode":400}})
+=> capacity NOT created (no billing). Microsoft.Fabric provider registration was requested before the PUT.

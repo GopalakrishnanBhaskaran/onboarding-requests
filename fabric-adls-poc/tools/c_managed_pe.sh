@@ -7,6 +7,7 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(env_get fabricWorkspaceId)"
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
 SUBRES="dfs" ; APPLY=0
 while [ $# -gt 0 ]; do case "$1" in --subresources) SUBRES="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
 case "$WS_ID" in *UNVERIFIED*|"") die "run Agent B first (workspace id unknown)";; esac
