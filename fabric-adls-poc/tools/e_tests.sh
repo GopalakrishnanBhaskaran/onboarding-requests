@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Agent E — POC tests. Each test writes masked evidence and PASS/FAIL to evidence/E-results.txt.
 # Usage: bash e_tests.sh <prep|lakehouse|shortcut|notebook|pipeline-twa|pipeline-gw --connection <id>|probe|all> --container <c> --folder <f>
+#   tenant 2 (data plane reachable only from Fabric/private network):
+#   seed | pipeline-gw-write --connection <id> | pipeline-gw --connection <id> | shortcut-verify [--shortcut <name>] | gw-roundtrip --connection <id>
 # Creates only test objects (lakehouse poc_lh, notebook, pipelines, files under <folder>/); needs wave 3 approval.
 source "$(dirname "$0")/lib.sh"
 need az; need python3; need curl
@@ -12,7 +14,8 @@ case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)"
 CMD="${1:-}"; shift || true
 CONTAINER="$(env_get container)" ; FOLDER="$(env_get testFolder)" ; GWCONN=""
 case "$CONTAINER" in UNVERIFIED) CONTAINER="";; esac; case "$FOLDER" in UNVERIFIED|"") FOLDER="input";; esac
-while [ $# -gt 0 ]; do case "$1" in --container) CONTAINER="$2"; shift 2;; --folder) FOLDER="$2"; shift 2;; --connection) GWCONN="$2"; shift 2;; *) die "unknown $1";; esac; done
+while [ $# -gt 0 ]; do case "$1" in --container) CONTAINER="$2"; shift 2;; --folder) FOLDER="$2"; shift 2;; --connection) GWCONN="$2"; shift 2;; --shortcut) SCNAME="$2"; shift 2;; *) die "unknown $1";; esac; done
+SCNAME="${SCNAME:-adls_poc}"
 [ -n "$CONTAINER" ] || die "--container required"
 [ "$CMD" = probe ] || require_approval 3
 az account set --subscription "$SUB" 2>/dev/null || true
@@ -25,6 +28,13 @@ lh_id() { fab "/workspaces/$WS_ID/lakehouses" | j "[l['id'] for l in d['value'] 
 onelake_get() { # onelake_get <path-and-query>; token kept in memory only
   local tok; tok="$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)"
   curl -sS -m 60 -H "Authorization: Bearer $tok" -H "x-ms-version: 2023-11-03" "https://onelake.dfs.fabric.microsoft.com/$1"
+}
+onelake_put() { # onelake_put <ws>/<lh>/Files/<path> <local file>: create, append, flush (OneLake DFS API). Token in memory only.
+  local tok n u="https://onelake.dfs.fabric.microsoft.com/$1"
+  tok="$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv)"; n="$(wc -c < "$2" | tr -d ' ')"
+  curl -sS -m 60 -f -X PUT -H "Authorization: Bearer $tok" -H "x-ms-version: 2023-11-03" -H 'Content-Length: 0' "$u?resource=file&overwrite=true" -o /dev/null \
+  && curl -sS -m 60 -f -X PATCH -H "Authorization: Bearer $tok" -H "x-ms-version: 2023-11-03" -H 'Content-Type: application/octet-stream' --data-binary "@$2" "$u?action=append&position=0" -o /dev/null \
+  && curl -sS -m 60 -f -X PATCH -H "Authorization: Bearer $tok" -H "x-ms-version: 2023-11-03" -H 'Content-Length: 0' "$u?action=flush&position=$n" -o /dev/null
 }
 wait_job() { # wait_job <itemId> <location-url or jobInstanceId>
   local item="$1" jid="$2" s
@@ -155,6 +165,43 @@ do_pipeline() { # do_pipeline <label> <connectionId> <pipelineName> <sinkFolder>
   out="$(onelake_get "$WS_ID/$lh/Files/$sink/input.csv")"; echo "$out" | save "E-$label-lakehouse-file.txt"
   if echo "$out" | grep -q "gamma,30"; then result "$label" "PASS copied input.csv ADLS -> Lakehouse Files/$sink; job: ${st%% *}"; else result "$label" "FAIL job: $st"; fi
 }
+pipeline_def_write() { # pipeline_def_write <connectionId> <lakehouseId>: Binary copy Lakehouse Files/poc_seed/input.csv -> ADLS <container>/<folder>/input.csv
+  python3 - "$1" "$2" "$WS_ID" "$CONTAINER" "$FOLDER" <<'PY'
+import json,sys
+conn,lh,ws,cont,folder=sys.argv[1:6]
+lhls={"name":"poc_lh","properties":{"type":"Lakehouse","typeProperties":{"artifactId":lh,"workspaceId":ws,"rootFolder":"Files"}}}
+p={"properties":{"activities":[{"name":"CopyLakehouseToAdls","type":"Copy","policy":{"timeout":"0.00:30:00","retry":0},
+ "typeProperties":{
+  "source":{"type":"BinarySource","storeSettings":{"type":"LakehouseReadSettings","recursive":False},"formatSettings":{"type":"BinaryReadSettings"},
+    "datasetSettings":{"type":"Binary","typeProperties":{"location":{"type":"LakehouseLocation","folderPath":"poc_seed","fileName":"input.csv"}},"linkedService":lhls}},
+  "sink":{"type":"BinarySink","storeSettings":{"type":"AzureBlobFSWriteSettings"},
+    "datasetSettings":{"type":"Binary","typeProperties":{"location":{"type":"AzureBlobFSLocation","fileSystem":cont,"folderPath":folder,"fileName":"input.csv"}},
+      "externalReferences":{"connection":conn}}}}}]}}
+print(json.dumps(p))
+PY
+}
+do_seed() { # test file into the lakehouse via OneLake (public endpoint, your Entra token): the source for the ADLS write test
+  local lh; lh="$(lh_id)"; [ -n "$lh" ] || { do_lakehouse; lh="$(lh_id)"; }
+  printf 'id,name,amount\n1,alpha,10\n2,beta,20\n3,gamma,30\n' > "$RAW_DIR/input.csv"
+  if onelake_put "$WS_ID/$lh/Files/poc_seed/input.csv" "$RAW_DIR/input.csv"; then result SEED "PASS Lakehouse Files/poc_seed/input.csv (OneLake API)"; else result SEED "FAIL OneLake upload"; fi
+}
+do_pipeline_write() { # Lakehouse -> ADLS through the gateway connection: proves WRITE to the private storage
+  local conn="$1" lh pl def st name=poc_pl_gw_write
+  lh="$(lh_id)"
+  def="{\"parts\":[{\"path\":\"pipeline-content.json\",\"payload\":\"$(pipeline_def_write "$conn" "$lh" | b64)\",\"payloadType\":\"InlineBase64\"}]}"
+  pl="$(fab "/workspaces/$WS_ID/dataPipelines" | j "[p['id'] for p in d['value'] if p['displayName']=='$name'][0] if any(p['displayName']=='$name' for p in d['value']) else ''")"
+  if [ -z "$pl" ]; then fab "/workspaces/$WS_ID/dataPipelines" POST --body "{\"displayName\":\"$name\",\"definition\":$def}" -o none; sleep 10
+    pl="$(fab "/workspaces/$WS_ID/dataPipelines" | j "[p['id'] for p in d['value'] if p['displayName']=='$name'][0]")"
+  else fab "/workspaces/$WS_ID/dataPipelines/$pl/updateDefinition" POST --body "{\"definition\":$def}" -o none; fi
+  st="$(wait_job "$pl" "$(run_job "$pl" Pipeline)")"; echo "$st" | save "E-PIPELINE_GW_WRITE-job.txt"
+  case "$st" in Completed*) result PIPELINE_GW_WRITE "PASS wrote $CONTAINER/$FOLDER/input.csv to ADLS via the VNet gateway; job: ${st%% *}";;
+    *) result PIPELINE_GW_WRITE "FAIL job: $st";; esac
+}
+do_shortcut_verify() { # the shortcut you created in the UI (org account, TWA): read the file through OneLake
+  local lh out; lh="$(lh_id)"
+  out="$(onelake_get "$WS_ID/$lh/Files/$SCNAME/input.csv")"; echo "$out" | head -c 2000 | save E-shortcut-read.txt
+  if echo "$out" | grep -q "gamma,30"; then result SHORTCUT "PASS read input.csv through OneLake shortcut $SCNAME (trusted workspace access)"; else result SHORTCUT "FAIL $(echo "$out" | head -c 300)"; fi
+}
 do_probe() { # anonymous requests. On blob, 403 AuthorizationFailure = blocked by the firewall. dfs answers 401
   # NoAuthenticationInformation before the firewall check, so only the blob result decides (observed 2026-11-02).
   local ip code err h ep url
@@ -174,6 +221,10 @@ case "$CMD" in
   pipeline-twa) do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa;;
   pipeline-gw) [ -n "$GWCONN" ] || die "--connection <gateway connection id> (created by you in the UI)"; do_pipeline PIPELINE_GW "$GWCONN" poc_pl_gateway from_pipeline_gw;;
   probe) do_probe;;
+  seed) do_seed;;
+  pipeline-gw-write) [ -n "$GWCONN" ] || die "--connection <gateway connection id>"; do_pipeline_write "$GWCONN";;
+  shortcut-verify) do_shortcut_verify;;
+  gw-roundtrip) [ -n "$GWCONN" ] || die "--connection <gateway connection id>"; do_lakehouse; do_seed; do_pipeline_write "$GWCONN"; do_pipeline PIPELINE_GW "$GWCONN" poc_pl_gw from_pipeline_gw; do_probe;;
   all) do_lakehouse; do_notebook; do_shortcut; do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa; do_probe;;
   *) die "usage: e_tests.sh <prep|lakehouse|shortcut|notebook|pipeline-twa|pipeline-gw|probe|all> --container <c> [--folder <f>]";;
 esac

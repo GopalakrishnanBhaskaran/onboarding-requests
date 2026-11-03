@@ -2,6 +2,7 @@
 # Agent D — VNet data gateway in a dedicated pvdbx- subnet.
 # Default: PLAN. --apply needs wave 2 approval.
 # Usage: bash d_vnet_gateway.sh --vnet <pvdbx-vnet> --subnet <new-subnet-name> --prefix <cidr /27 or larger> [--apply]
+#        bash d_vnet_gateway.sh --existing <gateway display name>   # reuse a VNet data gateway: verify only, no Azure change
 # The gateway connection itself is made by YOU in the Fabric UI with your organizational account
 # (workspace identity is not supported on gateway connections, FB8; the REST API has no OAuth2 type, FB14).
 source "$(dirname "$0")/lib.sh"
@@ -11,8 +12,36 @@ ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; CAPNAME="$(env_get fabricCapacity | cut -d' ' -f1)"
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
-VNET="" ; SUBNET="" ; PREFIX="" ; VNET_RG="" ; APPLY=0
-while [ $# -gt 0 ]; do case "$1" in --vnet) VNET="$2"; shift 2;; --vnet-rg) VNET_RG="$2"; shift 2;; --subnet) SUBNET="$2"; shift 2;; --prefix) PREFIX="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
+VNET="" ; SUBNET="" ; PREFIX="" ; VNET_RG="" ; APPLY=0 ; EXISTING=""
+while [ $# -gt 0 ]; do case "$1" in --vnet) VNET="$2"; shift 2;; --vnet-rg) VNET_RG="$2"; shift 2;; --subnet) SUBNET="$2"; shift 2;; --prefix) PREFIX="$2"; shift 2;; --existing) EXISTING="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
+j() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1"; }
+if [ -n "$EXISTING" ]; then   # ---- reuse an existing VNet data gateway: read-only ----
+  G="$(fab /gateways | python3 -c 'import json,sys;n=sys.argv[1];print(json.dumps(next((g for g in json.load(sys.stdin)["value"] if g.get("displayName")==n),{})))' "$EXISTING")"
+  [ "$G" != "{}" ] || die "gateway '$EXISTING' not visible to you (fab /gateways)"
+  GW_ID="$(echo "$G" | j "d['id']")"
+  echo "== Agent D: reuse existing gateway $EXISTING (no Azure or Fabric change)"
+  echo "$G" | python3 -c 'import json,sys;g=json.load(sys.stdin);v=g.get("virtualNetworkAzureResource") or {}
+print("OK      type", g.get("type"), "| VNet", v.get("virtualNetworkName"), "/", v.get("subnetName"), "| members", g.get("numberOfMemberGateways"), "| sleep after", g.get("inactivityMinutesBeforeSleep"), "min")'
+  GCAP="$(echo "$G" | j "(d.get('capacityId') or '').lower()")"
+  GCAPN="$(fab /capacities | j "next((c['displayName']+' '+c['sku'] for c in d['value'] if c['id'].lower()=='$GCAP'),'not visible')")"
+  echo "        runs on capacity: $GCAPN (POC workspace capacity: $CAPNAME)"
+  ME="$(az ad signed-in-user show --query id -o tsv)"
+  R="$(fab "/gateways/$GW_ID/roleAssignments" 2>/dev/null | j "next((r['role'] for r in d['value'] if r['principal']['id']=='$ME'),'through a group')" 2>/dev/null || echo 'not readable')"
+  echo "        your role on the gateway: $R"
+  echo "== connections on this gateway (you create the ADLS one in the UI, org account, FB8/FB14)"
+  fab /connections | python3 -c 'import json,sys;gid=sys.argv[1].lower()
+rows=[c for c in json.load(sys.stdin)["value"] if (c.get("gatewayId") or "").lower()==gid]
+for c in rows: print("        ", c["id"], c.get("displayName"), (c.get("connectionDetails") or {}).get("type"), (c.get("connectionDetails") or {}).get("path"), (c.get("credentialDetails") or {}).get("credentialType"))
+print("         (none yet)" if not rows else "")' "$GW_ID"
+  python3 "$ST" set env.gatewayId "$GW_ID" >/dev/null
+  { echo "mode=reuse-existing changes=0"; echo "$G"; } | save "D-existing.txt"
+  python3 "$ST" agent D done "reused existing VNet data gateway $EXISTING; ADLS connection by owner in the UI" >/dev/null
+  STGN="$(env_get storageAccount)"
+  echo "Next (you, browser): Fabric > Settings (gear) > Manage connections and gateways > + New > Virtual network > gateway $EXISTING >"
+  echo "  connection name poc-adls-gw, type Azure Data Lake Storage Gen2, URL https://$STGN.dfs.core.windows.net/fabric-poc, auth OAuth 2.0 > Edit credentials (you sign in) > Create."
+  echo "Then re-run this command: the new connection id is listed above. Claude never types credentials."
+  exit 0
+fi
 [ -n "$VNET" ] && [ -n "$SUBNET" ] && [ -n "$PREFIX" ] || die "--vnet, --subnet and --prefix are required"
 case "$SUBNET" in [Gg]ateway[Ss]ubnet|AzureBastionSubnet) die "reserved subnet name (FB12)";; esac
 az account set --subscription "$SUB"
