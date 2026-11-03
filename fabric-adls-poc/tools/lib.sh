@@ -7,7 +7,7 @@ trap 'printf "%s ERROR line %s: %s\n" "$(date -u +%H:%M:%SZ)" "$LINENO" "$BASH_C
 POC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "$POC_DIR/.." && pwd)"
 RAW_DIR="${RAW_DIR:-$REPO_DIR/.local/fabric-poc}"   # raw output, never in git (.local/ is ignored)
-EVIDENCE_DIR="$POC_DIR/evidence"                     # masked output, safe for git
+EVIDENCE_DIR="${EVIDENCE_DIR:-$POC_DIR/evidence}"   # masked output, safe for git (tests/mocks point this elsewhere)
 FABRIC_API="https://api.fabric.microsoft.com/v1"
 FABRIC_RESOURCE="https://api.fabric.microsoft.com"
 mkdir -p "$RAW_DIR" "$EVIDENCE_DIR"
