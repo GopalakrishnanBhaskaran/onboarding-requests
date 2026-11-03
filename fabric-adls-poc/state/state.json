@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-03T00:39:01Z",
+  "updated": "2026-11-03T00:51:51Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -113,6 +113,12 @@
       "from": "Owner",
       "to": "Claude",
       "text": "list-admins: no native member user; owner creates fabricadmin (no roles) in the Entra portal, then runs Agent B with --capacity-admin"
+    },
+    {
+      "at": "2026-11-03T00:51:51Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "owner asked to use another Fabric account: fabricadmin (native, capacity admin) adds the owner as capacity contributor in the UI between B1 (--capacity-only) and the full B run; removes the Power BI admin API dependency"
     }
   ]
 }

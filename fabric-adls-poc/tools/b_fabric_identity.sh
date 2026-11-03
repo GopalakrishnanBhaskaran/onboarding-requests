@@ -3,6 +3,7 @@
 # Default: PLAN (read-only). --apply needs wave 1 approval. Run after Agent A's device IP rule.
 # Usage: bash b_fabric_identity.sh --workspace <name> --container <c> [--capacity <armName>] [--create-capacity <name> --region <loc> --capacity-admin <native UPN>] [--apply]
 #        bash b_fabric_identity.sh --list-admins   # native member users who can be capacity admin (read-only)
+#        add --capacity-only for step B1 (capacity only); the capacity admin then adds you as contributor, and the full run follows
 source "$(dirname "$0")/lib.sh"
 need az; need python3
 az_preflight
@@ -11,7 +12,7 @@ env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; TENANT="$(env_get tenant)"
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
 case "${TENANT:-}" in *'*'*|*UNVERIFIED*|"") TENANT="$(az account show --query tenantId -o tsv)";; esac
-WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN=""
+WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN="" ; CAP_ONLY=0
 list_admins() {   # read-only; on screen only, never saved to evidence. grep instead of JMESPath "!" (bash history expansion)
   # Graph returns userType/accountEnabled only with $select (az ad user list/show leave them null, FB31)
   az rest --method get --url 'https://graph.microsoft.com/v1.0/users?$select=userPrincipalName,userType,accountEnabled&$top=999' \
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
     --workspace) WS="$2"; shift 2;; --container) CONTAINER="$2"; shift 2;;
     --capacity) CAP="$2"; shift 2;; --create-capacity) NEWCAP="$2"; shift 2;; --region) REGION="$2"; shift 2;;
     --capacity-admin) CAP_ADMIN="$2"; shift 2;;   # a native member UPN of this tenant (B2B users can't be capacity admins, FB24)
+    --capacity-only) CAP_ONLY=1; shift;;   # step B1: stop once the capacity is Active (the capacity admin then adds you as contributor in the UI)
     --apply) APPLY=1; shift;; *) die "unknown argument $1";;
   esac
 done
@@ -73,6 +75,18 @@ fi
 [ -n "$CAP" ] || die "--capacity <existing F capacity> or --create-capacity <name> --region <loc> is required"
 SKU="$(az resource list --resource-type Microsoft.Fabric/capacities --query "[?name=='$CAP'].sku.name | [0]" -o tsv)"
 case "$SKU" in F*) ok "capacity $CAP is an F SKU ($SKU)";; "") [ "$APPLY" = 1 ] && die "capacity $CAP not found";; *) die "capacity $CAP is $SKU, not an F SKU";; esac
+if [ "$CAP_ONLY" = 1 ]; then
+  M="$([ "$APPLY" = 1 ] && echo apply || echo plan)"
+  { echo "mode=$M (capacity only) changes=${#PLAN[@]}"; printf '%s\n' "${PLAN[@]:-none}"
+    az resource show -g "$RG" -n "$CAP" --resource-type Microsoft.Fabric/capacities --query "{name:name,sku:sku.name,state:properties.state,location:location}" -o json 2>/dev/null || echo '{"capacity":"not created"}'
+  } | save "B1-capacity-$M.txt"
+  if [ "$APPLY" = 1 ]; then python3 "$ST" agent B running "capacity $CAP Active; next: capacity admin adds the owner as contributor (UI), then B without --capacity-only" >/dev/null; fi
+  echo "== ${#PLAN[@]} change(s) $([ "$APPLY" = 1 ] && echo applied || echo 'planned; nothing changed') (capacity only)"
+  echo "Next, as the capacity admin in an InPrivate window (you type the password and MFA yourself):"
+  echo "  app.fabric.microsoft.com > Settings > Admin portal > Capacity settings > Fabric capacity > $CAP > Contributor permissions > Specific users > your account > Apply"
+  echo "Then re-run this command without --capacity-only."
+  exit 0
+fi
 # capacity id: from the Fabric API when you are a capacity admin/contributor, else from the Power BI admin API
 # (you are a Fabric administrator, FB25; "Admin - Capacities AssignWorkspacesToCapacity: the user must be a Fabric administrator").
 PBI="https://analysis.windows.net/powerbi/api"
