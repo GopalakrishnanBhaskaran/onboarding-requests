@@ -8,6 +8,6 @@ CHANGE  you: Storage Blob Data Contributor @ container poc
 00:00:29Z ERROR line 101: [ "$APPLY" = 1 ]
 ## apply run
 CHANGE  register Microsoft.Fabric resource provider (free)
-CHANGE  create capacity fabpocf2 F2 in rg-pvdbx-fabric-poc/centralindia, admin = ***#EXT#@gopalakrishnanbaskarangmail.onmicrosoft.com
+CHANGE  create capacity fabpocf2 F2 in rg-pvdbx-fabric-poc/centralindia, admin = ***#EXT#@<tenant>.onmicrosoft.com
 Bad Request({"error":{"code":"BadRequest","subCode":14,"message":"Invalid principal name","httpStatusCode":400}})
 => capacity NOT created (no billing). Microsoft.Fabric provider registration was requested before the PUT.
