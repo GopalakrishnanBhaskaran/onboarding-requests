@@ -1,7 +1,7 @@
 {
   "stateGeneration": 2,
   "version": 1,
-  "updated": "2026-11-03T01:33:46Z",
+  "updated": "2026-11-03T01:40:51Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -9,12 +9,12 @@
     "subscription": "bde5****-**** (masked; scripts find it with stg_sub)",
     "resourceGroup": "pes-rg-data-dev-dai-weu-001",
     "storageAccount": "pesstddevdaiweu01",
-    "container": "fabric-poc (proposed: new empty POC container; adlspdp-dev holds real data and is not touched)",
+    "container": "fabric-poc (created by Agent B 2026-11-03 01:39Z, empty; adlspdp-dev untouched)",
     "testFolder": "input",
     "region": "westeurope",
     "networkPrefix": "pes- (no pvdbx- VNet in tenant 2)",
     "fabricWorkspace": "pes-fab-data-dev-local-weu-1 (owner choice: option 2; Admin; identity yes; 0 MPEs)",
-    "fabricWorkspaceId": "856a****-**** (proposed)",
+    "fabricWorkspaceId": "856a****-****",
     "fabricCapacity": "pesfabdatadevweu001 (F16, West Europe, Active; owner is capacity admin or contributor)",
     "deviceIp": "UNVERIFIED (recorded masked only)",
     "decision": "owner 2026-11-03: Fabric workspace is in another tenant than the tenant-1 storage; use storage account pesstddevdaiweu01 in the Fabric tenant (TWA isn't compatible with cross-tenant requests, FB32)",
@@ -29,8 +29,8 @@
         "B"
       ],
       "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule",
-      "approvedBy": null,
-      "approvedAt": null
+      "approvedBy": "Gokul 2026-11-03 (state.py approve in Cloud Shell after the plan review in chat; tenant 2)",
+      "approvedAt": "2026-11-03T01:39:00Z"
     },
     "2": {
       "agents": [
@@ -61,9 +61,10 @@
     },
     "B": {
       "name": "Fabric identity",
-      "status": "pending",
+      "status": "blocked",
       "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+        "2026-11-03T01:39:01Z applied: container fabric-poc. Open storage-admin requests: resource instance rule (required for the shortcut), 2 identity roles (optional)"
       ]
     },
     "C": {
@@ -168,6 +169,12 @@
       "from": "Owner",
       "to": "Claude",
       "text": "owner chose option 2 (pes-fab-data-dev-local-weu-1). access_check: owner can create containers and read/write data; can't assign roles, write the account (resource rule) or approve PEs; is admin of the 3 VNet gateways; existing MPEs belong to pes-fab-data-dev-dai-weu-1"
+    },
+    {
+      "at": "2026-11-03T01:40:51Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "wave 1 approved + applied (container fabric-poc); 3 admin requests printed"
     }
   ],
   "history": [

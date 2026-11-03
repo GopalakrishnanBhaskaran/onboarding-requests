@@ -43,7 +43,8 @@ for g in ${SUBRES//,/ }; do
     done
     if [ -n "${cid:-}" ] && [ "$CAN_APPROVE" = 0 ]; then
       admin_req "approve the Fabric managed private endpoint ($g) from workspace $WS_ID on $STG (Networking > Private endpoint connections, description contains fabric-adls-poc)" \
-        "az network private-endpoint-connection approve --id $cid --description \"Approved for fabric-adls-poc ($g)\""
+        "az network private-endpoint-connection approve --id $cid --description \"Approved for fabric-adls-poc ($g)\"" \
+        "az network private-endpoint-connection reject --id $cid --description \"fabric-adls-poc ended\""
       continue
     fi
     if [ -n "${cid:-}" ]; then

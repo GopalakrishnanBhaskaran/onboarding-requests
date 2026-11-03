@@ -1,0 +1,16 @@
+owner's Cloud Shell paste, 2026-11-03 01:39:01Z (tenant 2), masked by Claude
+$ python3 fabric-adls-poc/tools/state.py approve 1 --by "Gokul 2026-11-03 (chat)"
+$ bash fabric-adls-poc/tools/b_fabric_identity.sh --workspace pes-fab-data-dev-local-weu-1 --container fabric-poc --capacity pesfabdatadevweu001 --apply
+OK      capacity pesfabdatadevweu001 is an F SKU (F16)
+        capacity visible to you as: member
+OK      workspace pes-fab-data-dev-local-weu-1 exists
+OK      workspace on pesfabdatadevweu001
+OK      workspace identity exists
+OK      identity has a workspace role
+CHANGE  create container fabric-poc in pesstddevdaiweu01 (empty, private, for the POC only)
+REQUEST identity: Storage Blob Delegator @ account [optional for the POC]  (needs the storage account's admins)
+REQUEST identity: Storage Blob Data Contributor @ container fabric-poc [optional for the POC]  (needs the storage account's admins)
+OK      you: Storage Blob Data Contributor Storage Blob Data Owner (direct or through a group) on fabric-poc
+REQUEST resource instance rule for Fabric workspace pes-fab-data-dev-local-weu-1 (856a****-****) on pesstddevdaiweu01  (needs the storage account's admins)
+== 1 change(s) applied
+admin request commands (full ids in the owner's .local file): role assignments for workspace identity c116****-****; resource instance rule .../Microsoft.Fabric/workspaces/856a****-**** tenant af3a****-****

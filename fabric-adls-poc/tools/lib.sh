@@ -106,8 +106,12 @@ PY
 
 # admin_req <what> <command>: a step the signed-in user may not do; collected for the resource's admins.
 # The local file has full values (they need them); only the masked copy goes to evidence.
-ADMIN_REQ="$RAW_DIR/ADMIN-REQUEST.txt"
-admin_req() { echo "REQUEST $1  (needs the storage account's admins)"; printf -- '- %s\n  %s\n' "$1" "$2" >> "$ADMIN_REQ"; }
+ADMIN_REQ="$RAW_DIR/ADMIN-REQUEST-$(basename "$0" .sh).txt"   # one file per agent; tools/admin_request.sh joins them
+admin_req() { # admin_req <what> <command> [rollback command]
+  echo "REQUEST $1  (needs the storage account's admins)"
+  printf -- '- %s\n  %s\n' "$1" "$2" >> "$ADMIN_REQ"
+  [ -z "${3:-}" ] || printf -- '  rollback: %s\n' "$3" >> "$ADMIN_REQ"
+}
 admin_req_show() { # admin_req_show <evidence name>
   [ -s "$ADMIN_REQ" ] || return 0
   echo "=================== SEND TO THE STORAGE ADMINS (full values; also in $ADMIN_REQ) ==================="

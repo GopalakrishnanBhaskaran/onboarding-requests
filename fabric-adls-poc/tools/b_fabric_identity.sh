@@ -157,7 +157,8 @@ rbac() { # rbac <principalId> <type> <role> <scope> <label>
   if [ "$n" != 0 ]; then ok "$5"
   elif ! can Microsoft.Authorization/roleAssignments/write; then
     admin_req "$5$([ "$2" = ServicePrincipal ] && echo ' [optional for the POC: needed only if the shortcut signs in as the workspace identity, the production choice]')" \
-      "az role assignment create --assignee-object-id $1 --assignee-principal-type $2 --role \"$3\" --scope $4"
+      "az role assignment create --assignee-object-id $1 --assignee-principal-type $2 --role \"$3\" --scope $4" \
+      "az role assignment delete --assignee $1 --role \"$3\" --scope $4"
   else change "$5"
     if [ "$APPLY" = 1 ]; then az role assignment create --assignee-object-id "$1" --assignee-principal-type "$2" --role "$3" --scope "$4" -o none; fi
   fi
@@ -176,7 +177,8 @@ RID="/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/Fabric/p
 if [ -n "$WS_ID" ] && az storage account show -n "$STG" -g "$RG" --query "networkRuleSet.resourceAccessRules[].resourceId" -o tsv | grep -qix "$RID"; then ok "resource instance rule for the workspace"; else
   if [ -n "$WS_ID" ] && ! can Microsoft.Storage/storageAccounts/write; then
     admin_req "resource instance rule for Fabric workspace $WS ($WS_ID) on $STG (trusted workspace access, FB4/FB32)" \
-      "az storage account network-rule add -g $RG --account-name $STG --resource-id $RID --tenant-id $TENANT"
+      "az storage account network-rule add -g $RG --account-name $STG --resource-id $RID --tenant-id $TENANT" \
+      "az storage account network-rule remove -g $RG --account-name $STG --resource-id $RID --tenant-id $TENANT"
   else
   change "resource instance rule Microsoft.Fabric/workspaces/<workspace id> (tenant $(echo "$TENANT" | mask))"
   if [ "$APPLY" = 1 ]; then
