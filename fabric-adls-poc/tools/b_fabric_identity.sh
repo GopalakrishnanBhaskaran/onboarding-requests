@@ -10,7 +10,7 @@ az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; TENANT="$(env_get tenant)"
-case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
 case "${TENANT:-}" in *'*'*|*UNVERIFIED*|"") TENANT="$(az account show --query tenantId -o tsv)";; esac
 WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN="" ; CAP_ONLY=0
 list_admins() {   # read-only; on screen only, never saved to evidence. grep instead of JMESPath "!" (bash history expansion)

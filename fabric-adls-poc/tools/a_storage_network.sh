@@ -7,7 +7,7 @@ need az; need python3
 az_preflight
 ST="$POC_DIR/tools/state.py"
 SUB="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["subscription"])' "$STATE_FILE")"
-case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
 RG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["resourceGroup"])' "$STATE_FILE")"
 STG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["storageAccount"])' "$STATE_FILE")"
 VNET="" ; SUBNET="" ; VNET_RG="" ; DNS_RG="" ; DEVICE_IP="" ; APPLY=0

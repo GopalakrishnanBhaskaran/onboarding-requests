@@ -1,24 +1,25 @@
 {
+  "stateGeneration": 2,
   "version": 1,
-  "updated": "2026-11-03T01:05:22Z",
+  "updated": "2026-11-03T01:17:23Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
-    "tenant": "5240****-**** (masked)",
-    "subscription": "5b9f****-**** (masked)",
-    "resourceGroup": "rg-pvdbx-fabric-poc",
-    "storageAccount": "stpvdbxfabb5731f",
-    "container": "poc",
+    "tenant": "UNVERIFIED (tenant 2; recorded masked after discovery)",
+    "subscription": "UNVERIFIED (scripts find the storage account's subscription: lib.sh stg_sub)",
+    "resourceGroup": "UNVERIFIED",
+    "storageAccount": "pesstddevdaiweu01",
+    "container": "UNVERIFIED",
     "testFolder": "input",
-    "region": "centralindia",
+    "region": "UNVERIFIED (name suggests West Europe)",
     "networkPrefix": "pvdbx-",
-    "fabricWorkspace": "UNVERIFIED",
+    "fabricWorkspace": "UNVERIFIED (owner proposed an existing dev workspace on F16 West Europe; a separate POC workspace on the same capacity is recommended)",
     "fabricWorkspaceId": "UNVERIFIED",
-    "fabricCapacity": "UNVERIFIED (minimum F2)",
+    "fabricCapacity": "UNVERIFIED (F16 West Europe seen by ws_check)",
     "deviceIp": "UNVERIFIED (recorded masked only)",
-    "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)",
-    "vnet": "pvdbx-vnet-fabricpoc",
-    "peSubnet": "snet-pe"
+    "decision": "owner 2026-11-03: Fabric workspace is in another tenant than the tenant-1 storage; use storage account pesstddevdaiweu01 in the Fabric tenant (TWA isn't compatible with cross-tenant requests, FB32)",
+    "vnet": "UNVERIFIED (discover pvdbx- VNets in this tenant)",
+    "peSubnet": "UNVERIFIED"
   },
   "waves": {
     "1": {
@@ -27,8 +28,8 @@
         "B"
       ],
       "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule",
-      "approvedBy": "Gokul 2026-11-02 (chat: approved wave 1)",
-      "approvedAt": "2026-11-02T23:32:46Z"
+      "approvedBy": null,
+      "approvedAt": null
     },
     "2": {
       "agents": [
@@ -51,28 +52,38 @@
   "agents": {
     "A": {
       "name": "storage network",
-      "status": "done",
-      "at": "2026-11-02T23:59:21Z",
+      "status": "pending",
       "notes": [
-        "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending",
-        "2026-11-02T23:59:21Z applied 23:57Z: device IP rule, PEs blob+dfs Approved, privatelink.blob/dfs zones linked + A records; public DNS CNAME via privatelink; other-IP blob probe 403"
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
       ]
     },
     "B": {
       "name": "Fabric identity",
-      "status": "pending"
+      "status": "pending",
+      "notes": [
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+      ]
     },
     "C": {
       "name": "Fabric managed private endpoint",
-      "status": "pending"
+      "status": "pending",
+      "notes": [
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+      ]
     },
     "D": {
       "name": "VNet data gateway",
-      "status": "pending"
+      "status": "pending",
+      "notes": [
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+      ]
     },
     "E": {
       "name": "tests + report",
-      "status": "pending"
+      "status": "pending",
+      "notes": [
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+      ]
     }
   },
   "locks": {
@@ -131,6 +142,75 @@
       "from": "Owner",
       "to": "Claude",
       "text": "ws_check on the proposed workspace: visible, owner Admin, workspace identity exists, capacity F16 West Europe Active; same-tenant-as-storage not yet proven (check added)"
+    },
+    {
+      "at": "2026-11-03T01:17:23Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "workspace is in a different tenant; use storage account pesstddevdaiweu01 there. Claude: approvals reset (new storage = new approval); next discover.sh --storage pesstddevdaiweu01 (read-only)"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-11-03T01:17:23Z",
+      "what": "tenant 1 (owner's own MSA tenant) POC set, superseded: owner chose another tenant's storage account",
+      "env": {
+        "tenant": "5240****-**** (masked)",
+        "subscription": "5b9f****-**** (masked)",
+        "resourceGroup": "rg-pvdbx-fabric-poc",
+        "storageAccount": "stpvdbxfabb5731f",
+        "container": "poc",
+        "testFolder": "input",
+        "region": "centralindia",
+        "networkPrefix": "pvdbx-",
+        "fabricWorkspace": "UNVERIFIED",
+        "fabricWorkspaceId": "UNVERIFIED",
+        "fabricCapacity": "UNVERIFIED (minimum F2)",
+        "deviceIp": "UNVERIFIED (recorded masked only)",
+        "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)",
+        "vnet": "pvdbx-vnet-fabricpoc",
+        "peSubnet": "snet-pe"
+      },
+      "waves": {
+        "1": {
+          "approvedBy": "Gokul 2026-11-02 (chat: approved wave 1)",
+          "approvedAt": "2026-11-02T23:32:46Z"
+        },
+        "2": {
+          "approvedBy": null,
+          "approvedAt": null
+        },
+        "3": {
+          "approvedBy": null,
+          "approvedAt": null
+        }
+      },
+      "agents": {
+        "A": {
+          "status": "done",
+          "notes": [
+            "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending",
+            "2026-11-02T23:59:21Z applied 23:57Z: device IP rule, PEs blob+dfs Approved, privatelink.blob/dfs zones linked + A records; public DNS CNAME via privatelink; other-IP blob probe 403"
+          ]
+        },
+        "B": {
+          "status": "pending",
+          "notes": []
+        },
+        "C": {
+          "status": "pending",
+          "notes": []
+        },
+        "D": {
+          "status": "pending",
+          "notes": []
+        },
+        "E": {
+          "status": "pending",
+          "notes": []
+        }
+      },
+      "stillRunning": "rg-pvdbx-fabric-poc: storage, 2 PEs, 2 private DNS zones, VNet, budget (PEs ~INR 1.90/h + zones ~INR 95/month) until the owner deletes the RG"
     }
   ]
 }

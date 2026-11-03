@@ -18,6 +18,21 @@ while [ $# -gt 0 ]; do
 done
 
 az account show >/dev/null 2>&1 || die "not signed in: run 'az login' yourself first (Claude never signs in for you)"
+TEN0="$(az account show --query tenantId -o tsv)"
+SUBS="$(az account list --query "[?tenantId=='$TEN0' && state=='Enabled'].id" -o tsv)"   # every subscription of the signed-in tenant
+if [ -z "$SUB" ] && [ -n "$STG" ]; then   # the storage account decides the subscription
+  SUB="$(stg_sub "$STG" || true)"
+  [ -n "$SUB" ] && log "storage $STG is in subscription $(echo "$SUB" | mask)" || die "storage account $STG not found in any subscription of this tenant ($(echo "$TEN0" | mask)). Signed in to the right directory?"
+fi
+# across <az args...>: run a read-only list in every subscription of the tenant, merge into one JSON array, add "sub"
+across() {
+  local s
+  for s in $SUBS; do az "$@" --subscription "$s" -o json 2>/dev/null | python3 -c 'import json,sys
+s=sys.argv[1]
+try: d=json.load(sys.stdin)
+except Exception: d=[]
+for x in d or []: print(json.dumps(dict(x,sub=s)))' "$s" || true; done | python3 -c 'import json,sys;print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()],indent=2))'
+}
 if [ -z "$SUB" ]; then  # find the subscription that holds the $PREFIX VNets
   for s in $(az account list --query "[?state=='Enabled'].id" -o tsv); do
     n="$(az network vnet list --subscription "$s" --query "length([?starts_with(name,'$PREFIX')])" -o tsv 2>/dev/null || echo 0)"
@@ -71,30 +86,30 @@ log "6/12 role assignments on the storage account (incl. inherited)"
 az role assignment list --scope "$STG_ID" --include-inherited --query "[].{role:roleDefinitionName,principalType:principalType,principalName:principalName,principalId:principalId,scope:scope}" -o json | save 01-storage-rbac.json
 
 log "7/12 $PREFIX virtual networks + subnets"
-az network vnet list --query "[?starts_with(name,'$PREFIX')].{name:name,rg:resourceGroup,location:location,addressSpace:addressSpace.addressPrefixes,dns:dhcpOptions.dnsServers,peerings:length(virtualNetworkPeerings),subnets:subnets[].{name:name,prefix:addressPrefix,prefixes:addressPrefixes,delegations:delegations[].serviceName,peNetworkPolicies:privateEndpointNetworkPolicies,nsg:networkSecurityGroup.id,serviceEndpoints:serviceEndpoints[].service,ipConfigs:length(ipConfigurations || \`[]\`)}}" -o json | save 01-vnets.json
+across network vnet list --query "[?starts_with(name,'$PREFIX')].{name:name,rg:resourceGroup,location:location,addressSpace:addressSpace.addressPrefixes,dns:dhcpOptions.dnsServers,peerings:length(virtualNetworkPeerings),subnets:subnets[].{name:name,prefix:addressPrefix,prefixes:addressPrefixes,delegations:delegations[].serviceName,peNetworkPolicies:privateEndpointNetworkPolicies,nsg:networkSecurityGroup.id,serviceEndpoints:serviceEndpoints[].service,ipConfigs:length(ipConfigurations || \`[]\`)}}" | save 01-vnets.json
 
-log "8/12 private endpoints (all in subscription; filter later)"
-az network private-endpoint list --query "[].{name:name,rg:resourceGroup,location:location,subnet:subnet.id,target:privateLinkServiceConnections[0].privateLinkServiceId,groupIds:privateLinkServiceConnections[0].groupIds,status:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status,manual:manualPrivateLinkServiceConnections[0].privateLinkServiceId,ips:customDnsConfigs[].ipAddresses[0],fqdns:customDnsConfigs[].fqdn}" -o json | save 01-private-endpoints.json
+log "8/12 private endpoints in every subscription: those on $STG or in a $PREFIX subnet"
+across network private-endpoint list --query "[?contains(to_string(privateLinkServiceConnections[0].privateLinkServiceId || manualPrivateLinkServiceConnections[0].privateLinkServiceId), '$STG') || contains(to_string(subnet.id), '/virtualNetworks/$PREFIX')].{name:name,rg:resourceGroup,location:location,subnet:subnet.id,target:privateLinkServiceConnections[0].privateLinkServiceId,groupIds:privateLinkServiceConnections[0].groupIds,status:privateLinkServiceConnections[0].privateLinkServiceConnectionState.status,manual:manualPrivateLinkServiceConnections[0].privateLinkServiceId,ips:customDnsConfigs[].ipAddresses[0],fqdns:customDnsConfigs[].fqdn}" | save 01-private-endpoints.json
 
 log "9/12 private DNS zones + VNet links"
-az network private-dns zone list --query "[?contains(name,'privatelink')].{name:name,rg:resourceGroup,records:numberOfRecordSets,links:numberOfVirtualNetworkLinks}" -o json | save 01-dns-zones.json
+across network private-dns zone list --query "[?starts_with(name,'privatelink.blob.') || starts_with(name,'privatelink.dfs.')].{name:name,rg:resourceGroup,records:numberOfRecordSets,links:numberOfVirtualNetworkLinks}" | save 01-dns-zones.json
 python3 - "$RAW_DIR/01-dns-zones.json" <<'PY' > "$RAW_DIR/.zones.tsv"
 import json,sys
 for z in json.load(open(sys.argv[1])):
     if z["name"].startswith(("privatelink.blob.","privatelink.dfs.")):
-        print(z["rg"], z["name"])
+        print(z["sub"], z["rg"], z["name"])
 PY
 {
-  while read -r zrg zname; do
-    echo "## $zname ($zrg)"
-    az network private-dns link vnet list -g "$zrg" -z "$zname" --query "[].{link:name,vnet:virtualNetwork.id,registration:registrationEnabled,state:virtualNetworkLinkState}" -o json || true
-    az network private-dns record-set a list -g "$zrg" -z "$zname" --query "[].{name:name,ips:aRecords[].ipv4Address}" -o json || true
+  while read -r zsub zrg zname; do
+    echo "## $zname ($zrg, subscription $(echo "$zsub" | mask))"
+    az network private-dns link vnet list --subscription "$zsub" -g "$zrg" -z "$zname" --query "[].{link:name,vnet:virtualNetwork.id,registration:registrationEnabled,state:virtualNetworkLinkState}" -o json || true
+    az network private-dns record-set a list --subscription "$zsub" -g "$zrg" -z "$zname" --query "[].{name:name,ips:aRecords[].ipv4Address}" -o json || true
   done < "$RAW_DIR/.zones.tsv"
 } | save 01-dns-links-records.txt
 
 log "10/12 Fabric capacities (ARM)"
-az resource list --resource-type Microsoft.Fabric/capacities --query "[].{name:name,rg:resourceGroup,location:location,sku:sku.name,id:id}" -o json | save 01-fabric-capacities-arm.json
-for cid in $(az resource list --resource-type Microsoft.Fabric/capacities --query "[].id" -o tsv); do
+across resource list --resource-type Microsoft.Fabric/capacities --query "[].{name:name,rg:resourceGroup,location:location,sku:sku.name,id:id}" | save 01-fabric-capacities-arm.json
+for cid in $(python3 -c 'import json,sys;[print(c["id"]) for c in json.load(open(sys.argv[1]))]' "$RAW_DIR/01-fabric-capacities-arm.json"); do
   az resource show --ids "$cid" --query "{name:name,sku:sku,state:properties.state,provisioningState:properties.provisioningState,admins:properties.administration.members}" -o json
 done | save 01-fabric-capacities-state.json
 
@@ -153,6 +168,10 @@ python3 "$POC_DIR/tools/state.py" set env.tenant "$TENANT" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.subscription "$SUB" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.resourceGroup "$RG" >/dev/null
 python3 "$POC_DIR/tools/state.py" set env.storageAccount "$STG" >/dev/null
+python3 "$POC_DIR/tools/state.py" set env.resourceGroup "$RG" >/dev/null
+python3 "$POC_DIR/tools/state.py" set env.region "$(az storage account show -n "$STG" -g "$RG" --query location -o tsv)" >/dev/null
+python3 "$POC_DIR/tools/state.py" set env.subscription "$SUB" >/dev/null
+python3 "$POC_DIR/tools/state.py" set env.tenant "$TENANT" >/dev/null
 python3 "$POC_DIR/tools/summarize_discovery.py" "$RAW_DIR" "$STG" "$PREFIX" | mask > "$EVIDENCE_DIR/01-summary.txt"
 log "done. Masked evidence: fabric-adls-poc/evidence/01-*  Raw: $RAW_DIR"
 echo "=================== PASTE EVERYTHING BELOW THIS LINE BACK TO CLAUDE ==================="

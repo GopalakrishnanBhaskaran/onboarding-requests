@@ -1,5 +1,7 @@
 # Network / firewall: before and after
 
+> **Superseded 2026-11-03 (FB33):** this table is the tenant-1 POC set (`rg-pvdbx-fabric-poc`). The POC now uses storage account `pesstddevdaiweu01` in tenant 2. A new table follows after discovery there. The tenant-1 resources still exist until the RG is deleted (COST_LIMITS_CLEANUP.md §3).
+
 There was no `pvdbx-` network to reuse (FB23), so **before** means the subscription before the POC, and **after** fills in as each wave lands. Each cell names its evidence file.
 
 | Setting | Before POC | After base (23:49Z) | After Agent A (23:57Z) | After Agent B | After Agent C/D | Evidence |

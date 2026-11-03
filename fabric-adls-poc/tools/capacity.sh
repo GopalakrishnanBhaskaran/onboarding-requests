@@ -9,7 +9,7 @@ need az; need python3
 az_preflight
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
 SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"
-case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac
+case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac
 ACTION="${1:-status}"; shift || true
 NAME=fabpocf2
 while [ $# -gt 0 ]; do case "$1" in --name) NAME="$2"; shift 2;; *) die "unknown argument $1";; esac; done

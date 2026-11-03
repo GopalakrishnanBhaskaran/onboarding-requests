@@ -1,5 +1,7 @@
 # Reusing the POC storage private endpoints for Purview
 
+> **Superseded 2026-11-03 (FB33):** the PE details below are from the tenant-1 POC set. For the Purview work in tenant 2, re-run `tools/pe_details.sh` there after discovery.
+
 **Status (2026-11-02 23:57Z):** the storage private endpoints exist and are approved (Agent A apply, 9 of 9 changes). Get the live values (ids, private IPs, DNS zone ids) with the read-only script below and pass its screen output to the Purview team. Don't commit the unmasked output.
 
 ```bash

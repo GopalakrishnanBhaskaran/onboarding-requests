@@ -14,6 +14,12 @@ mkdir -p "$RAW_DIR" "$EVIDENCE_DIR"
 # Working state (approvals, locks, ids) lives outside git so 'git pull' never conflicts; state/state.json is the template + handoff copy.
 export STATE_FILE="${STATE_FILE:-$RAW_DIR/state.json}"
 [ -f "$STATE_FILE" ] || cp "$POC_DIR/state/state.json" "$STATE_FILE"
+# A newer committed template (e.g. a new tenant, approvals reset) replaces a stale working copy; the old copy is kept.
+_gen() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stateGeneration",1))' "$1" 2>/dev/null || echo 0; }
+if [ "$(_gen "$STATE_FILE")" != "$(_gen "$POC_DIR/state/state.json")" ]; then
+  cp "$STATE_FILE" "$STATE_FILE.gen$(_gen "$STATE_FILE").bak"; cp "$POC_DIR/state/state.json" "$STATE_FILE"
+  echo "$(date -u +%H:%M:%SZ) state: working copy replaced by template generation $(_gen "$STATE_FILE") (old copy kept as .bak)" >&2
+fi
 
 log()  { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 die()  { log "ERROR: $*"; exit 1; }
@@ -67,4 +73,19 @@ az_preflight() {
 require_approval() {
   local wave="$1"
   python3 "$POC_DIR/tools/state.py" check-approval "$wave" || die "wave $wave is not approved (run: tools/state.py approve $wave --by '<name> <date>')"
+}
+
+# Read env.<key> from the working state file.
+env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$STATE_FILE" "$1"; }
+
+# Subscription (in the tenant you are signed in to) that holds storage account $1; empty if none.
+# Used when state holds a masked subscription id (the committed template never has full GUIDs).
+stg_sub() {
+  local name="$1" t s
+  [ -n "$name" ] || return 1
+  t="$(az account show --query tenantId -o tsv)"
+  for s in $(az account list --query "[?tenantId=='$t' && state=='Enabled'].id" -o tsv); do
+    if [ -n "$(az storage account list --subscription "$s" --query "[?name=='$name'].id | [0]" -o tsv 2>/dev/null)" ]; then echo "$s"; return 0; fi
+  done
+  return 1
 }
