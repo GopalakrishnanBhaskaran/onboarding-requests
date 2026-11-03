@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Read-only: can an existing Fabric workspace be used for this POC?
 # Usage: bash ws_check.sh <workspace id from the URL: app.fabric.microsoft.com/groups/<id>/...>
-# Checks, from this Cloud Shell sign-in (= the storage account's tenant):
-#   1. the workspace is visible   -> same tenant (TWA "isn't compatible with cross-tenant requests", FB32)
+# Checks, from this Cloud Shell sign-in:
+#   0. the POC storage account is in the tenant you are signed in to (TWA "isn't compatible with cross-tenant requests", FB32)
+#   1. the workspace is visible from the same sign-in
 #   2. its capacity SKU and region -> F SKU needed for trusted workspace access (Trial not supported, FB1/FB32)
 #   3. workspace identity, your role in the workspace
 # Changes nothing. Full values on screen; the evidence copy is masked.
@@ -17,6 +18,19 @@ OUT="$RAW_DIR/ws_check.txt"; : > "$OUT"
 say() { echo "$*" | tee -a "$OUT"; }
 
 say "== Workspace check $(date -u +%FT%TZ)"
+# The storage account must be in the SAME tenant as the workspace (TWA isn't compatible with cross-tenant requests, FB32).
+# Fabric answers for the tenant you are signed in to, so check that the POC storage account is in that tenant too.
+TEN="$(az account show --query tenantId -o tsv)"
+ME_UPN="$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || echo '?')"
+say "        signed in to tenant $(echo "$TEN" | mask) as $(case "$ME_UPN" in *"#EXT#"*) echo 'an external (#EXT#) account';; *) echo 'a member account';; esac)"
+STG="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"]["storageAccount"])' "$STATE_FILE")"
+STG_SUB=""
+for s in $(az account list --query "[?tenantId=='$TEN'].id" -o tsv); do
+  if [ -n "$(az storage account list --subscription "$s" --query "[?name=='$STG'].id | [0]" -o tsv 2>/dev/null)" ]; then STG_SUB="$s"; break; fi
+done
+if [ -n "$STG_SUB" ]; then SAME_TENANT=yes; say "OK      POC storage account $STG is in this tenant (subscription $(echo "$STG_SUB" | mask))"
+else SAME_TENANT=no; say "FAIL    POC storage account $STG is NOT visible in this tenant: the workspace and the storage are in different tenants"
+     say "        (or this Cloud Shell is signed in to another directory). Trusted workspace access can't work cross-tenant (FB32)."; fi
 if ! W="$(fab "/workspaces/$WSID" 2>&1)"; then
   say "FAIL    workspace not visible from this sign-in: $(echo "$W" | grep -oE '"(errorCode|code)": *"[^"]+"' | head -1)"
   say "        Either it is in ANOTHER TENANT, or this account has no role in it."
@@ -27,7 +41,7 @@ fi
 NAME="$(echo "$W" | j "d.get('displayName','')")"
 CAPID="$(echo "$W" | j "(d.get('capacityId') or '').lower()")"
 WI="$(echo "$W" | j "'yes' if (d.get('workspaceIdentity') or {}).get('servicePrincipalId') else 'no'")"
-say "OK      workspace visible from this sign-in => same tenant as the storage account"
+say "OK      workspace visible from this sign-in (tenant $(echo "$TEN" | mask))"
 say "        name: $NAME"
 say "        workspace identity: $WI"
 ROLE="$(fab "/workspaces/$WSID/roleAssignments" 2>/dev/null | j "next((r['role'] for r in d['value'] if r['principal']['id']=='$ME_OID'),'not listed (you may hold it through a group)')" 2>/dev/null || echo 'unknown (listing roles needs Member or Admin)')"
@@ -36,7 +50,7 @@ say "        your role: $ROLE"
 SKU=""; REGION=""; CSTATE=""; CNAME=""
 if [ -z "$CAPID" ]; then say "WARN    workspace is not on a capacity (shared/Pro)"; else
   C="$(fab /capacities 2>/dev/null | j "next(({'n':c['displayName'],'s':c['sku'],'r':c['region'],'st':c['state']} for c in d['value'] if c['id'].lower()=='$CAPID'),{})" 2>/dev/null || echo '{}')"
-  if [ "$C" = "{}" ]; then
+  ACC=member; if [ "$C" = "{}" ]; then ACC=fabric-admin
     C="$(az rest --method get --resource https://analysis.windows.net/powerbi/api --url https://api.powerbi.com/v1.0/myorg/admin/capacities 2>/dev/null \
          | j "next(({'n':c['displayName'],'s':c['sku'],'r':c.get('region',''),'st':c.get('state','')} for c in d['value'] if c['id'].lower()=='$CAPID'),{})" 2>/dev/null || echo '{}')"
   fi
@@ -44,11 +58,17 @@ if [ -z "$CAPID" ]; then say "WARN    workspace is not on a capacity (shared/Pro
   SKU="$(python3 -c "import ast,sys;print(ast.literal_eval(sys.argv[1]).get('s',''))" "$C")"
   REGION="$(python3 -c "import ast,sys;print(ast.literal_eval(sys.argv[1]).get('r',''))" "$C")"
   CSTATE="$(python3 -c "import ast,sys;print(ast.literal_eval(sys.argv[1]).get('st',''))" "$C")"
-  if [ -n "$SKU" ]; then say "        capacity: $CNAME  SKU $SKU  region $REGION  state $CSTATE"
+  if [ -n "$SKU" ]; then say "        capacity: $CNAME  SKU $SKU  region $REGION  state $CSTATE  (you: $([ "$ACC" = member ] && echo 'capacity admin or contributor' || echo 'Fabric admin only'))"
   else say "WARN    capacity $CAPID not visible to you (not a capacity admin/contributor, and the admin API gave nothing)"; fi
 fi
 
 say "== What this workspace can do for the POC"
+if [ "$SAME_TENANT" = no ]; then
+  say "NO      shortcut + pipeline over trusted workspace access: workspace and storage are in different tenants (FB32)"
+  say "        Options: (1) sign Cloud Shell in to the storage tenant and use a workspace there, or"
+  say "                 (2) build the POC storage set in THIS tenant (w1_build_env.sh + Agent A; needs a new approval)."
+  save "WS-check.txt" < "$OUT" >/dev/null; exit 0
+fi
 case "$SKU" in
   FT*|*Trial*|*trial*) say "NO      shortcut (TWA)   Trial capacity is not supported"; say "OK      notebook (MPE)   Trial is supported (FB10)"; say "NO      pipeline         TWA needs an F SKU; VNet gateway lists F, P, A4+ only (FB12)"
        say "        => to run all three tests, move this workspace to an F capacity (e.g. fabpocf2 from b_fabric_identity.sh)";;
