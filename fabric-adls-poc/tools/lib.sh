@@ -118,3 +118,15 @@ admin_req_show() { # admin_req_show <evidence name>
   cat "$ADMIN_REQ"; echo "=================== END ==================="
   save "$1" < "$ADMIN_REQ" >/dev/null
 }
+
+# Workspace id: env.fabricWorkspaceId, or (masked/unknown, e.g. a fresh Cloud Shell) looked up by env.fabricWorkspace name.
+resolve_ws_id() {
+  local id name
+  id="$(env_get fabricWorkspaceId)"
+  case "$id" in *'*'*|*UNVERIFIED*|"")
+    name="$(env_get fabricWorkspace | cut -d' ' -f1)"
+    id="$(fab /workspaces 2>/dev/null | python3 -c 'import json,sys;n=sys.argv[1];print(next((w["id"] for w in json.load(sys.stdin)["value"] if w["displayName"]==n),""))' "$name" 2>/dev/null || true)"
+    [ -n "$id" ] && python3 "$POC_DIR/tools/state.py" set env.fabricWorkspaceId "$id" >/dev/null;;
+  esac
+  echo "$id"
+}
