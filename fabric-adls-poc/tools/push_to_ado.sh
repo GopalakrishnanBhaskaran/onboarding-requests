@@ -19,7 +19,7 @@ ORG="$(echo "$URL" | cut -d/ -f4)"; PROJECT="$(echo "$URL" | cut -d/ -f5)"; REPO
 # ---- 1. build the export ----
 EX="$RAW_DIR/ado-export"; rm -rf "$EX"; mkdir -p "$EX/$DEST"/{tools,workflows,report,evidence,state}
 cp "$POC_DIR"/tools/* "$EX/$DEST/tools/"; cp "$POC_DIR"/workflows/* "$EX/$DEST/workflows/"; cp "$POC_DIR/.gitignore" "$EX/$DEST/.gitignore"
-for f in ARCHITECTURE.md RUNBOOK_DRAFT.md PERMISSIONS.md; do [ -f "$POC_DIR/report/$f" ] && cp "$POC_DIR/report/$f" "$EX/$DEST/report/"; done
+for f in ARCHITECTURE.md RUNBOOK_DRAFT.md PERMISSIONS.md TEST_RESULTS.md; do [ -f "$POC_DIR/report/$f" ] && cp "$POC_DIR/report/$f" "$EX/$DEST/report/"; done
 cp "$POC_DIR"/evidence/T2-* "$POC_DIR"/evidence/PROBE-T2-* "$EX/$DEST/evidence/" 2>/dev/null || true
 python3 - "$POC_DIR" "$EX/$DEST" <<'PY'
 import json,re,sys,os
