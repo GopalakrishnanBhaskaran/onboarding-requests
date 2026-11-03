@@ -1,0 +1,10 @@
+mode=plan changes=8
+register Microsoft.Fabric resource provider (free)
+create capacity fabpocf2 F2 in rg-pvdbx-fabric-poc/centralindia, admin = ***@x.onmicrosoft.com (billing starts; pause when idle, FB18/FB19)
+create workspace ws-fabric-adls-poc on fabpocf2
+create workspace identity
+identity: Storage Blob Delegator @ account (after the identity exists)
+identity: Storage Blob Data Contributor @ container poc (after the identity exists)
+you: Storage Blob Data Contributor @ container poc
+resource instance rule Microsoft.Fabric/workspaces/<workspace id> (tenant 5240****-****)
+

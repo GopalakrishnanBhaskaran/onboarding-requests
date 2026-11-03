@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Agent B — Fabric capacity/workspace/identity + RBAC + resource instance rule.
 # Default: PLAN (read-only). --apply needs wave 1 approval. Run after Agent A's device IP rule.
-# Usage: bash b_fabric_identity.sh --workspace <name> --container <c> [--capacity <armName>] [--create-capacity <name> --region <loc>] [--apply]
+# Usage: bash b_fabric_identity.sh --workspace <name> --container <c> [--capacity <armName>] [--create-capacity <name> --region <loc> --capacity-admin <native UPN>] [--apply]
+#        bash b_fabric_identity.sh --list-admins   # native member users who can be capacity admin (read-only)
 source "$(dirname "$0")/lib.sh"
 need az; need python3
 az_preflight
@@ -11,6 +12,17 @@ SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get sto
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)";; esac   # template values are masked
 case "${TENANT:-}" in *'*'*|*UNVERIFIED*|"") TENANT="$(az account show --query tenantId -o tsv)";; esac
 WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN=""
+list_admins() {   # read-only; on screen only, never saved to evidence. grep instead of JMESPath "!" (bash history expansion)
+  az ad user list --query "[?userType=='Member'].{upn:userPrincipalName,enabled:accountEnabled}" -o tsv | grep -v '#EXT#' || true
+}
+for a in "$@"; do case "$a" in *"<"*|*">"*) die "replace the placeholder $a with a real value (no < >)";; esac; done
+if [ "${1:-}" = --list-admins ]; then
+  L="$(list_admins)"
+  if [ -n "$L" ]; then echo "Native member users (pick one for --capacity-admin):"; echo "$L"
+  else echo "No native member user in this tenant. Create one in the Entra portal (you set the password; Claude never sees it):"
+       echo "  portal.azure.com > Microsoft Entra ID > Users > New user > Create new user > UPN fabricadmin@<your onmicrosoft.com domain> > Create"; fi
+  exit 0
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --workspace) WS="$2"; shift 2;; --container) CONTAINER="$2"; shift 2;;
@@ -26,7 +38,11 @@ CONT_SCOPE="$STG_ID/blobServices/default/containers/$CONTAINER"
 ME_UPN="$(az ad signed-in-user show --query userPrincipalName -o tsv)"
 ME_OID="$(az ad signed-in-user show --query id -o tsv)"
 [ -n "$CAP_ADMIN" ] || CAP_ADMIN="$ME_UPN"
-case "$CAP_ADMIN" in *"#EXT#"*) log "note: capacity admin is an external account; if Azure refuses it, re-run with --capacity-admin <native member UPN> (list: az ad user list --query \"[?userType=='Member' && !contains(userPrincipalName,'#EXT#')].userPrincipalName\" -o tsv)";; esac
+if [ -n "$NEWCAP" ]; then   # FB24/FB26: only a member of this tenant can be a Fabric capacity admin; check before the ARM call
+  case "$CAP_ADMIN" in *"#EXT#"*) die "capacity admin must be a native member of this tenant, not $(echo "$CAP_ADMIN" | sed -E 's/^[^@#]+/***/') (FB26). Run: bash $0 --list-admins";; esac
+  t="$(az ad user show --id "$CAP_ADMIN" --query "[userType,accountEnabled]" -o tsv 2>/dev/null | tr '\n\t' '  ' || true)"
+  case "$t" in "Member true"*) ok_admin=1;; "") die "capacity admin $(echo "$CAP_ADMIN" | sed -E 's/^[^@]+/***/') not found in this tenant. Run: bash $0 --list-admins";; *) die "capacity admin must be an enabled Member user (found: $t)";; esac
+fi
 [ "$APPLY" = 1 ] && { require_approval 1; python3 "$ST" lock fabric-workspace B; python3 "$ST" lock fabric-capacity B; python3 "$ST" agent B running apply; }
 trap '[ "$APPLY" = 1 ] && { python3 "$ST" unlock fabric-workspace B; python3 "$ST" unlock fabric-capacity B; python3 "$ST" unlock storage-network-rules B 2>/dev/null; } || true' EXIT
 PLAN=()
