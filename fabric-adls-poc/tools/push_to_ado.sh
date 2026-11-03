@@ -17,7 +17,7 @@ ORG="$(echo "$URL" | cut -d/ -f4)"; PROJECT="$(echo "$URL" | cut -d/ -f5)"; REPO
 
 # ---- 1. build the export ----
 EX="$RAW_DIR/ado-export"; rm -rf "$EX"; mkdir -p "$EX/$DEST"/{tools,workflows,report,evidence,state}
-cp "$POC_DIR"/tools/* "$EX/$DEST/tools/"; cp "$POC_DIR"/workflows/* "$EX/$DEST/workflows/"
+cp "$POC_DIR"/tools/* "$EX/$DEST/tools/"; cp "$POC_DIR"/workflows/* "$EX/$DEST/workflows/"; cp "$POC_DIR/.gitignore" "$EX/$DEST/.gitignore"
 for f in ARCHITECTURE.md RUNBOOK_DRAFT.md PERMISSIONS.md; do [ -f "$POC_DIR/report/$f" ] && cp "$POC_DIR/report/$f" "$EX/$DEST/report/"; done
 cp "$POC_DIR"/evidence/T2-* "$POC_DIR"/evidence/PROBE-T2-* "$EX/$DEST/evidence/" 2>/dev/null || true
 python3 - "$POC_DIR" "$EX/$DEST" <<'PY'
@@ -44,6 +44,17 @@ trusted workspace access (shortcut), managed private endpoint (notebook), VNet d
   and `--apply` needs the wave approval in `state/state.json` (`tools/state.py approve <wave> --by "<name> <date>"`).
 - Steps you lack rights for become storage-admin requests (`tools/admin_request.sh` prints one e-mail).
 - Facts and Microsoft Learn links with dates: `report/VERIFIED_FACTS.md`. Evidence is masked.
+- Raw tool output stays in `fabric-adls-poc/.local/` (ignored by `.gitignore`): never commit it.
+
+## Get the tools in Azure Cloud Shell (PEST tenant, your Entra sign-in, no PAT)
+
+```bash
+pestgit() { GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \\
+  GIT_CONFIG_VALUE_0="Authorization: Bearer $(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)" git "$@"; }
+pestgit clone -q -b feature/fabric-adls-poc https://dev.azure.com/EHPestADO/pest-data/_git/pest-admin-platform ~/pest-admin-platform 2>/dev/null \\
+  || pestgit -C ~/pest-admin-platform pull -q
+cd ~/pest-admin-platform
+```
 """)
 PY
 
