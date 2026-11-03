@@ -41,6 +41,7 @@ done
 az account set --subscription "$SUB"
 STG_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STG"
 CONT_SCOPE="$STG_ID/blobServices/default/containers/$CONTAINER"
+export CAN_SCOPE="$STG_ID"; : > "$ADMIN_REQ"   # steps you lack rights for become admin requests
 ME_UPN="$(az ad signed-in-user show --query userPrincipalName -o tsv)"
 ME_OID="$(az ad signed-in-user show --query id -o tsv)"
 [ -n "$CAP_ADMIN" ] || CAP_ADMIN="$ME_UPN"
@@ -153,7 +154,11 @@ fi
 rbac() { # rbac <principalId> <type> <role> <scope> <label>
   if [ -z "$1" ]; then change "$5 (after the identity exists)"; return; fi
   n="$(az role assignment list --scope "$4" --query "[?principalId=='$1' && roleDefinitionName=='$3'] | length(@)" -o tsv 2>/dev/null || echo 0)"
-  if [ "$n" != 0 ]; then ok "$5"; else change "$5"
+  if [ "$n" != 0 ]; then ok "$5"
+  elif ! can Microsoft.Authorization/roleAssignments/write; then
+    admin_req "$5$([ "$2" = ServicePrincipal ] && echo ' [optional for the POC: needed only if the shortcut signs in as the workspace identity, the production choice]')" \
+      "az role assignment create --assignee-object-id $1 --assignee-principal-type $2 --role \"$3\" --scope $4"
+  else change "$5"
     if [ "$APPLY" = 1 ]; then az role assignment create --assignee-object-id "$1" --assignee-principal-type "$2" --role "$3" --scope "$4" -o none; fi
   fi
   return 0
@@ -169,10 +174,15 @@ fi
 # 5. resource instance rule for this workspace (FB4). CLI = same Storage RP update as the documented PowerShell cmdlet.
 RID="/subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/Fabric/providers/Microsoft.Fabric/workspaces/$WS_ID"
 if [ -n "$WS_ID" ] && az storage account show -n "$STG" -g "$RG" --query "networkRuleSet.resourceAccessRules[].resourceId" -o tsv | grep -qix "$RID"; then ok "resource instance rule for the workspace"; else
+  if [ -n "$WS_ID" ] && ! can Microsoft.Storage/storageAccounts/write; then
+    admin_req "resource instance rule for Fabric workspace $WS ($WS_ID) on $STG (trusted workspace access, FB4/FB32)" \
+      "az storage account network-rule add -g $RG --account-name $STG --resource-id $RID --tenant-id $TENANT"
+  else
   change "resource instance rule Microsoft.Fabric/workspaces/<workspace id> (tenant $(echo "$TENANT" | mask))"
   if [ "$APPLY" = 1 ]; then
     python3 "$ST" lock storage-network-rules B
     az storage account network-rule add -g "$RG" --account-name "$STG" --resource-id "$RID" --tenant-id "$TENANT" -o none
+  fi
   fi
 fi
 
@@ -182,8 +192,12 @@ fi
   [ -n "$SP_ID" ] && az role assignment list --all --query "[?principalId=='$SP_ID'].{role:roleDefinitionName,scope:scope}" -o json || true
   az storage account show -n "$STG" -g "$RG" --query "networkRuleSet.resourceAccessRules" -o json
 } | save "B-$([ "$APPLY" = 1 ] && echo apply || echo plan).txt"
-[ "$APPLY" = 1 ] && python3 "$ST" agent B done "identity, RBAC, resource rule in place" >/dev/null
+if [ "$APPLY" = 1 ]; then
+  if [ -s "$ADMIN_REQ" ]; then python3 "$ST" agent B blocked "applied what the owner may; waiting on storage admins: $(grep -c '^- ' "$ADMIN_REQ") request(s)" >/dev/null
+  else python3 "$ST" agent B done "identity, RBAC, resource rule in place" >/dev/null; fi
+fi
 echo "== ${#PLAN[@]} change(s) $([ "$APPLY" = 1 ] && echo applied || echo 'planned; nothing changed')"
+admin_req_show "B-admin-request.txt"
 if [ "${CAP_ACCESS:-member}" != member ]; then
   echo "NOTE for wave 2: you are not a capacity admin/contributor on $CAP. The capacity admin should add you once:"
   echo "     app.fabric.microsoft.com > Settings > Admin portal > Capacity settings > Fabric capacity > $CAP > Contributor permissions > Specific users > you > Apply"

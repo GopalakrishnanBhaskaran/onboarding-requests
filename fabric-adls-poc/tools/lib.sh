@@ -89,3 +89,28 @@ stg_sub() {
   done
   return 1
 }
+
+# can <action> [data]: does the signed-in user hold <action> at scope $CAN_SCOPE? (ARM "permissions" API:
+# all roles, inherited and through groups; PIM-eligible roles count only once activated). Cached per process.
+can() {
+  local f="$RAW_DIR/.perms-$$-$(echo "$CAN_SCOPE" | md5sum | cut -c1-8).json"
+  [ -s "$f" ] || az rest --method get --url "https://management.azure.com$CAN_SCOPE/providers/Microsoft.Authorization/permissions?api-version=2022-04-01" -o json > "$f" 2>/dev/null || echo '{"value":[]}' > "$f"
+  python3 - "$f" "$1" "${2:-}" <<'PY'
+import json,sys,fnmatch
+perms=json.load(open(sys.argv[1])).get("value",[]); a=sys.argv[2].lower(); data=sys.argv[3]=="data"
+inc="dataActions" if data else "actions"; exc="notDataActions" if data else "notActions"
+ok=any(any(fnmatch.fnmatch(a,x.lower()) for x in (p.get(inc) or [])) and not any(fnmatch.fnmatch(a,x.lower()) for x in (p.get(exc) or [])) for p in perms)
+sys.exit(0 if ok else 1)
+PY
+}
+
+# admin_req <what> <command>: a step the signed-in user may not do; collected for the resource's admins.
+# The local file has full values (they need them); only the masked copy goes to evidence.
+ADMIN_REQ="$RAW_DIR/ADMIN-REQUEST.txt"
+admin_req() { echo "REQUEST $1  (needs the storage account's admins)"; printf -- '- %s\n  %s\n' "$1" "$2" >> "$ADMIN_REQ"; }
+admin_req_show() { # admin_req_show <evidence name>
+  [ -s "$ADMIN_REQ" ] || return 0
+  echo "=================== SEND TO THE STORAGE ADMINS (full values; also in $ADMIN_REQ) ==================="
+  cat "$ADMIN_REQ"; echo "=================== END ==================="
+  save "$1" < "$ADMIN_REQ" >/dev/null
+}

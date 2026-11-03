@@ -13,11 +13,14 @@ while [ $# -gt 0 ]; do case "$1" in --subresources) SUBRES="$2"; shift 2;; --app
 case "$WS_ID" in *UNVERIFIED*|"") die "run Agent B first (workspace id unknown)";; esac
 az account set --subscription "$SUB"
 STG_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Storage/storageAccounts/$STG"
+export CAN_SCOPE="$STG_ID"; : > "$ADMIN_REQ"
+CAN_APPROVE=0; can Microsoft.Storage/storageAccounts/privateEndpointConnectionsApproval/action && CAN_APPROVE=1
 [ "$APPLY" = 1 ] && { require_approval 2; python3 "$ST" lock fabric-workspace C; python3 "$ST" lock storage-account C; python3 "$ST" agent C running apply; }
 trap '[ "$APPLY" = 1 ] && { python3 "$ST" unlock fabric-workspace C; python3 "$ST" unlock storage-account C; } || true' EXIT
 j() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval(sys.argv[1]))" "$1"; }
 reg="$(az provider show -n Microsoft.Network --query registrationState -o tsv)"
 [ "$reg" = Registered ] && echo "OK      Microsoft.Network registered (FB10)" || { echo "CHANGE  register Microsoft.Network"; [ "$APPLY" = 1 ] && az provider register -n Microsoft.Network --wait; }
+[ "$CAN_APPROVE" = 1 ] && echo "OK      you can approve private endpoint connections on $STG" || echo "NOTE    you can't approve private endpoint connections on $STG: the apply creates the request, then the storage admins approve it"
 N=0
 for g in ${SUBRES//,/ }; do
   name="mpe-$STG-$g"
@@ -38,6 +41,11 @@ for g in ${SUBRES//,/ }; do
       [ "$app" = "['Approved']" ] && break
       sleep 15
     done
+    if [ -n "${cid:-}" ] && [ "$CAN_APPROVE" = 0 ]; then
+      admin_req "approve the Fabric managed private endpoint ($g) from workspace $WS_ID on $STG (Networking > Private endpoint connections, description contains fabric-adls-poc)" \
+        "az network private-endpoint-connection approve --id $cid --description \"Approved for fabric-adls-poc ($g)\""
+      continue
+    fi
     if [ -n "${cid:-}" ]; then
       az network private-endpoint-connection approve --id "$cid" --description "Approved for fabric-adls-poc ($g) by owner" -o none
       echo "        approved on storage side"
@@ -55,5 +63,9 @@ done
   fab "/workspaces/$WS_ID/managedPrivateEndpoints"
   az network private-endpoint-connection list --id "$STG_ID" --query "[].{name:name,status:properties.privateLinkServiceConnectionState.status,description:properties.privateLinkServiceConnectionState.description,group:properties.groupIds}" -o json
 } | save "C-$([ "$APPLY" = 1 ] && echo apply || echo plan).txt"
-[ "$APPLY" = 1 ] && python3 "$ST" agent C done "managed PE approved" >/dev/null
+if [ "$APPLY" = 1 ]; then
+  if [ -s "$ADMIN_REQ" ]; then python3 "$ST" agent C blocked "managed PE requested; waiting on storage admin approval" >/dev/null
+  else python3 "$ST" agent C done "managed PE approved" >/dev/null; fi
+fi
+admin_req_show "C-admin-request.txt"
 echo "== $N change(s) $([ "$APPLY" = 1 ] && echo applied || echo 'planned; nothing changed')"

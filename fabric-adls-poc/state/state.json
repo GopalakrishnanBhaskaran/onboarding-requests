@@ -1,7 +1,7 @@
 {
   "stateGeneration": 2,
   "version": 1,
-  "updated": "2026-11-03T01:27:09Z",
+  "updated": "2026-11-03T01:33:46Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -13,7 +13,7 @@
     "testFolder": "input",
     "region": "westeurope",
     "networkPrefix": "pes- (no pvdbx- VNet in tenant 2)",
-    "fabricWorkspace": "pending owner choice (proposed: pes-fab-data-dev-local-weu-1, Admin, identity yes, 0 MPEs)",
+    "fabricWorkspace": "pes-fab-data-dev-local-weu-1 (owner choice: option 2; Admin; identity yes; 0 MPEs)",
     "fabricWorkspaceId": "856a****-**** (proposed)",
     "fabricCapacity": "pesfabdatadevweu001 (F16, West Europe, Active; owner is capacity admin or contributor)",
     "deviceIp": "UNVERIFIED (recorded masked only)",
@@ -53,9 +53,10 @@
   "agents": {
     "A": {
       "name": "storage network",
-      "status": "pending",
+      "status": "done",
       "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+        "2026-11-03T01:30:27Z verify-only: blob+dfs PEs Approved (zone groups in the hub DNS RG), public Disabled kept; 0 changes"
       ]
     },
     "B": {
@@ -161,6 +162,12 @@
       "from": "Claude",
       "to": "Owner",
       "text": "other-IP probe from Claude's container: blob 403 AuthorizationFailure (PROBE-T2-01). Next: access_check.sh, A verify-only, B plan; wave 1 approval needed (container + identity RBAC + resource instance rule)"
+    },
+    {
+      "at": "2026-11-03T01:33:46Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "owner chose option 2 (pes-fab-data-dev-local-weu-1). access_check: owner can create containers and read/write data; can't assign roles, write the account (resource rule) or approve PEs; is admin of the 3 VNet gateways; existing MPEs belong to pes-fab-data-dev-dai-weu-1"
     }
   ],
   "history": [
