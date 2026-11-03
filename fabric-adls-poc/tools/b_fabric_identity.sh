@@ -20,7 +20,9 @@ if [ "${1:-}" = --list-admins ]; then
   L="$(list_admins)"
   if [ -n "$L" ]; then echo "Native member users (pick one for --capacity-admin):"; echo "$L"
   else echo "No native member user in this tenant. Create one in the Entra portal (you set the password; Claude never sees it):"
-       echo "  portal.azure.com > Microsoft Entra ID > Users > New user > Create new user > UPN fabricadmin@<your onmicrosoft.com domain> > Create"; fi
+       D="$(az ad signed-in-user show --query userPrincipalName -o tsv | sed 's/.*#EXT#@//; s/^[^@]*@//')"
+       echo "  portal.azure.com > Microsoft Entra ID > Users > New user > Create new user > UPN fabricadmin@$D > Create"
+       echo "  (no roles, no groups; then: ADMIN='fabricadmin@$D')"; fi
   exit 0
 fi
 while [ $# -gt 0 ]; do

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-02T23:59:21Z",
+  "updated": "2026-11-03T00:39:01Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -107,6 +107,12 @@
       "from": "A",
       "to": "B",
       "text": "storage network in place; next b_fabric_identity.sh (capacity fabpocf2, workspace ws-fabric-adls-poc)"
+    },
+    {
+      "at": "2026-11-03T00:39:01Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "list-admins: no native member user; owner creates fabricadmin (no roles) in the Entra portal, then runs Agent B with --capacity-admin"
     }
   ]
 }
