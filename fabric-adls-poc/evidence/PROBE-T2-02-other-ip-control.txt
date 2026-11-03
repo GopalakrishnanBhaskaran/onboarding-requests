@@ -1,0 +1,11 @@
+probe 2 from Claude's container (public IP on no allow-list), anonymous, read-only, tool: e_tests.sh probe (new classification, FB38)
+2026-11-03T04:16:01Z blob anonymous from 160.79.x.x: HTTP 403 AuthorizationFailure
+2026-11-03T04:16:01Z  PROBE-ANON     BLOCKED from 160.79.x.x (blob 403 AuthorizationFailure = network)
+2026-11-03T04:16:02Z dfs anonymous from 160.79.x.x: HTTP 401 NoAuthenticationInformation
+signed-in probe skipped: no storage token for this sign-in
+--- control, same container, same minute: an open-network Microsoft storage account (Azure Open Datasets)
+azureopendatastorage blob, public container nyctlc, list: HTTP 200
+azureopendatastorage blob, container that is not public (poc-no-such-container), list: HTTP 401 NoAuthenticationInformation
+reading: an account whose network admits this IP answers anonymous requests with 200 or 401 (auth check);
+pesstddevdaiweu01 answers 403 AuthorizationFailure, which Learn lists as public network access disabled / firewall (FB38).
+still to run: the signed-in probe from Cloud Shell (e_tests.sh probe; expected 403 AuthorizationFailure on blob and dfs).

@@ -9,7 +9,7 @@ need az; need python3; need curl
 az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"].get(sys.argv[2],""))' "$STATE_FILE" "$1"; }
-SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(resolve_ws_id)"
+SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; STG="${STG%% *}"
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
 CMD="${1:-}"; shift || true
 CONTAINER="$(env_get container)" ; FOLDER="$(env_get testFolder)" ; GWCONN=""
@@ -18,6 +18,7 @@ while [ $# -gt 0 ]; do case "$1" in --container) CONTAINER="$2"; shift 2;; --fol
 SCNAME="${SCNAME:-adls_poc}"
 [ -n "$CONTAINER" ] || die "--container required"
 [ "$CMD" = probe ] || require_approval 3
+WS_ID=""; [ "$CMD" = probe ] || WS_ID="$(resolve_ws_id)"   # the probe needs no Fabric call
 az account set --subscription "$SUB" 2>/dev/null || true
 DFS="https://$STG.dfs.core.windows.net"
 RES="$EVIDENCE_DIR/E-results.txt"
@@ -202,19 +203,38 @@ do_shortcut_verify() { # the shortcut you created in the UI (org account, TWA): 
   out="$(onelake_get "$WS_ID/$lh/Files/$SCNAME/input.csv")"; echo "$out" | head -c 2000 | save E-shortcut-read.txt
   if echo "$out" | grep -q "gamma,30"; then result SHORTCUT "PASS read input.csv through OneLake shortcut $SCNAME (trusted workspace access)"; else result SHORTCUT "FAIL $(echo "$out" | head -c 300)"; fi
 }
-do_probe() { # anonymous requests. On blob, 403 AuthorizationFailure = blocked by the firewall. dfs answers 401
-  # NoAuthenticationInformation before the firewall check, so only the blob result decides (observed 2026-11-02).
-  local ip code err h ep url
+do_probe() { # Read-only. Run it from a public IP that is on no allow-list (Claude's container, Cloud Shell).
+  # Error codes (FB38, Learn "Troubleshoot 403 errors in Azure Blob Storage", 2026-07-10):
+  #   403 AuthorizationFailure            = blocked by the network (public network access disabled / firewall)
+  #   403 AuthorizationPermissionMismatch = passed the network, missing data role -> REACHABLE
+  # Anonymous: only blob decides (dfs answers 401 NoAuthenticationInformation before the network check, observed 2026-11-02).
+  # Signed in (az works, e.g. Cloud Shell): your Entra token on blob and dfs; the token stays in memory, never printed.
+  local ip tok
   ip="$(device_ip || echo unknown)"
-  for ep in blob dfs; do
-    [ "$ep" = blob ] && url="https://$STG.blob.core.windows.net/$CONTAINER?restype=container&comp=list" || url="$DFS/$CONTAINER?resource=filesystem&recursive=false"
-    h="$(curl -sS -m 20 -o /dev/null -D - -H 'x-ms-version: 2023-11-03' "$url" 2>&1)"
-    code="$(echo "$h" | awk 'toupper($1) ~ /^HTTP/ {c=$2} END{print c}')"; err="$(echo "$h" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-ms-error-code"{print $2}')"
-    echo "$(date -u +%FT%TZ) $ep from $ip: HTTP $code $err"
-    if [ "$ep" = blob ]; then
-      if [ "$code" = 403 ] && [ "$err" = AuthorizationFailure ]; then result PROBE "BLOCKED from $(echo "$ip" | mask) (blob 403 AuthorizationFailure)"; else result PROBE "REACHABLE from $(echo "$ip" | mask) (blob HTTP $code $err)"; fi
-    fi
-  done | save "E-probe-$(echo "$ip" | mask | tr . -).txt"
+  _p() { # _p <label> <url> [token] -> prints one line, sets P_CODE / P_ERR
+    local h
+    if [ -n "${3:-}" ]; then h="$(curl -sS -m 20 -o /dev/null -D - -H 'x-ms-version: 2023-11-03' -H "Authorization: Bearer $3" "$2" 2>&1 || true)"
+    else h="$(curl -sS -m 20 -o /dev/null -D - -H 'x-ms-version: 2023-11-03' "$2" 2>&1 || true)"; fi
+    P_CODE="$(echo "$h" | awk 'toupper($1) ~ /^HTTP/ {c=$2} END{print c}')"; P_ERR="$(echo "$h" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-ms-error-code"{print $2}')"
+    echo "$(date -u +%FT%TZ) $1 from $ip: HTTP $P_CODE $P_ERR"
+  }
+  _v() { # _v <result label> <what>
+    case "$P_CODE/$P_ERR" in
+      403/AuthorizationFailure) result "$1" "BLOCKED from $(echo "$ip" | mask) ($2 403 AuthorizationFailure = network)";;
+      401/NoAuthenticationInformation) result "$1" "NOT DECISIVE ($2 401 before the network check)";;
+      *) result "$1" "REACHABLE from $(echo "$ip" | mask) ($2 HTTP $P_CODE $P_ERR)";;
+    esac
+  }
+  local BLOB="https://$STG.blob.core.windows.net/$CONTAINER?restype=container&comp=list" ADLS="$DFS/$CONTAINER?resource=filesystem&recursive=false"
+  {
+    _p "blob anonymous" "$BLOB"; _v PROBE-ANON blob
+    _p "dfs anonymous" "$ADLS"
+    if tok="$(az account get-access-token --resource https://storage.azure.com --query accessToken -o tsv 2>/dev/null)" && [ -n "$tok" ]; then
+      _p "blob signed-in" "$BLOB" "$tok"; _v PROBE-SIGNEDIN "signed-in blob"
+      _p "dfs signed-in" "$ADLS" "$tok"; _v PROBE-SIGNEDIN "signed-in dfs"
+    else echo "signed-in probe skipped: no storage token for this sign-in"; fi
+    unset tok
+  } | save "E-probe-$(echo "$ip" | mask | tr . -).txt"
 }
 case "$CMD" in
   prep) do_prep;; lakehouse) do_lakehouse;; shortcut) do_shortcut;; notebook) do_notebook;;
