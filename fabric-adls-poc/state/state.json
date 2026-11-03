@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-03T00:51:51Z",
+  "updated": "2026-11-03T00:55:43Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -119,6 +119,12 @@
       "from": "Owner",
       "to": "Claude",
       "text": "owner asked to use another Fabric account: fabricadmin (native, capacity admin) adds the owner as capacity contributor in the UI between B1 (--capacity-only) and the full B run; removes the Power BI admin API dependency"
+    },
+    {
+      "at": "2026-11-03T00:55:43Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "owner proposes an existing Fabric workspace (856a****-****); ws_check.sh decides: same tenant + F SKU -> use it (B with --workspace/--capacity), trial -> move to fabpocf2, other tenant -> not usable for TWA"
     }
   ]
 }
