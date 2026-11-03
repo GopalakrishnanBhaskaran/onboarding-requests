@@ -2,14 +2,15 @@
 # Push the PEST-tenant part of the Fabric POC to an Azure DevOps repo, as YOU (Entra sign-in in Cloud Shell; no PAT).
 # Default: DRY RUN (builds the export, scans it, lists files). --push pushes a new branch; --pr also opens a PR.
 # Usage: bash push_to_ado.sh <https://dev.azure.com/<org>/<project>/_git/<repo>> [--branch feature/fabric-adls-poc]
-#                            [--path fabric-adls-poc] [--push] [--pr]
+#                            [--path fabric-adls-poc] [--push] [--pr] [--update]
+#   --update: add a new commit to an existing branch (e.g. after tool fixes); the PR, if any, picks it up.
 # Exports: tools/, workflows/, report docs (tenant-2 parts), tenant-2 evidence (masked), state template without tenant-1 history.
 # Never exports tenant-1 evidence, the Purview handoff, or anything the scan flags (keys, SAS, passwords, personal ids, full IPs).
 source "$(dirname "$0")/lib.sh"
 need az; need git; need python3; need curl
 URL="${1:-}"; shift || true
-BRANCH="feature/fabric-adls-poc"; DEST="fabric-adls-poc"; PUSH=0; PR=0
-while [ $# -gt 0 ]; do case "$1" in --branch) BRANCH="$2"; shift 2;; --path) DEST="$2"; shift 2;; --push) PUSH=1; shift;; --pr) PUSH=1; PR=1; shift;; *) die "unknown argument $1";; esac; done
+BRANCH="feature/fabric-adls-poc"; DEST="fabric-adls-poc"; PUSH=0; PR=0; UPDATE=0
+while [ $# -gt 0 ]; do case "$1" in --branch) BRANCH="$2"; shift 2;; --path) DEST="$2"; shift 2;; --push) PUSH=1; shift;; --pr) PUSH=1; PR=1; shift;; --update) PUSH=1; UPDATE=1; shift;; *) die "unknown argument $1";; esac; done
 URL="$(echo "$URL" | sed -E 's#https://[^@/]+@#https://#')"   # copied clone URLs carry "org@"
 echo "$URL" | grep -qE '^https://dev\.azure\.com/[^/]+/[^/]+/_git/[^/?#]+$' || die "usage: push_to_ado.sh https://dev.azure.com/<org>/<project>/_git/<repo> [...]"
 echo "$URL" | grep -qi vestacy && die "refused: this POC is PEST-tenant only and must not go to a Vestacy repo (owner, 2026-11-03)"
@@ -92,15 +93,22 @@ export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="
 WD="$RAW_DIR/ado-clone"; rm -rf "$WD"
 git clone -q --depth 1 "$URL" "$WD" || die "clone failed (no access to $ORG/$PROJECT/$REPO, or the org blocks Entra tokens)"
 DEF="$(git -C "$WD" symbolic-ref --short HEAD)"
-git -C "$WD" ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1 && die "branch $BRANCH already exists in $REPO: choose another --branch"
-git -C "$WD" checkout -q -b "$BRANCH"
+if git -C "$WD" ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  [ "$UPDATE" = 1 ] || die "branch $BRANCH already exists in $REPO: use --update to add a commit to it, or choose another --branch"
+  git -C "$WD" fetch -q --depth 1 origin "$BRANCH" && git -C "$WD" checkout -q -B "$BRANCH" FETCH_HEAD
+  rm -rf "$WD/$DEST/tools" "$WD/$DEST/workflows"   # files removed upstream disappear too; evidence/report/state are overwritten
+else
+  [ "$UPDATE" = 1 ] && die "branch $BRANCH does not exist yet: run with --pr (or --push) first"
+  git -C "$WD" checkout -q -b "$BRANCH"
+fi
 mkdir -p "$WD/$DEST"; cp -r "$EX/$DEST/." "$WD/$DEST/"
 ME_NAME="$(az ad signed-in-user show --query displayName -o tsv)"; ME_MAIL="$(az ad signed-in-user show --query "mail || userPrincipalName" -o tsv)"
 git -C "$WD" add "$DEST"
-git -C "$WD" -c user.name="$ME_NAME" -c user.email="$ME_MAIL" commit -q -m "Fabric -> ADLS Gen2 private access POC (PEST dev): tools, runbook drafts, verified facts, masked evidence"
+if git -C "$WD" diff --cached --quiet; then echo "OK      nothing changed since the last push"; exit 0; fi
+git -C "$WD" -c user.name="$ME_NAME" -c user.email="$ME_MAIL" commit -q -m "Fabric -> ADLS Gen2 private access POC (PEST dev): $([ "$UPDATE" = 1 ] && echo 'update tools, docs and masked evidence' || echo 'tools, runbook drafts, verified facts, masked evidence')"
 git -C "$WD" push -q -u origin "$BRANCH" || die "push failed"
 echo "OK      pushed branch $BRANCH to $URL (base $DEF)"
-if [ "$PR" = 1 ]; then
+if [ "$PR" = 1 ] && [ "$UPDATE" = 0 ]; then
   API="https://dev.azure.com/$ORG/$PROJECT/_apis/git/repositories/$REPO/pullrequests?api-version=7.1"
   BODY="$(python3 -c 'import json,sys;print(json.dumps({"sourceRefName":"refs/heads/"+sys.argv[1],"targetRefName":"refs/heads/"+sys.argv[2],"title":"Fabric -> ADLS Gen2 private access POC (PEST dev)","description":"Tools and runbook drafts for Fabric trusted workspace access, managed private endpoint and VNet data gateway to pesstddevdaiweu01 (public access Disabled). Evidence is masked. See fabric-adls-poc/README.md."}))' "$BRANCH" "$DEF")"
   R="$(curl -sS -m 60 -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" -d "$BODY" "$API")"
