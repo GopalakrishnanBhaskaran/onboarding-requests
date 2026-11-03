@@ -12,13 +12,20 @@ FABRIC_API="https://api.fabric.microsoft.com/v1"
 FABRIC_RESOURCE="https://api.fabric.microsoft.com"
 mkdir -p "$RAW_DIR" "$EVIDENCE_DIR"
 # Working state (approvals, locks, ids) lives outside git so 'git pull' never conflicts; state/state.json is the template + handoff copy.
+# One profile per tenant (cloud_init.sh): the template's profile uses $RAW_DIR/state.json; another profile
+# (STATE_PROFILE=<name>) has its own state, made by cloud_init.sh, never replaced by the template.
 export STATE_FILE="${STATE_FILE:-$RAW_DIR/state.json}"
-[ -f "$STATE_FILE" ] || cp "$POC_DIR/state/state.json" "$STATE_FILE"
-# A newer committed template (e.g. a new tenant, approvals reset) replaces a stale working copy; the old copy is kept.
-_gen() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stateGeneration",1))' "$1" 2>/dev/null || echo 0; }
-if [ "$(_gen "$STATE_FILE")" != "$(_gen "$POC_DIR/state/state.json")" ]; then
-  cp "$STATE_FILE" "$STATE_FILE.gen$(_gen "$STATE_FILE").bak"; cp "$POC_DIR/state/state.json" "$STATE_FILE"
-  echo "$(date -u +%H:%M:%SZ) state: working copy replaced by template generation $(_gen "$STATE_FILE") (old copy kept as .bak)" >&2
+_tprof="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("profile",""))' "$POC_DIR/state/state.json")"
+if [ -n "${STATE_PROFILE:-}" ] && [ "$STATE_PROFILE" != "$_tprof" ]; then
+  [ -f "$STATE_FILE" ] || { echo "no state for profile '$STATE_PROFILE': run  source fabric-adls-poc/tools/cloud_init.sh $STATE_PROFILE" >&2; exit 1; }
+else
+  [ -f "$STATE_FILE" ] || cp "$POC_DIR/state/state.json" "$STATE_FILE"
+  # A newer committed template (e.g. a new tenant, approvals reset) replaces a stale working copy; the old copy is kept.
+  _gen() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stateGeneration",1))' "$1" 2>/dev/null || echo 0; }
+  if [ "$(_gen "$STATE_FILE")" != "$(_gen "$POC_DIR/state/state.json")" ]; then
+    cp "$STATE_FILE" "$STATE_FILE.gen$(_gen "$STATE_FILE").bak"; cp "$POC_DIR/state/state.json" "$STATE_FILE"
+    echo "$(date -u +%H:%M:%SZ) state: working copy replaced by template generation $(_gen "$STATE_FILE") (old copy kept as .bak)" >&2
+  fi
 fi
 
 log()  { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
@@ -64,9 +71,19 @@ fab() {
 device_ip() { curl -fsS -m 10 https://api.ipify.org || curl -fsS -m 10 https://ifconfig.me; }
 
 # Fail early, with a fix, when the Azure CLI itself is broken (e.g. a stale command index in Cloud Shell).
+# Also refuses to run when the state belongs to another tenant than the one you are signed in to
+# (the state keeps the tenant id, or its first 4 characters in the committed template). POC_TENANT_GUARD=off skips it.
 az_preflight() {
-  az account show --query id -o tsv >/dev/null 2>"$RAW_DIR/.azerr" && return 0
-  die "az is not working: $(grep -m1 -i error "$RAW_DIR/.azerr" || head -1 "$RAW_DIR/.azerr"). Fix: rm -f ~/.azure/commandIndex.json ; az account show -o table ; then re-run"
+  local cur want
+  if ! cur="$(az account show --query tenantId -o tsv 2>"$RAW_DIR/.azerr")"; then
+    die "az is not working: $(grep -m1 -i error "$RAW_DIR/.azerr" || head -1 "$RAW_DIR/.azerr"). Fix: rm -f ~/.azure/commandIndex.json ; az account show -o table ; then re-run"
+  fi
+  [ "${POC_TENANT_GUARD:-on}" = off ] && return 0
+  want="$(env_get tenant | grep -oE '^[0-9a-fA-F]{4}' || true)"
+  if [ -n "$want" ] && [ "${cur:0:4}" != "$want" ]; then
+    die "state ${STATE_PROFILE:+(profile $STATE_PROFILE) }is for tenant $want****, but you are signed in to ${cur:0:4}****. Switch directory, then: source fabric-adls-poc/tools/cloud_init.sh <profile>"
+  fi
+  return 0
 }
 
 # Approval gate for any change: wave must be approved in state/state.json.

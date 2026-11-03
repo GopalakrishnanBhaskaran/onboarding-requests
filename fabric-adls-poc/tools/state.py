@@ -23,7 +23,8 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "..", "state", "state.json")
-DEFAULT = os.environ.get("STATE_FILE") or os.path.join(HERE, "..", "..", ".local", "fabric-poc", "state.json")
+# Same working copy as tools/lib.sh (RAW_DIR = fabric-adls-poc/.local): approvals written here are the ones the tools read.
+DEFAULT = os.environ.get("STATE_FILE") or os.path.join(HERE, "..", ".local", "state.json")
 FORBIDDEN = ("password", "secret", "token", "accountkey", "sig=")
 
 
@@ -71,11 +72,38 @@ def parse_value(raw):
         return raw
 
 
-def main(argv, path=DEFAULT):
-    if path == DEFAULT and not os.path.exists(path):  # working copy outside git, seeded from the template
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        import shutil
+def _gen(p):
+    try:
+        with open(p) as f:
+            return json.load(f).get("stateGeneration", 1)
+    except (OSError, ValueError):
+        return 0
+
+
+def seed_working_copy(path):
+    """Working copy outside git, seeded from the template; same rules as tools/lib.sh.
+    A newer template generation replaces a stale copy (kept as .gen<N>.bak), except for a
+    separate profile state (STATE_PROFILE set and not the template's profile, see cloud_init.sh)."""
+    import shutil
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(TEMPLATE) as f:
+        tprof = json.load(f).get("profile", "")
+    prof = os.environ.get("STATE_PROFILE", "")
+    if prof and prof != tprof:
+        if not os.path.exists(path):
+            raise SystemExit(f"no state for profile '{prof}': run  source fabric-adls-poc/tools/cloud_init.sh {prof}")
+        return
+    if not os.path.exists(path):
         shutil.copyfile(TEMPLATE, path)
+    elif _gen(path) != _gen(TEMPLATE):
+        shutil.copyfile(path, f"{path}.gen{_gen(path)}.bak")
+        shutil.copyfile(TEMPLATE, path)
+        print(f"state: working copy replaced by template generation {_gen(TEMPLATE)} (old copy kept as .bak)", file=sys.stderr)
+
+
+def main(argv, path=DEFAULT):
+    if path == DEFAULT:
+        seed_working_copy(path)
     if not argv:
         print(__doc__)
         return 2

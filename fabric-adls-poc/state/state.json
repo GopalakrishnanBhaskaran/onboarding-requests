@@ -1,6 +1,7 @@
 {
   "stateGeneration": 2,
   "version": 1,
+  "profile": "pest",
   "updated": "2026-11-03T01:48:33Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",

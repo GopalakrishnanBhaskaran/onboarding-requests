@@ -5,7 +5,10 @@ Goal: Microsoft Fabric (public SaaS) reads and writes an ADLS Gen2 account that 
 - Flow and waves: `workflows/00-poc-flow.md`
 - Facts read on Microsoft Learn (with dates) and where they differ from the plan: `report/VERIFIED_FACTS.md`
 - Handoff, locks and approvals: `state/state.json` (`tools/state.py`)
-- Masked evidence: `evidence/`. Raw output stays in `.local/fabric-poc/`, which isn't in git.
+- Masked evidence: `evidence/`. Raw output and the working state stay in `fabric-adls-poc/.local/`, which isn't in git.
+
+## Run in Azure Cloud Shell (PEST or Vestacy)
+Sign-in and session-start steps for each tenant: `CLOUD_SHELL_START.md`. Run them after every new or restarted Cloud Shell.
 
 ## Run on the Mac (Remote Control)
 ```bash

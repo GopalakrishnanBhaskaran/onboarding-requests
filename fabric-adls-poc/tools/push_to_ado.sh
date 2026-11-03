@@ -47,15 +47,25 @@ trusted workspace access (shortcut), managed private endpoint (notebook), VNet d
 - Facts and Microsoft Learn links with dates: `report/VERIFIED_FACTS.md`. Evidence is masked.
 - Raw tool output stays in `fabric-adls-poc/.local/` (ignored by `.gitignore`): never commit it.
 
-## Get the tools in Azure Cloud Shell (PEST tenant, your Entra sign-in, no PAT)
+## Session start in Azure Cloud Shell (every new or restarted Cloud Shell)
+
+1. Open https://portal.azure.com and sign in yourself (MFA is yours; Claude never types credentials).
+2. Settings (gear) > Directories + subscriptions > **Switch** to the PEST directory.
+3. Open Cloud Shell (`>_` at the top) > **Bash**. First time: **No storage account required** > pick the subscription > Apply.
+4. Paste this block (your Entra sign-in, no PAT; the token stays in memory):
 
 ```bash
 pestgit() { GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \\
   GIT_CONFIG_VALUE_0="Authorization: Bearer $(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)" git "$@"; }
-pestgit clone -q -b feature/fabric-adls-poc https://dev.azure.com/EHPestADO/pest-data/_git/pest-admin-platform ~/pest-admin-platform 2>/dev/null \\
-  || pestgit -C ~/pest-admin-platform pull -q
-cd ~/pest-admin-platform
+if [ -d ~/pest-admin-platform/.git ]; then pestgit -C ~/pest-admin-platform pull -q
+else pestgit clone -q -b feature/fabric-adls-poc https://dev.azure.com/EHPestADO/pest-data/_git/pest-admin-platform ~/pest-admin-platform; fi
+cd ~/pest-admin-platform && source fabric-adls-poc/tools/cloud_init.sh pest
 ```
+
+5. Paste the `== READY` block back to Claude. Every line must be OK (a CHECK or FAIL line says what to fix).
+
+Cloud Shell ends the session after 20 minutes idle and then deletes the clone and `fabric-adls-poc/.local/`
+(the working state with approvals): repeat steps 3-5, and re-run any `state.py approve` Claude gives you.
 """)
 PY
 
@@ -67,11 +77,13 @@ allow_guid={"00000000-0000-0000-0000-000000000000","db58b8e5-c6ad-4a2a-8342-4190
 pats=[(r"AccountKey=[A-Za-z0-9+/]{30,}={0,2}|SharedAccessSignature=sv=[0-9]{4}-[0-9]{2}-|[?&]sig=[A-Za-z0-9%]{20,}","storage key/SAS value"),
       (r"(?i)password\s*[:=]\s*['\"]?[A-Za-z0-9!#$%^&*()_+=-]{8,}","password value"),(r"-----BEGIN [A-Z ]*PRIVATE KEY-----","private key"),
       (r"(?i)[a-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|live)\.[a-z.]+|gmail\.onmicrosoft\.com","personal mail / personal tenant"),
-      (r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}","token")]
+      (r"eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}","token"),
+      (r"(?i)vestacy","Vestacy content in a PEST export (owner, 2026-11-03)")]
 for dp,_,fs in os.walk(root):
   for f in fs:
     p=os.path.join(dp,f); t=open(p,errors="ignore").read(); rel=os.path.relpath(p,root)
     for rx,what in pats:
+      if what.startswith("Vestacy") and f=="push_to_ado.sh": continue   # its own refusal rule names it
       if re.search(rx,t): bad.append(f"{rel}: {what}")
     for g in set(re.findall(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",t)):
       if g.lower() not in allow_guid: bad.append(f"{rel}: unmasked id {g[:4]}****")
