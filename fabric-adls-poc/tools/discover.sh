@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Step 1 discovery: READ-ONLY. Changes nothing in Azure, Entra or Fabric.
-# Usage: bash fabric-adls-poc/tools/discover.sh [--sub <id>] [--storage <name>] [--prefix pvdbx-]
+# Usage: bash fabric-adls-poc/tools/discover.sh [--sub <id>] [--storage <name>] [--prefix pvdbx-] [--device-ip <ip>] [--workspace-id <id>]
 # Raw JSON -> .local/fabric-poc/ (not in git); masked copies -> fabric-adls-poc/evidence/01-*.
 source "$(dirname "$0")/lib.sh"
 need az; need python3; need curl
 az_preflight
 
-SUB="" ; STG="" ; PREFIX="pvdbx-" ; DEVICE_IP=""
+SUB="" ; STG="" ; PREFIX="pvdbx-" ; DEVICE_IP="" ; WSID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --sub) SUB="$2"; shift 2;;
     --storage) STG="$2"; shift 2;;
     --prefix) PREFIX="$2"; shift 2;;
-    --device-ip) DEVICE_IP="$2"; shift 2;;   # your device's public IP (in Cloud Shell, the shell's own IP is NOT your device)
+    --device-ip) DEVICE_IP="$2"; shift 2;;
+    --workspace-id) WSID="$2"; shift 2;;   # only this workspace gets the per-workspace detail calls (large tenants)   # your device's public IP (in Cloud Shell, the shell's own IP is NOT your device)
     *) die "unknown argument $1";;
   esac
 done
@@ -118,21 +119,24 @@ log "11/12 Fabric REST (your Fabric role decides what is visible)"
 { fab /workspaces || echo '{"error":"workspaces not readable"}'; } | save 01-fabric-workspaces.json
 { fab /gateways || echo '{"error":"gateways not readable"}'; } | save 01-fabric-gateways.json
 # tenant settings need Fabric administrator; keep only the ones this POC depends on
-{ fab /admin/tenantsettings 2>/dev/null | python3 -c '
+{ fab /admin/tenantsettings 2>/dev/null | python3 2>/dev/null -c '
 import json,sys
 keep=("ServicePrincipalAccess","AllowServicePrincipalsUseReadAdminAPIs","FabricGAWorkloads","UsersCanCreateFabricItems","WorkspaceIdentity","ManagedPrivateEndpoint","AzurePrivateLink","BlockPublicInternetAccess","Gateway","VNet","Trusted","Identity","CreateWorkspace","Trial")
 d=json.load(sys.stdin)
 rows=[{"name":s.get("settingName"),"title":s.get("title"),"enabled":s.get("enabled"),"groups":len(s.get("enabledSecurityGroups") or [])} for s in d.get("tenantSettings",[]) if any(k.lower() in (s.get("settingName","")+s.get("title","")).lower() for k in keep)]
 print(json.dumps(rows,indent=2))' || echo '{"error":"tenant settings need the Fabric administrator role"}'; } | save 01-fabric-tenant-settings.json
-python3 - "$RAW_DIR/01-fabric-workspaces.json" <<'PY' > "$RAW_DIR/.ws.txt" || true
+python3 - "$RAW_DIR/01-fabric-workspaces.json" "$WSID" <<'PY' > "$RAW_DIR/.ws.txt" || true
 import json,sys
 try:
     for w in json.load(open(sys.argv[1])).get("value",[]):
-        if w.get("type")=="Workspace":
+        if w.get("type")=="Workspace" and (not sys.argv[2] or w["id"].lower()==sys.argv[2].lower()):
             print(w["id"], w.get("capacityId",""), w["displayName"].replace(" ","_"))
 except Exception:
     pass
 PY
+NWS="$(wc -l < "$RAW_DIR/.ws.txt")"
+if [ -z "$WSID" ] && [ "$NWS" -gt 15 ]; then head -15 "$RAW_DIR/.ws.txt" > "$RAW_DIR/.ws15" && mv "$RAW_DIR/.ws15" "$RAW_DIR/.ws.txt"; log "    $NWS workspaces visible; details for the first 15 only (pass --workspace-id <id> for yours)"; fi
+log "    workspace details: $(wc -l < "$RAW_DIR/.ws.txt") workspace(s)"
 {
   while read -r wid cap wname; do
     echo "## $wname capacity=${cap:-none}"
