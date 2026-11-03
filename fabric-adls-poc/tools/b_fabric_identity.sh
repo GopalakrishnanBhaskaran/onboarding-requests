@@ -13,7 +13,9 @@ case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(az account show --query id -o tsv)"
 case "${TENANT:-}" in *'*'*|*UNVERIFIED*|"") TENANT="$(az account show --query tenantId -o tsv)";; esac
 WS="" ; CONTAINER="" ; CAP="" ; NEWCAP="" ; REGION="" ; APPLY=0 ; CAP_ADMIN=""
 list_admins() {   # read-only; on screen only, never saved to evidence. grep instead of JMESPath "!" (bash history expansion)
-  az ad user list --query "[?userType=='Member'].{upn:userPrincipalName,enabled:accountEnabled}" -o tsv | grep -v '#EXT#' || true
+  # Graph returns userType/accountEnabled only with $select (az ad user list/show leave them null, FB31)
+  az rest --method get --url 'https://graph.microsoft.com/v1.0/users?$select=userPrincipalName,userType,accountEnabled&$top=999' \
+    --query "value[?userType=='Member'].[userPrincipalName,accountEnabled]" -o tsv | grep -v '#EXT#' || true
 }
 for a in "$@"; do case "$a" in *"<"*|*">"*) die "replace the placeholder $a with a real value (no < >)";; esac; done
 if [ "${1:-}" = --list-admins ]; then
@@ -42,8 +44,8 @@ ME_OID="$(az ad signed-in-user show --query id -o tsv)"
 [ -n "$CAP_ADMIN" ] || CAP_ADMIN="$ME_UPN"
 if [ -n "$NEWCAP" ]; then   # FB24/FB26: only a member of this tenant can be a Fabric capacity admin; check before the ARM call
   case "$CAP_ADMIN" in *"#EXT#"*) die "capacity admin must be a native member of this tenant, not $(echo "$CAP_ADMIN" | sed -E 's/^[^@#]+/***/') (FB26). Run: bash $0 --list-admins";; esac
-  t="$(az ad user show --id "$CAP_ADMIN" --query "[userType,accountEnabled]" -o tsv 2>/dev/null | tr '\n\t' '  ' || true)"
-  case "$t" in "Member true"*) ok_admin=1;; "") die "capacity admin $(echo "$CAP_ADMIN" | sed -E 's/^[^@]+/***/') not found in this tenant. Run: bash $0 --list-admins";; *) die "capacity admin must be an enabled Member user (found: $t)";; esac
+  t="$(az rest --method get --url "https://graph.microsoft.com/v1.0/users/$CAP_ADMIN?\$select=userType,accountEnabled" --query "[userType,accountEnabled]" -o tsv 2>/dev/null | tr '\n\t' '  ' | tr '[:upper:]' '[:lower:]' || true)"
+  case "$t" in "member true"*) echo "OK      capacity admin is an enabled member of this tenant";; "") die "capacity admin $(echo "$CAP_ADMIN" | sed -E 's/^[^@]+/***/') not found in this tenant. Run: bash $0 --list-admins";; *) die "capacity admin must be an enabled Member user (found: $t)";; esac
 fi
 [ "$APPLY" = 1 ] && { require_approval 1; python3 "$ST" lock fabric-workspace B; python3 "$ST" lock fabric-capacity B; python3 "$ST" agent B running apply; }
 trap '[ "$APPLY" = 1 ] && { python3 "$ST" unlock fabric-workspace B; python3 "$ST" unlock fabric-capacity B; python3 "$ST" unlock storage-network-rules B 2>/dev/null; } || true' EXIT
