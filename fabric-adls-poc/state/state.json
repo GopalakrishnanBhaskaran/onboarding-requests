@@ -1,7 +1,7 @@
 {
   "stateGeneration": 2,
   "version": 1,
-  "updated": "2026-11-03T01:40:51Z",
+  "updated": "2026-11-03T01:48:33Z",
   "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
   "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
   "env": {
@@ -71,14 +71,16 @@
       "name": "Fabric managed private endpoint",
       "status": "pending",
       "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+        "2026-11-03T01:47:09Z plan: 1 managed PE (dfs) from dev-local; approval = storage-admin request"
       ]
     },
     "D": {
       "name": "VNet data gateway",
-      "status": "pending",
+      "status": "done",
       "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
+        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+        "2026-11-03T01:47:27Z reuse existing dev VNet gateway (1 member, 30 min sleep, on F16; owner Admin); ADLS connection by owner in the UI pending"
       ]
     },
     "E": {
@@ -175,6 +177,12 @@
       "from": "Owner",
       "to": "Claude",
       "text": "wave 1 approved + applied (container fabric-poc); 3 admin requests printed"
+    },
+    {
+      "at": "2026-11-03T01:48:33Z",
+      "from": "Owner",
+      "to": "Claude",
+      "text": "wave 2 plans: B 0 changes (container exists), C 1 MPE dfs, D existing gateway verified"
     }
   ],
   "history": [

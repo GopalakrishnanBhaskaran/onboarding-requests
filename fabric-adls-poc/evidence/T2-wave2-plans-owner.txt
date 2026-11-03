@@ -1,0 +1,10 @@
+owner's Cloud Shell paste, 2026-11-03 01:46:57Z-01:47:27Z (tenant 2), summarised and masked by Claude
+Agent B re-run (plan): container fabric-poc exists; 0 changes; open admin requests (now with rollbacks):
+  resource instance rule .../Microsoft.Fabric/workspaces/856a****-**** (required for the shortcut)
+  identity c116****-****: Storage Blob Delegator @ account, Storage Blob Data Contributor @ fabric-poc (optional)
+Agent C (plan): Microsoft.Network registered; owner can't approve PE connections on pesstddevdaiweu01
+  CHANGE create managed PE mpe-pesstddevdaiweu01-dfs (dfs) in pes-fab-data-dev-local-weu-1; 1 change planned
+Agent D (--existing, verify only): pes-vnet-data-dev-weu-001-pes-snet-data-dev-vnetdgw-weu-001
+  type VirtualNetwork | VNet pes-vnet-data-dev-weu-001 / pes-snet-data-dev-vnetdgw-weu-001 | members 1 | sleep after 30 min
+  runs on capacity pesfabdatadevweu001 F16 (= POC workspace capacity); owner role on the gateway: Admin
+  connections on the gateway: 3 Azure Databricks connections (ServicePrincipal); no ADLS connection yet
