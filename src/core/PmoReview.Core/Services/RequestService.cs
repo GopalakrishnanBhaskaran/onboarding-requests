@@ -86,7 +86,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
-        if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
         var doc = new AccessRequest
         {
             Id = Guid.NewGuid().ToString("n"),
@@ -149,7 +149,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
-        if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
         var updated = current.Value with
         {
             EnterpriseId = clean.EnterpriseId,

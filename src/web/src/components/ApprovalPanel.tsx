@@ -40,7 +40,8 @@ export function ApprovalPanel({ request, stage, project, onDone, onStale }: {
       onDone(await api.respond(request.projectId, request.id, decision, remarks.trim(), runId));
     } catch (e) {
       setError(e);
-      if (e instanceof ApiError && e.status === 409) onStale();
+      // 409: the request changed. 5xx: the decision may have been saved before the error, so show where it stands now.
+      if (e instanceof ApiError && (e.status === 409 || e.status >= 500)) onStale();
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using PmoReview.Adapters;
 using PmoReview.Core.Domain;
 using PmoReview.Core.Resources;
 using PmoReview.Core.Workflow;
@@ -39,9 +40,11 @@ public class F1ResourceSelectorTests
     private static string Id() => Guid.NewGuid().ToString("D");
 
     /// <summary>A tenant project with Dev and Prod, Alice as requester; optional rows.</summary>
-    private static async Task<TestApp> App(params MappingRow[] rows)
+    private static Task<TestApp> App(params MappingRow[] rows) => AppWith(new PilotSettings(), rows);
+
+    private static async Task<TestApp> AppWith(PilotSettings settings, params MappingRow[] rows)
     {
-        var app = TestApp.Create();
+        var app = TestApp.With(settings: settings);
         foreach (var p in new[] { Project, Other })
         {
             await app.Stores.Projects.CreateAsync(new Project
@@ -330,6 +333,31 @@ public class F1ResourceSelectorTests
             Assert.Equal(RequestStatus.AiReview, req.Flow!.Status); // each runs the whole audited flow
         }
         Assert.Empty(await app.Stores.Requests.ListAsync(Other));
+    }
+
+    /// <summary>
+    /// 4 Nov 2026: a bundle ran every request's agent step inside the one HTTP call (40 s limit): a large one timed out
+    /// half-way, with a 500 and the later groups never created. Every request is now saved; once the inline budget is used
+    /// the rest wait as Submitted and the worker starts their reviews.
+    /// </summary>
+    [Fact]
+    public async Task F1_bundle_past_its_inline_budget_saves_every_request_and_the_worker_starts_the_rest()
+    {
+        var app = await AppWith(new PilotSettings { BundleInlineBudget = TimeSpan.Zero },
+            Row("G-FIN-R", "Read", objectId: Id(), roles: Reader), Row("G-HR-R", "Read", "HR", objectId: Id(), roles: Reader),
+            Row("G-OPS-R", "Read", "Ops", objectId: Id(), roles: Reader));
+        foreach (var g in new[] { "G-FIN-R", "G-HR-R", "G-OPS-R" })
+            app.Directory.AddGroup(g, objectId: (await app.Stores.MappingSheet.ListAsync(Project)).Single(r => r.Value.EntraGroup == g).Value.GroupObjectId!);
+        var r = await app.Call(TestApp.Alice, "POST", $"projects/{Project}/requests/bundle", Bundle(["Finance", "HR", "Ops"]));
+        Assert.True(r.Status == 201, r.Body);
+        var ids = r.Json.GetProperty("requests").EnumerateArray().Select(x => x.GetProperty("requestId").GetString()!).ToList();
+        Assert.Equal(3, ids.Count);
+        var statuses = new List<RequestStatus>();
+        foreach (var id in ids) statuses.Add((await app.Stores.Requests.GetAsync(Project, id))!.Value.Flow!.Status);
+        Assert.Equal([RequestStatus.AiReview, RequestStatus.Submitted, RequestStatus.Submitted], statuses); // the first one inline, then the budget
+
+        await app.RunWorker();
+        foreach (var id in ids) Assert.Equal(RequestStatus.AwaitingOwner, (await app.Stores.Requests.GetAsync(Project, id))!.Value.Flow!.Status);
     }
 
     [Fact]

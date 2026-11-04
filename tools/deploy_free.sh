@@ -637,7 +637,10 @@ import json, sys
 before, after = json.loads(sys.argv[1]), {s['name']: s.get('value') for s in json.loads(sys.argv[2])}
 retired = {'ENTRA_AUTO_ASSIGN', 'ENTRA_PROVISION_JOINERS', 'ENTRA_AUTO_CREATE_PACKAGES'}
 for s in before:
-    if s['name'] not in retired and after.get(s['name']) != s.get('value'): print(f\"{s['name']}={s.get('value') or ''}\")" "$before" "$after")
+    # A value the listing did not return (null) is never written back as empty: WORKFLOW_SCHEDULE= would stop the timer and
+    # APP_ENVIRONMENT= the worker's start. Its name is printed (UNREADABLE) for a check by hand.
+    if s.get('value') is None: print(f\"UNREADABLE {s['name']}\", file=sys.stderr); continue
+    if s['name'] not in retired and after.get(s['name']) != s['value']: print(f\"{s['name']}={s['value']}\")" "$before" "$after")
   if [[ ${#restore[@]} -eq 0 ]]; then echo "Worker app settings unchanged by the deployment."; return 0; fi
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings "${restore[@]}"
   echo "Worker app settings restored to their values before the deployment: $(printf '%s\n' "${restore[@]}" | cut -d= -f1 | tr '\n' ' ')"

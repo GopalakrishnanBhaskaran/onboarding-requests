@@ -35,6 +35,8 @@ public sealed partial class WorkflowAgent(
 {
     private const string Agent = WorkflowState.AgentActor;
     private const int MaxStepsPerCall = 8;
+    /// <summary>Logged by <c>RequestService</c> after submit/resubmit when the intake format was auto-fixed.</summary>
+    public const string IntakeFormatStep = "intake-format";
 
     /// <param name="Stop">End this call after saving (a retry waits for the next agent run instead of looping now).</param>
     private sealed record Step(AccessRequest Next, List<Func<CancellationToken, Task>> Effects, bool Stop = false);
@@ -122,7 +124,7 @@ public sealed partial class WorkflowAgent(
     public Task RecordErrorAsync(AccessRequest r, Exception e, CancellationToken ct) =>
         RecordErrorAsync(r.ProjectId, r.Id, StatusText.Label(r.Flow?.Status ?? RequestStatus.Submitted), e, ct);
 
-    private async Task RecordErrorAsync(string projectId, string? requestId, string where, Exception e, CancellationToken ct)
+    public async Task RecordErrorAsync(string projectId, string? requestId, string where, Exception e, CancellationToken ct)
     {
         var type = e.GetType().Name;
         logger.LogError("agent: {Where} failed {ExceptionType} request={RequestId}", where, type, requestId);
@@ -145,9 +147,11 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         return flow.Status switch
         {
-            RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault()?.Step ?? "submit", cid, ct),
+            // The trigger is the person's step (submit / resubmit), not the format auto-fix logged after it: with "intake-format"
+            // as the trigger the requester got no confirmation mail at submit (4 Nov 2026).
+            RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault(e => e.Step != IntakeFormatStep)?.Step ?? "submit", cid, ct),
             RequestStatus.AiReview => await AfterReviewAsync(r, cid, ct),
-            RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
+            RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await EnsureAskedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
             RequestStatus.AwaitingProdApproval => await MappingChangedAsync(r, ct) ?? await ProdApprovalAsync(r, ct),
             // F3: the Prod guard runs before anything at the granting stages.
             RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await IdTeamAsync(r, cid, ct),
@@ -176,6 +180,8 @@ public sealed partial class WorkflowAgent(
             && latest.ProcessingStatus != ProcessingStatus.Failed)
         {
             runId = latest.Id;
+            // Left Queued (e.g. its claim lost a Cosmos write): dispatch it now instead of waiting for stuck-run recovery.
+            if (latest.ProcessingStatus == ProcessingStatus.Queued) await runs.RedispatchQueuedAsync(r.ProjectId, latest.Id, cid);
         }
         else
         {
@@ -197,6 +203,13 @@ public sealed partial class WorkflowAgent(
         if (run is null || run.RequestRevision != r.Revision || run.ProcessingStatus == ProcessingStatus.Superseded)
             return await StartReviewAsync(r, "review", cid, ct);
 
+        if (run.ProcessingStatus == ProcessingStatus.Queued && runs.ProcessesInline)
+        {
+            // Never processed (its claim failed): dispatch it again (the claim is ETag-guarded, so it runs once) and look at it
+            // afresh, instead of waiting at AI review for stuck-run recovery.
+            await runs.RedispatchQueuedAsync(r.ProjectId, run.Id, cid);
+            run = (await stores.Runs.GetAsync(r.ProjectId, run.Id, ct))?.Value ?? run;
+        }
         switch (run.ProcessingStatus)
         {
             case ProcessingStatus.Queued or ProcessingStatus.Running:
@@ -320,7 +333,7 @@ public sealed partial class WorkflowAgent(
     {
         var (subject, body) = Messages.ApprovalRequested(r, stage, scope, stage == ApprovalStage.Security ? flow.CurrentApproval(ApprovalStage.Owner) : null, settings);
         var to = stage == ApprovalStage.Owner ? Recipients.Owner(r) : Recipients.Security(project);
-        return notifier.EnqueueAsync(r.ProjectId, r.Id, $"{stage.ToString().ToLowerInvariant()}-approval:{scope.ReviewRunId}", NotificationKind.ApprovalRequested, to, subject, body, ct);
+        return notifier.EnqueueAsync(r.ProjectId, r.Id, ApprovalStep(stage, scope), NotificationKind.ApprovalRequested, to, subject, body, ct);
     }
 
     /// <summary>Writes (or updates) this request's record in the response document from the passing review.</summary>
@@ -391,6 +404,25 @@ public sealed partial class WorkflowAgent(
                 $"Mapping sheet changed after the AI review (at {StatusText.Label(from)}); review re-run.", null, c),
         ]);
     }
+
+    /// <summary>
+    /// The approval request mail of the current review is in the outbox. It is written after the step that asks for the
+    /// approval is saved; if that write failed (e.g. a Cosmos error right after an Owner approved), the approver was never
+    /// asked and the request only waited for the SLA reminder. Re-asking is idempotent (same notification id). No step.
+    /// </summary>
+    private async Task<Step?> EnsureAskedAsync(AccessRequest r, CancellationToken ct)
+    {
+        var flow = r.Flow!;
+        if (flow.Scope is not { } scope) return null;
+        var stage = flow.Status == RequestStatus.AwaitingOwner ? ApprovalStage.Owner : ApprovalStage.Security;
+        var id = Notification.MakeId(Ids.Key(r.Id, ApprovalStep(stage, scope)), NotificationKind.ApprovalRequested);
+        if (await stores.Notifications.GetAsync(r.ProjectId, id, ct) is not null) return null;
+        logger.LogWarning("agent: {Stage} approval request missing request={RequestId}; asking again", stage, r.Id);
+        await AskApprovalAsync(r, stage, scope, flow, await ProjectAsync(r, ct), ct);
+        return null;
+    }
+
+    private static string ApprovalStep(ApprovalStage stage, ReviewedScope scope) => $"{stage.ToString().ToLowerInvariant()}-approval:{scope.ReviewRunId}";
 
     private async Task<Step?> ApprovalSlaAsync(AccessRequest r, CancellationToken ct)
     {

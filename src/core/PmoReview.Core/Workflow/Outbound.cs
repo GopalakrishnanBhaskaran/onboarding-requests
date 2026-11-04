@@ -71,6 +71,19 @@ public interface INotificationSender
     Task SendAsync(Notification notification, CancellationToken ct);
 }
 
+/// <summary>
+/// The worker's mail settings are incomplete (e.g. NOTIFY_SENDER=AcsEmail without ACS_ENDPOINT or NOTIFY_FROM). Before
+/// 4 Nov 2026 that threw when the worker built its parts, so every run failed before the agent started. Now the agent runs,
+/// and each mail fails with this reason (visible on the request page and, after 3 attempts, on the Issues list).
+/// </summary>
+public sealed class MisconfiguredSender(string reason) : INotificationSender
+{
+    public string Name => "Misconfigured";
+    public bool Delivers => true;
+    public string Reason => reason;
+    public Task SendAsync(Notification notification, CancellationToken ct) => throw new OutboundException($"MailNotConfigured: {reason}");
+}
+
 /// <summary>ACTIVE in the pilot: nothing leaves the app; every notification stays visible on the request page.</summary>
 public sealed class OutboxOnlySender : INotificationSender
 {
@@ -180,14 +193,17 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
                     if (n.LastError == "MailThrottled") continue;
                     next = n with { LastError = "MailThrottled" };
                 }
-                catch (OutboundException e)
+                catch (Exception e) when (e is not OutboundException { Category: "MailThrottled" } && Failures.NotCancelled(e, ct))
                 {
+                    // A sender error (OutboundException), or one it did not classify (e.g. ArgumentException for an empty
+                    // address): this mail uses an attempt; the queue goes on with the next one instead of stopping on it.
+                    var category = e is OutboundException o ? o.Category : $"SendError:{e.GetType().Name}";
                     var attempts = n.Attempts + 1;
-                    next = n with { Attempts = attempts, LastError = e.Category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
-                    logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", e.Category, n.Kind, n.RequestId, attempts);
+                    next = n with { Attempts = attempts, LastError = category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
+                    logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", category, n.Kind, n.RequestId, attempts);
                     if (attempts >= maxAttempts)
                         await issues.RecordAsync(n.ProjectId, n.RequestId, $"notify:{n.Id}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
-                            $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({e.Category}).", null, ct);
+                            $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({category}).", null, ct);
                 }
             }
             try

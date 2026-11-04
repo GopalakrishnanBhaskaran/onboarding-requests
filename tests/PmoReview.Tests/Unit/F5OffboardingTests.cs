@@ -667,6 +667,34 @@ public class F5OffboardingTests
     }
 
     /// <summary>
+    /// 4 Nov 2026: right after the soft delete, Entra's user search can still list the account while reads by its object id
+    /// already answer 404. Verify took the 404 for a read outage, paused 3 runs and ended Partially completed (with a High
+    /// issue) although the account was deleted. A 404 after this run's own delete means deleted.
+    /// </summary>
+    [Fact]
+    public async Task F5_Soft_delete_that_Entra_still_lists_for_a_while_completes()
+    {
+        var app = TestApp.With(settings: Settings(delete: true));
+        await OwnTenant(app);
+        var user = app.Directory.AddUser(Upn);
+        app.Directory.AddMember(GroupA, Upn);
+        app.Offboarding.Assignments[SubA] = [];
+        await AddPerson(app, Upn);
+        var planned = await Planned(app);
+        Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Delete && s.Result == "Planned");
+        app.Offboarding.DeleteLag = true; // the search still finds the deleted account; reads by object id say 404
+
+        await Execute(app, IdOf(planned));
+        await app.RunWorker();
+
+        var done = await Get(app);
+        Assert.Equal("Completed", Status(done));
+        Assert.Contains(Steps(done), s => s.Name == OffboardingJob.Delete && s.Result == "Done");
+        Assert.Contains($"delete-user {Upn}", app.Offboarding.Calls);
+        Assert.Equal(user.ObjectId, (await app.Stores.OffboardingRuns.GetAsync(TestApp.Alpha, IdOf(done)))!.Value.ObjectId);
+    }
+
+    /// <summary>
     /// Live 31 Oct 2026: account deletion was switched on after a plan was made. The plan kept "Delete account — off" (a plan
     /// keeps the settings of the moment it was made) and asking again returned that same plan for 24 hours. "Make a new plan"
     /// closes it unconfirmed, and the worker plans again with the new setting.

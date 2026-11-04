@@ -69,7 +69,19 @@ public sealed class GroupResolutionJob(DataStores stores, IDirectoryReader? dire
                 if (known.TryGetValue(id, out var k) && now - k.Value.ReadAt < refresh) continue;
                 if (reads >= budget) break;
                 reads++;
-                var groups = (await directory.FindGroupsAsync(ResourceResolver.Label(name), ct)).Where(g => g.SecurityEnabled).ToList();
+                List<DirectoryGroup> groups;
+                try
+                {
+                    groups = (await directory.FindGroupsAsync(ResourceResolver.Label(name), ct)).Where(g => g.SecurityEnabled).ToList();
+                }
+                catch (DirectoryReadException e) when (e.Category is "GraphError" or "GraphNotFound")
+                {
+                    // Graph refuses this one name (e.g. a character its filter does not take): skip it and resolve the others.
+                    // Before 4 Nov 2026 it ended the project's run every time, so later names and escalations never came.
+                    // Graph down, throttled or forbidden still ends the project's run (every name would fail the same way).
+                    logger.LogWarning("group resolution: Entra refused one group name ({Category}) project={ProjectId}; the others go on", e.Category, project.ProjectId);
+                    continue;
+                }
                 var doc = new GroupResolution
                 {
                     Id = id, ProjectId = project.ProjectId, GroupName = ResourceResolver.Label(name), Count = groups.Count,

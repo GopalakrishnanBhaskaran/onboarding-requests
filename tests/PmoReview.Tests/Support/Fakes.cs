@@ -107,9 +107,13 @@ public sealed class FakeDirectory : IDirectoryReader
         return Task.FromResult(_users.TryGetValue(userPrincipalName, out var u) ? u : null);
     }
 
+    /// <summary>Group names Graph refuses (400 → GraphError), e.g. a character its filter does not take.</summary>
+    public HashSet<string> RefuseGroupNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     public Task<IReadOnlyList<DirectoryGroup>> FindGroupsAsync(string displayName, CancellationToken ct)
     {
         Read();
+        if (RefuseGroupNames.Contains(displayName)) throw new DirectoryReadException("GraphError");
         return Task.FromResult<IReadOnlyList<DirectoryGroup>>(_groups.TryGetValue(displayName, out var g) ? [.. g] : []);
     }
 
@@ -368,6 +372,7 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
     public Task<IReadOnlyList<GroupMembership>> MembershipsAsync(string userObjectId, CancellationToken ct)
     {
         if (Crash is { } crash) throw crash;
+        if (deletedIds.Contains(userObjectId)) throw new DirectoryReadException("GraphNotFound");
         var upn = Upn(userObjectId);
         var list = directory.GroupsOf(upn).Select(g => new GroupMembership(directory.GroupId(g), g, true,
             Dynamic.Contains(g) ? "dynamic group (membership by rule; members cannot be removed, F102)"
@@ -383,7 +388,8 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
     }
 
     public Task<IReadOnlyList<string>> TapMethodIdsAsync(string userObjectId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<string>>([.. Taps.GetValueOrDefault(Upn(userObjectId), [])]);
+        deletedIds.Contains(userObjectId) ? throw new DirectoryReadException("GraphNotFound")
+            : Task.FromResult<IReadOnlyList<string>>([.. Taps.GetValueOrDefault(Upn(userObjectId), [])]);
 
     public Task<IReadOnlyList<string>> SubscriptionsAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>(Assignments.Keys.Concat(Unreadable).Distinct().ToList());
 
@@ -418,11 +424,19 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Entra replication after a soft delete: the user search (by UPN) still lists the account, while reads by its object id
+    /// (memberships, TAP methods) already answer 404 (GraphNotFound).
+    /// </summary>
+    public bool DeleteLag { get; set; }
+    private readonly HashSet<string> deletedIds = new(StringComparer.OrdinalIgnoreCase);
+
     public Task DeleteUserAsync(string userObjectId, CancellationToken ct)
     {
         var upn = Upn(userObjectId);
         Write($"delete-user {upn}");
-        directory.RemoveUser(upn);
+        if (DeleteLag) deletedIds.Add(userObjectId);
+        else directory.RemoveUser(upn);
         return Task.CompletedTask;
     }
 

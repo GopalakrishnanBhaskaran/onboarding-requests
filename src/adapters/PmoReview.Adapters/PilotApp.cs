@@ -33,6 +33,8 @@ public sealed record PilotSettings
     public int ProcessingBudgetSeconds { get; init; } = 30;
     /// <summary>Running longer than this is marked Failed(Timeout) by the Operator or the worker.</summary>
     public int StuckRunMinutes { get; init; } = 5;
+    /// <summary>Bundle submit: how long the agent's first steps may run inside the one HTTP call (null = 15 s); tests set zero.</summary>
+    public TimeSpan? BundleInlineBudget { get; init; }
     public Uri? AzureOpenAIEndpoint { get; init; }
     public string? AzureOpenAIDeployment { get; init; }
     public string? AzureOpenAIApiVersion { get; init; }
@@ -188,7 +190,7 @@ public static class PilotApp
             loggers.CreateLogger<WorkflowService>());
         var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,
-            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service), new UploadService(stores, clock, settings.Workflow),
+            new ContactInventoryService(stores, notifier, clock), resources, new RequestBundleService(resources, service, settings.BundleInlineBudget), new UploadService(stores, clock, settings.Workflow),
             new OffboardingService(stores, clock, settings.Workflow));
     }
 }

@@ -257,8 +257,16 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                     "offboarding-failed", "account changed", ct);
                 return;
             }
-            memberships = deleted ? [] : await reader.MembershipsAsync(run.ObjectId!, ct);
-            taps = deleted ? [] : await reader.TapMethodIdsAsync(run.ObjectId!, ct);
+            try
+            {
+                memberships = deleted ? [] : await reader.MembershipsAsync(run.ObjectId!, ct);
+                taps = deleted ? [] : await reader.TapMethodIdsAsync(run.ObjectId!, ct);
+            }
+            catch (DirectoryReadException e) when (e.Category == "GraphNotFound" && DeletedHere(run))
+            {
+                // The search still lists the account this run deleted (replication), but reading it by id is a 404: it is gone.
+                (memberships, taps) = ([], []);
+            }
         }
         catch (DirectoryReadException e)
         {
@@ -387,22 +395,34 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             var deleteDone = DoneHere(Delete);
             if (user is not null && user.ObjectId == run.ObjectId)
             {
-                if (deleteDone) { leftovers.Add("the account still exists although it was deleted (replication can lag; look again)"); lagging++; }
-                if (user.AccountEnabled)
+                var found = new List<string>();
+                var lag = 0;
+                try
                 {
-                    leftovers.Add("the account is still enabled");
-                    if (DoneHere(Disable)) lagging++;
-                }
-                foreach (var m in await reader.MembershipsAsync(run.ObjectId!, ct))
-                    if (m.Direct || m.NotChangeable is not null)
+                    if (deleteDone) { found.Add("the account still exists although it was deleted (replication can lag; look again)"); lag++; }
+                    if (user.AccountEnabled)
                     {
-                        leftovers.Add($"still in {m.DisplayName}{(m.NotChangeable is null ? "" : $" ({m.NotChangeable})")}");
-                        if (m.NotChangeable is null && DoneHere(Membership, m.GroupObjectId)) lagging++;
+                        found.Add("the account is still enabled");
+                        if (DoneHere(Disable)) lag++;
                     }
-                if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0)
+                    foreach (var m in await reader.MembershipsAsync(run.ObjectId!, ct))
+                        if (m.Direct || m.NotChangeable is not null)
+                        {
+                            found.Add($"still in {m.DisplayName}{(m.NotChangeable is null ? "" : $" ({m.NotChangeable})")}");
+                            if (m.NotChangeable is null && DoneHere(Membership, m.GroupObjectId)) lag++;
+                        }
+                    if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0)
+                    {
+                        found.Add("a Temporary Access Pass is still registered");
+                        if (DoneHere(Tap)) lag++;
+                    }
+                    leftovers.AddRange(found);
+                    lagging += lag;
+                }
+                catch (DirectoryReadException e) when (e.Category == "GraphNotFound" && deleteDone)
                 {
-                    leftovers.Add("a Temporary Access Pass is still registered");
-                    if (DoneHere(Tap)) lagging++;
+                    // The user search still lists the account this run deleted (replication), but reading it by id is a 404:
+                    // it is deleted. Before 4 Nov 2026 this counted as a read outage and the run ended Partially completed.
                 }
             }
             var (assignments, unreadable) = await AssignmentsAsync(run.ObjectId!, ct);
@@ -475,6 +495,8 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------------------
+
+    private static bool DeletedHere(OffboardingRun run) => run.Steps.Any(s => s.Name == Delete && s.Result == OffboardingStepResult.Done);
 
     /// <summary>A read failed (Graph or ARM unavailable) or an unexpected error: the run stays where it is and the next worker run tries again, at most 3 times.</summary>
     private async Task TransientAsync(Project project, Versioned<OffboardingRun> v, string phase, string category, CancellationToken ct)

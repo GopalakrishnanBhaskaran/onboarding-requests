@@ -33,9 +33,16 @@ public sealed record BundleResult(string BundleId, IReadOnlyList<BundleRequest> 
 /// F1: one request per resolved group (decision 10), each through the whole audited flow (AI review, Owner, Security,
 /// ProdApprover for Prod above Read, teams or the agent, verification). Unresolved groups are never requested.
 /// </summary>
-public sealed class RequestBundleService(ResourceService resources, WorkflowService workflow)
+/// <param name="inlineBudget">
+/// How long the AI agent's first step may run inside this one HTTP call (the SWA API stops a call after 40 s, host.json).
+/// Each request is saved first; once the budget is used, the remaining requests wait as Submitted and the worker starts
+/// their review on its next run (about 5 minutes). Before 4 Nov 2026 a large bundle hit the 40 s limit half-way: a 500,
+/// the later groups never created, and a resubmit made duplicates.
+/// </param>
+public sealed class RequestBundleService(ResourceService resources, WorkflowService workflow, TimeSpan? inlineBudget = null)
 {
     public const int MaxGroups = 20;
+    public static readonly TimeSpan DefaultInlineBudget = TimeSpan.FromSeconds(15);
 
     public async Task<BundleResult> SubmitAsync(CallerContext caller, string projectId, BundleInput input, string cid, CancellationToken ct)
     {
@@ -63,9 +70,13 @@ public sealed class RequestBundleService(ResourceService resources, WorkflowServ
         RequestService.Validate(ToInput(input, requestable[0]));
         var bundleId = Guid.NewGuid().ToString("n");
         var created = new List<BundleRequest>();
+        var budget = inlineBudget ?? DefaultInlineBudget;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         foreach (var e in requestable)
         {
-            var view = await workflow.SubmitAsync(caller, projectId, ToInput(input, e), cid, ct, bundleId);
+            // The first request always gets its agent step now; the others while the budget lasts, then the worker.
+            var advance = created.Count == 0 || watch.Elapsed < budget;
+            var view = await workflow.SubmitAsync(caller, projectId, ToInput(input, e), cid, ct, bundleId, advance);
             created.Add(new BundleRequest(view.Request.Value.Id, e.Access.GroupName, e.Access.AccessLevel, e.Access.Status, view.Status));
         }
         return new BundleResult(bundleId, created, skipped);

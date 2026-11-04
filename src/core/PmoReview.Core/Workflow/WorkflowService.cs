@@ -79,10 +79,12 @@ public sealed partial class WorkflowService(
 
     // ---- Stage 1 ------------------------------------------------------------------------------------------------
 
-    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct, string? bundleId = null)
+    /// <param name="advance">False: saved as Submitted only; the worker starts the review on its next run (bundle time budget).</param>
+    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct, string? bundleId = null,
+        bool advance = true)
     {
         var created = await requests.CreateAsync(caller, projectId, input, ct, bundleId);
-        await AdvanceSavedAsync(created.Value, cid, ct);
+        if (advance) await AdvanceSavedAsync(created.Value, cid, ct);
         return await ViewAsync(caller, projectId, created.Value.Id, ct);
     }
 
@@ -97,15 +99,24 @@ public sealed partial class WorkflowService(
     /// The request is already saved: an agent error here goes on the issues list and the worker retries, instead of a
     /// 500 that makes the requester submit the same request again.
     /// </summary>
-    private async Task AdvanceSavedAsync(AccessRequest saved, string cid, CancellationToken ct)
+    private Task AdvanceSavedAsync(AccessRequest saved, string cid, CancellationToken ct) =>
+        AfterSavedAsync(saved.ProjectId, saved.Id, StatusText.Label(saved.Flow?.Status ?? RequestStatus.Submitted), c => agent.AdvanceAsync(saved.ProjectId, saved.Id, cid, c), ct);
+
+    /// <summary>
+    /// The person's action is saved: what follows (the response document, mails, the agent step) must not turn it into an
+    /// error page. Before 4 Nov 2026 an error there gave the Owner a 500 although the approval counted, Security was never
+    /// asked, and the Owner's retry was refused as "not an approver". Now it goes on the issues list and the agent repeats
+    /// it (an approval request is asked again on its next run; the worker continues every open request).
+    /// </summary>
+    private async Task AfterSavedAsync(string projectId, string requestId, string where, Func<CancellationToken, Task> work, CancellationToken ct)
     {
         try
         {
-            await agent.AdvanceAsync(saved.ProjectId, saved.Id, cid, ct);
+            await work(ct);
         }
-        catch (Exception e) when (e is not (OperationCanceledException or AppException))
+        catch (Exception e) when (e is not AppException && Failures.NotCancelled(e, ct))
         {
-            await agent.RecordErrorAsync(saved, e, ct);
+            await agent.RecordErrorAsync(projectId, requestId, where, e, ct);
         }
     }
 
@@ -210,11 +221,14 @@ public sealed partial class WorkflowService(
         }
 
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
-        await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, ct);
-        // The decision ends the wait: an "approval past SLA" issue for this request is closed (it stays in the daily counts).
-        effects.Add(c => issues.ResolveAsync(projectId, requestId, [IssueKind.ApprovalSlaBreached], c));
-        foreach (var e in effects) await e(ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, $"{stage} approval", async c =>
+        {
+            await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, c);
+            // The decision ends the wait: an "approval past SLA" issue for this request is closed (it stays in the daily counts).
+            effects.Add(x => issues.ResolveAsync(projectId, requestId, [IssueKind.ApprovalSlaBreached], x));
+            foreach (var e in effects) await e(c);
+            await agent.AdvanceAsync(projectId, requestId, cid, c);
+        }, ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -324,7 +338,7 @@ public sealed partial class WorkflowService(
         var next = (flow with { IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, caller.UserId, "id-team-reported", tap is null ? "ID team recorded completion." : "ID team recorded completion and TAP metadata (issued, expiry, one-time, issued-by).");
         await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "ID team report", c => agent.AdvanceAsync(projectId, requestId, cid, c), ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -357,7 +371,7 @@ public sealed partial class WorkflowService(
         var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, caller.UserId, "role-team-reported", "Role assignment team recorded the assignment and updated the response document.");
         await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "role team report", c => agent.AdvanceAsync(projectId, requestId, cid, c), ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -390,9 +404,12 @@ public sealed partial class WorkflowService(
             .To(status, waiting, now, caller.UserId, "resume",
                 $"Resumed by {caller.DisplayName} after a developer fix: back to {StatusText.Label(status)}; the agent re-runs this stage's checks.");
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
-        await issues.ResolveAsync(projectId, requestId, [IssueKind.NeedsDeveloper], ct);
         logger.LogInformation("resume request={RequestId} to={Status} by={UserId} cid={Cid}", requestId, status, caller.UserId, cid);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "resume", async c =>
+        {
+            await issues.ResolveAsync(projectId, requestId, [IssueKind.NeedsDeveloper], c);
+            await agent.AdvanceAsync(projectId, requestId, cid, c);
+        }, ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 

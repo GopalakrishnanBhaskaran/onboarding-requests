@@ -124,9 +124,12 @@ public sealed partial class WorkflowService
             // Someone acted meanwhile: the recorded decision is applied by the agent below (or on its next run).
             effects.Clear();
         }
-        await UpdateResponseRecordAsync(projectId, r.Id, caller.UserId, record, ct);
-        foreach (var effect in effects) await effect(ct);
-        await agent.AdvanceAsync(projectId, r.Id, cid, ct);
+        await AfterSavedAsync(projectId, r.Id, "Prod approval", async c =>
+        {
+            await UpdateResponseRecordAsync(projectId, r.Id, caller.UserId, record, c);
+            foreach (var effect in effects) await effect(c);
+            await agent.AdvanceAsync(projectId, r.Id, cid, c);
+        }, ct);
         var view = caller.Has(projectId, Permission.ViewRequests) ? await ViewAsync(caller, projectId, r.Id, ct) : null;
         return new EscalationDecisionResult(Endpoints.ToItem(decided), view);
     }
