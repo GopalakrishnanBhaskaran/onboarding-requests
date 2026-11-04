@@ -101,8 +101,11 @@ var host = new HostBuilder()
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
                 // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.
-                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId),
-                offboarding);
+                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId,
+                    issues: parts.Issues),
+                offboarding,
+                // Each job on its own: a failing one is logged and on the issues list, and the agent still advances the requests.
+                parts.Stores, parts.Issues, loggers.CreateLogger<WorkflowWorker>());
         });
     })
     .Build();

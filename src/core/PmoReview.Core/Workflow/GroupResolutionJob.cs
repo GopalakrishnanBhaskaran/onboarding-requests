@@ -16,7 +16,7 @@ namespace PmoReview.Core.Workflow;
 /// group resolves only by the object id on the sheet.
 /// </summary>
 public sealed class GroupResolutionJob(DataStores stores, IDirectoryReader? directory, IClock clock, ILogger<GroupResolutionJob> logger, string? agentTenantId,
-    TimeSpan? refreshAfter = null, int maxReadsPerRun = 100)
+    TimeSpan? refreshAfter = null, int maxReadsPerRun = 100, IssueLog? issues = null)
 {
     public const string Actor = "AI agent";
     private readonly TimeSpan refresh = refreshAfter ?? TimeSpan.FromHours(6);
@@ -33,6 +33,22 @@ public sealed class GroupResolutionJob(DataStores stores, IDirectoryReader? dire
             catch (DirectoryReadException e)
             {
                 logger.LogWarning("group resolution: Entra read failed {Category} project={ProjectId}", e.Category, p.Value.ProjectId); // next run retries
+            }
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
+            {
+                // One project's error (a Cosmos write, a document it cannot read) never stops the other projects or the worker.
+                logger.LogError("group resolution: project={ProjectId} failed {ExceptionType}; the next run retries", p.Value.ProjectId, e.GetType().Name);
+                if (issues is null) continue;
+                try
+                {
+                    await issues.RecordAsync(p.Value.ProjectId, null, $"group-resolution-error:{e.GetType().Name}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
+                        $"The AI agent could not resolve this project's mapping group names in Entra ({e.GetType().Name}). Requests still move on; every worker run retries.",
+                        $"{e.GetType().FullName}: {(e.Message.Length > 300 ? e.Message[..300] + "…" : e.Message)}", ct);
+                }
+                catch (Exception inner) when (Failures.NotCancelled(inner, ct))
+                {
+                    logger.LogError("group resolution: could not record the error ({ExceptionType})", inner.GetType().Name);
+                }
             }
         }
         return reads;

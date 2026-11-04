@@ -182,14 +182,30 @@ public sealed class FaultyStore<T>(IDocumentStore<T> inner) : IDocumentStore<T> 
 {
     public bool FailWrites { get; set; }
     public bool FailLists { get; set; }
+    /// <summary>
+    /// Finer faults (a poison document, a Cosmos timeout or outage): gets the operation ("Get", "List", "ListAll", "Create",
+    /// "Replace") and the id or partition key it was called with; a non-null result is thrown.
+    /// </summary>
+    public Func<string, string, Exception?> Fail { get; set; } = (_, _) => null;
 
-    public Task<Versioned<T>?> GetAsync(string partitionKey, string id, CancellationToken ct = default) => inner.GetAsync(partitionKey, id, ct);
-    public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default) =>
-        FailLists ? throw new InvalidOperationException("SAMPLE fault: list") : inner.ListAsync(partitionKey, ct);
-    public Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default) => inner.ListAllAsync(ct);
-    public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default) =>
-        FailWrites ? throw new InvalidOperationException("SAMPLE fault: write") : inner.CreateAsync(document, ct);
-    public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default) => inner.ReplaceAsync(document, ifMatchETag, ct);
+    private void Check(string op, string key)
+    {
+        if (Fail(op, key) is { } e) throw e;
+    }
+
+    public Task<Versioned<T>?> GetAsync(string partitionKey, string id, CancellationToken ct = default) { Check("Get", id); return inner.GetAsync(partitionKey, id, ct); }
+    public Task<IReadOnlyList<Versioned<T>>> ListAsync(string partitionKey, CancellationToken ct = default)
+    {
+        Check("List", partitionKey);
+        return FailLists ? throw new InvalidOperationException("SAMPLE fault: list") : inner.ListAsync(partitionKey, ct);
+    }
+    public Task<IReadOnlyList<Versioned<T>>> ListAllAsync(CancellationToken ct = default) { Check("ListAll", ""); return inner.ListAllAsync(ct); }
+    public Task<Versioned<T>> CreateAsync(T document, CancellationToken ct = default)
+    {
+        Check("Create", document.Id);
+        return FailWrites ? throw new InvalidOperationException("SAMPLE fault: write") : inner.CreateAsync(document, ct);
+    }
+    public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default) { Check("Replace", document.Id); return inner.ReplaceAsync(document, ifMatchETag, ct); }
 }
 
 /// <summary>Agent provisioning stand-in: writes into the fake directory and records every call.</summary>
@@ -346,8 +362,12 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
         return a;
     }
 
+    /// <summary>An error no step expects (not a DirectoryReadException), thrown by every membership read while set.</summary>
+    public Exception? Crash { get; set; }
+
     public Task<IReadOnlyList<GroupMembership>> MembershipsAsync(string userObjectId, CancellationToken ct)
     {
+        if (Crash is { } crash) throw crash;
         var upn = Upn(userObjectId);
         var list = directory.GroupsOf(upn).Select(g => new GroupMembership(directory.GroupId(g), g, true,
             Dynamic.Contains(g) ? "dynamic group (membership by rule; members cannot be removed, F102)"
@@ -426,3 +446,4 @@ public sealed class FakeOffboarding(FakeDirectory directory) : IOffboardingReade
         Calls.Add(call);
     }
 }
+

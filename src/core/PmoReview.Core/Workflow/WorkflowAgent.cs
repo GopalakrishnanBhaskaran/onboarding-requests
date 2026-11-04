@@ -83,21 +83,31 @@ public sealed partial class WorkflowAgent(
             {
                 await runs.RecoverStuckAsync(project.Value.ProjectId, ct);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
             {
                 await RecordErrorAsync(project.Value.ProjectId, null, "stuck-run recovery", e, ct); // the requests still get their turn
             }
-            foreach (var r in await stores.Requests.ListAsync(project.Value.ProjectId, ct))
+            IReadOnlyList<Versioned<AccessRequest>> open;
+            try
             {
-                if (r.Value.Flow is not { IsOpen: true }) continue;
+                open = (await stores.Requests.ListAsync(project.Value.ProjectId, ct)).Where(r => r.Value.Flow is { IsOpen: true }).ToList();
+            }
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
+            {
+                await RecordErrorAsync(project.Value.ProjectId, null, "reading the requests", e, ct); // the other projects still get their turn
+                continue;
+            }
+            foreach (var r in open)
+            {
                 try
                 {
-                    var before = r.Value.Flow.Events.Count;
+                    var before = r.Value.Flow!.Events.Count;
                     var after = await AdvanceAsync(r.Value.ProjectId, r.Value.Id, correlationId, ct);
                     if (after?.Flow?.Events.Count > before) advanced++;
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (Failures.NotCancelled(e, ct))
                 {
+                    // Also a Cosmos or HTTP timeout (an OperationCanceledException while the run's own token is not cancelled).
                     await RecordErrorAsync(r.Value, e, ct);
                 }
             }
@@ -124,7 +134,7 @@ public sealed partial class WorkflowAgent(
                 $"The AI agent could not process {what} ({type}). Nothing was changed and every agent run retries; a developer is needed while this recurs (see last seen).",
                 $"{e.GetType().FullName}: {message}", ct);
         }
-        catch (Exception inner) when (inner is not OperationCanceledException)
+        catch (Exception inner) when (Failures.NotCancelled(inner, ct))
         {
             logger.LogError("agent: could not record the error ({ExceptionType})", inner.GetType().Name);
         }

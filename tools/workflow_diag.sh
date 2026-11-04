@@ -21,6 +21,12 @@ if [[ -n "$W" ]]; then
   az functionapp show -g "$RG" -n "$W" --query "{state:state, runtime:properties.functionAppConfig.runtime, lastModifiedUtc:lastModifiedTimeUtc}" -o json
   echo "-- functions deployed (expect workflow-agent):"
   az functionapp function list -g "$RG" -n "$W" --query "[].name" -o tsv || echo "  (could not list functions)"
+  # Is the 5-minute timer running? Platform metric, no App Insights (F126): about 12 an hour. A failed run counts too;
+  # failures are on the Issues list (worker-job:/agent-error:, shown under NEEDS DEVELOPER below).
+  echo "-- worker runs per hour, last 6 hours (expect about 12 each; 0 = the agent is not running):"
+  az monitor metrics list --resource "$(az functionapp show -g "$RG" -n "$W" --query id -o tsv)" --metric OnDemandFunctionExecutionCount \
+    --interval PT1H --offset 6h --aggregation Total --query "value[0].timeseries[0].data[].{hourUtc:timeStamp, runs:total}" -o table 2>/dev/null \
+    || echo "  (metric not readable)"
   echo "-- settings:"
   az functionapp config appsettings list -g "$RG" -n "$W" \
     --query "[?contains(['ALLOW_PAID_SERVICES','COSMOS_DATABASE','WORKFLOW_SCHEDULE','REVIEW_MODEL_PROVIDER','ROLE_READER','NOTIFY_SENDER','ADO_ORG_URL','ADO_PROJECT','TAP_MAX_LIFETIME_MINUTES','ENTRA_AUTO_ASSIGN','ENTRA_PROVISION_JOINERS','ENTRA_AUTO_CREATE_PACKAGES','AGENT_PROVISIONING','AGENT_ROLE_ASSIGNMENT','ROLE_ASSIGN_ALLOWED_ROLES','ROLE_ASSIGN_SCOPES','APP_ENVIRONMENT','NOTIFY_FROM','ACS_ENDPOINT','NOTIFY_REDIRECT_TO','AGENT_TENANT_ID','AGENT_TAP','AGENT_TAP_LIFETIME_MINUTES','AGENT_PRIVILEGED','TAP_MAIL_SENDER','AGENT_OFFBOARDING','OFFBOARD_SUBSCRIPTIONS','OFFBOARD_DELETE_USER'], name)].{name:name, value:value}" -o table

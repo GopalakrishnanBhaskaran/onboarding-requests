@@ -114,17 +114,18 @@ public sealed class TestApp
     public bool ResolveGroups { get; set; }
 
     /// <summary>One worker cycle: agent steps for open requests (with the Entra reader), then notifications.</summary>
-    public async Task<WorkerSummary> RunWorker()
+    public async Task<WorkerSummary> RunWorker(CancellationToken ct = default)
     {
         var worker = new WorkflowWorker(Worker.Agent,
             new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, Loggers.CreateLogger<NotificationDispatcher>()),
             new AdoSync(Stores, Tracker, Worker.Issues, Clock, Loggers.CreateLogger<AdoSync>()),
             new DailySummaryJob(Stores, Worker.Notifier, Clock),
-            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null,
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId, issues: Worker.Issues) : null,
             new PmoReview.Core.Offboarding.OffboardingJob(Stores, Directory, Offboarding, Offboarding,
                 OffboardingSettings.AgentOffboarding ? Offboarding : null, OffboardingSettings.AgentOffboarding ? Offboarding : null,
-                Worker.Notifier, Worker.Issues, Clock, OffboardingSettings, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()));
-        return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
+                Worker.Notifier, Worker.Issues, Clock, OffboardingSettings, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()),
+            Stores, Worker.Issues, Loggers.CreateLogger<WorkflowWorker>());
+        return await worker.RunOnceAsync("test-cycle", ct);
     }
 
     public static object Intake(string enterpriseId = "sample.e1001@sample-corp.invalid", string resource = "SAMPLE Databricks Engineering", string accessLevel = "User",
