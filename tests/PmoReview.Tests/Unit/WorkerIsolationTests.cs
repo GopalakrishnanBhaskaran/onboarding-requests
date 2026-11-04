@@ -42,7 +42,7 @@ public class WorkerIsolationTests
             Id = Person.MakeId(Leaver), ProjectId = TestApp.Alpha, EnterpriseId = Leaver, EnterpriseEmail = Leaver, DisplayName = "SAMPLE Leaver", Domain = "Sales",
             UpdatedBy = "test", UpdatedAt = app.Clock.UtcNow, IsSample = true,
         });
-        var plan = await app.Call(TestApp.Paul, "POST", $"offboarding/{Uri.EscapeDataString(Leaver)}?projectId={TestApp.Alpha}&mode=plan");
+        var plan = await app.Call(TestApp.Paul, "POST", $"offboarding/{Uri.EscapeDataString(Leaver)}?projectId={TestApp.Alpha}&mode=plan", new { reason = "Leaver" });
         Assert.True(plan.Status == 202, plan.Body);
         var id = await app.SubmitId();
         Assert.Equal(RequestStatus.AiReview, await app.Status(id)); // waits for the worker's Entra cross-check

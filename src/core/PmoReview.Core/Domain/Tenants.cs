@@ -37,8 +37,29 @@ public static class Environments
 
     public static bool Same(string? a, string? b) => a is not null && b is not null && Key(a) == Key(b) && Key(a).Length > 0;
 
-    /// <summary>The project's spelling of the environment, or null if the project does not have it.</summary>
-    public static string? Canonical(Project? p, string? env) => p?.Environments.FirstOrDefault(e => Same(e, env));
+    /// <summary>The four environments of the group naming (dev, tst, ppd, prd tiers), offered in every project that uses environments.</summary>
+    public static readonly IReadOnlyList<string> Standard = ["Dev", "Test", "PreProd", "Prod"];
+
+    private static readonly string[] Rank = ["dev", "test", "uat", "preprod", "prod"];
+
+    /// <summary>
+    /// The environments a project offers: none when the project uses no environments (no environment field), else the
+    /// standard four plus any other the project names, in flow order (the project's spelling wins). Before 4 Nov 2026 only
+    /// the project's own list was offered, and the workbook import writes only the environments it found groups for, so an
+    /// environment with no groups yet (e.g. Test) could not be chosen in the request form or for a new mapping row.
+    /// </summary>
+    public static IReadOnlyList<string> Of(Project? p)
+    {
+        if (p is null || p.Environments.Count == 0) return [];
+        var all = p.Environments.Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList();
+        all.AddRange(Standard.Where(s => !all.Any(e => Same(e, s))));
+        return all.DistinctBy(Key).Select((e, i) => (e, i))
+            .OrderBy(x => Array.IndexOf(Rank, Key(x.e)) is var r && r >= 0 ? r : Rank.Length).ThenBy(x => x.i)
+            .Select(x => x.e).ToList();
+    }
+
+    /// <summary>The project's spelling of the environment (from <see cref="Of"/>), or null if the project does not offer it.</summary>
+    public static string? Canonical(Project? p, string? env) => Of(p).FirstOrDefault(e => Same(e, env));
 
     /// <summary>Prod, and any spelling that starts with prod / prd (e.g. "Prod-EU", "prd2"): unknown variants fail closed.</summary>
     public static bool IsProduction(string? env) => Key(env) is var k && (k == "prod" || k.StartsWith("prod", StringComparison.Ordinal) || k.StartsWith("prd", StringComparison.Ordinal));

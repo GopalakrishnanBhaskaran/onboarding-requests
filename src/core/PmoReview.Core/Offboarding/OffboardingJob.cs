@@ -464,7 +464,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             var e = new Escalation
             {
                 Id = Escalation.MakeId(EscalationKind.OffboardingLeftover, $"{project.ProjectId}|{run.Id}"), ProjectId = project.ProjectId, Kind = EscalationKind.OffboardingLeftover,
-                User = run.EnterpriseId, Reason = $"Offboarding {run.Id} left {leftovers.Count} thing(s): {string.Join("; ", leftovers)}. No completion mail was sent.",
+                User = run.EnterpriseId, Reason = $"Offboarding {run.Id}{Ref(run)} left {leftovers.Count} thing(s): {string.Join("; ", leftovers)}. No completion mail was sent.",
                 RequestedBy = Actor, CreatedAt = now, CorrelationId = run.CorrelationId, IsSample = project.IsSample,
             };
             try { await stores.Escalations.CreateAsync(e, ct); } catch (DocumentConflictException) { /* raised already */ }
@@ -482,7 +482,8 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         if (to.Count > 0)
         {
             await notifier.EnqueueAsync(project.ProjectId, null, $"offboarding:{run.Id}", NotificationKind.OffboardingCompleted, to, $"Offboarding completed: {name}",
-                $"Offboarding completed for {name} ({run.EnterpriseId}) at {Messages.Time(now)}. Reference {run.CorrelationId}.", ct);
+                $"Offboarding completed for {name} ({run.EnterpriseId}) at {Messages.Time(now)}. Reference {run.CorrelationId}." +
+                (run.Reason is null ? "" : $" Reason: {OffboardingReasons.Label(run.Reason)}.") + (run.Ticket is null ? "" : $" Ticket: {run.Ticket}."), ct);
             notified = true;
         }
         else
@@ -495,6 +496,8 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     }
 
     // ---- helpers -------------------------------------------------------------------------------------------------------
+
+    private static string Ref(OffboardingRun run) => run.Ticket is null ? "" : $" (ticket {run.Ticket})";
 
     private static bool DeletedHere(OffboardingRun run) => run.Steps.Any(s => s.Name == Delete && s.Result == OffboardingStepResult.Done);
 

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Badge, Body1, Button, Caption1, Checkbox, MessageBar, MessageBarBody, MessageBarTitle, Subtitle2,
+  Badge, Body1, Button, Caption1, Checkbox, Field, Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Subtitle2,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow,
 } from '@fluentui/react-components';
 import { ApiError, api } from '../lib/api';
-import { canConfirm, canPlan, changes, inProgress, planExpired, switchedOff } from '../lib/offboarding';
-import type { OffboardingView, ProjectSummary } from '../lib/types';
+import { REASONS, canConfirm, canPlan, changes, inProgress, planExpired, planInput, reasonLabel, switchedOff, ticketError } from '../lib/offboarding';
+import type { OffboardingReason, OffboardingView, ProjectSummary } from '../lib/types';
 import { ErrorBar, useStyles } from './common';
 
 const STATUS: Record<OffboardingView['status'], string> = {
@@ -28,6 +28,12 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState(false);
+  // The fields of the request (4 Nov 2026): why (required) and a ticket or reference (optional).
+  const [reason, setReason] = useState<OffboardingReason | ''>('');
+  const [ticket, setTicket] = useState('');
+  const input = planInput(reason, ticket);
+  // "Make a new plan" keeps the fields of the plan it replaces.
+  const again = run?.reason ? { reason: run.reason, ...(run.ticket ? { ticket: run.ticket } : {}) } : input;
 
   const load = useCallback(() => {
     api.offboarding(project.projectId, enterpriseId).then(setRun).catch((e) => {
@@ -72,9 +78,24 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
         </MessageBar>
       ) : <ErrorBar error={error} />}
       {canPlan(run, planExpired(error)) && (
-        <div><Button appearance="primary" disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId))}>
-          {planExpired(error) ? 'Make a new plan' : 'Offboard user'}
-        </Button></div>
+        <div className={s.row}>
+          <Field label="Reason" required>
+            <Select aria-label="Reason" value={reason} onChange={(_, d) => setReason(d.value as OffboardingReason | '')}>
+              <option value="">Choose…</option>
+              {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Ticket / reference" hint="Optional, e.g. INC0012345 or ADO 4711. Shown on the plan and in the PMO mail."
+            validationState={ticketError(ticket) ? 'error' : 'none'} validationMessage={ticketError(ticket) ?? undefined}>
+            <Input aria-label="Ticket / reference" value={ticket} maxLength={100} onChange={(_, d) => setTicket(d.value)} />
+          </Field>
+          <Button appearance="primary" disabled={busy || !input} onClick={() => { if (input) void act(() => api.planOffboarding(project.projectId, enterpriseId, input)); }}>
+            {planExpired(error) ? 'Make a new plan' : 'Offboard user'}
+          </Button>
+        </div>
+      )}
+      {run && (
+        <Caption1 block>Reason: {reasonLabel(run.reason)}{run.ticket ? ` · ticket ${run.ticket}` : ''}</Caption1>
       )}
       {inProgress(run) && <Body1 role="status">The AI agent works on it within about 5 minutes; this panel refreshes itself.</Body1>}
       {run && run.steps.length > 0 && (
@@ -111,7 +132,7 @@ export function OffboardingPanel({ project, enterpriseId }: { project: ProjectSu
           <Checkbox label={`I checked the plan: ${changes(run)} change(s) for ${run.enterpriseId}`} checked={checked} onChange={(_, d) => setChecked(!!d.checked)} />
           <Button appearance="primary" disabled={busy || !canConfirm(run, checked)}
             onClick={() => void act(() => api.confirmOffboarding(project.projectId, enterpriseId, run.offboardingId))}>Confirm offboarding</Button>
-          <Button disabled={busy} onClick={() => void act(() => api.planOffboarding(project.projectId, enterpriseId, true))}>Make a new plan</Button>
+          <Button disabled={busy || !again} onClick={() => { if (again) void act(() => api.planOffboarding(project.projectId, enterpriseId, again, true)); }}>Make a new plan</Button>
           <Caption1 block>
             Plans keep the settings and the Entra state of the moment they were made. After a change (for example account deletion switched on), make a
             new plan: this one is closed unconfirmed and the AI agent reads Entra and Azure again.

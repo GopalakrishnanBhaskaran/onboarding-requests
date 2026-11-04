@@ -1,8 +1,4 @@
-import type {
-  AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
-  ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation,
-  UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView,
-} from './types';
+import type { AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView, ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation, UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView, OffboardingPlanInput } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
 export class ApiError extends Error {
@@ -182,8 +178,8 @@ export const api = {
   offboarding: (projectId: string, enterpriseId: string) =>
     call<OffboardingView>('GET', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}`),
   /** replace: close the plan nobody confirmed yet and make a new one (e.g. after account deletion was switched on). */
-  planOffboarding: (projectId: string, enterpriseId: string, replace = false) =>
-    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan${replace ? '&replace=true' : ''}`),
+  planOffboarding: (projectId: string, enterpriseId: string, input: OffboardingPlanInput, replace = false) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan${replace ? '&replace=true' : ''}`, input),
   confirmOffboarding: (projectId: string, enterpriseId: string, offboardingId: string) =>
     call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=execute`, { offboardingId }),
   rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>

@@ -1,4 +1,30 @@
-import type { OffboardingView } from './types';
+import type { OffboardingPlanInput, OffboardingReason, OffboardingView } from './types';
+
+/** The Reason dropdown (the API refuses a plan without one). */
+export const REASONS: { value: OffboardingReason; label: string }[] = [
+  { value: 'Leaver', label: 'Leaver' },
+  { value: 'ContractEnd', label: 'Contract end' },
+  { value: 'Transfer', label: 'Transfer' },
+  { value: 'SecurityIncident', label: 'Security incident' },
+  { value: 'Other', label: 'Other' },
+];
+
+export function reasonLabel(r: OffboardingReason | null | undefined): string {
+  return REASONS.find((x) => x.value === r)?.label ?? 'not recorded';
+}
+
+/** Same rule as the API: at most 100 letters, digits, spaces and - _ . / # : (empty = no ticket). */
+export function ticketError(ticket: string): string | null {
+  const t = ticket.trim();
+  return t === '' || /^[A-Za-z0-9 _./#:-]{1,100}$/.test(t) ? null : 'At most 100 letters, digits, spaces and - _ . / # : (for example INC0012345).';
+}
+
+/** The plan request body, or null while the reason is missing or the ticket is not valid. */
+export function planInput(reason: OffboardingReason | '', ticket: string): OffboardingPlanInput | null {
+  if (!reason || ticketError(ticket)) return null;
+  const t = ticket.trim();
+  return t ? { reason, ticket: t } : { reason };
+}
 
 /** The worker is on it (plan or execution): the page refreshes until it is done. */
 export function inProgress(v: OffboardingView | null): boolean {

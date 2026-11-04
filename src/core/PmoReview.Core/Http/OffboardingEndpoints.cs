@@ -15,8 +15,9 @@ public static class OffboardingEndpoints
         {
             var (status, view) = c.QueryValue("mode") switch
             {
+                // The plan request carries its fields: { "reason": "Leaver", "ticket": "INC0012345" } (reason required).
                 OffboardingService.ModePlan => await offboarding.PlanAsync(c.Caller, c.QueryValue("projectId"), c["enterpriseId"],
-                    c.QueryValue("replace") == "true", c.Request.CorrelationId, c.Ct),
+                    c.QueryValue("replace") == "true", c.Body<OffboardingPlanInput>(), c.Request.CorrelationId, c.Ct),
                 OffboardingService.ModeExecute => await offboarding.ExecuteAsync(c.Caller, c.QueryValue("projectId"), c["enterpriseId"],
                     c.Body<OffboardingExecuteInput>(), c.Request.CorrelationId, c.Ct),
                 _ => throw Common.AppException.Invalid("Query parameter mode must be plan or execute."),

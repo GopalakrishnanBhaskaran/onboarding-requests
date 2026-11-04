@@ -613,4 +613,16 @@ export interface OffboardingView {
   notCovered: string[];
   pmoNotified: boolean;
   correlationId: string;
+  /** Why (required on plans since 4 Nov 2026; null on older runs). */
+  reason?: OffboardingReason | null;
+  /** Ticket or reference, optional. */
+  ticket?: string | null;
+}
+
+export type OffboardingReason = 'Leaver' | 'ContractEnd' | 'Transfer' | 'SecurityIncident' | 'Other';
+
+/** The fields of an offboarding request (the plan). */
+export interface OffboardingPlanInput {
+  reason: OffboardingReason;
+  ticket?: string;
 }

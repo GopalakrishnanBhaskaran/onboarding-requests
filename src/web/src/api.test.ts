@@ -52,15 +52,18 @@ describe('API client', () => {
 describe('offboarding plan', () => {
   it('asks for a new plan only when told to replace the unconfirmed one', async () => {
     const urls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       urls.push(url);
+      bodies.push(init?.body ? JSON.parse(String(init.body)) : null);
       return new Response(JSON.stringify({ status: 'Planning' }), { status: 202, headers: { 'Content-Type': 'application/json' } });
     }));
-    await api.planOffboarding('PEST', 'leaver@contoso.com');
-    await api.planOffboarding('PEST', 'leaver@contoso.com', true);
+    await api.planOffboarding('PEST', 'leaver@contoso.com', { reason: 'Leaver', ticket: 'INC0012345' });
+    await api.planOffboarding('PEST', 'leaver@contoso.com', { reason: 'Leaver' }, true);
     expect(urls).toEqual([
       '/api/offboarding/leaver%40contoso.com?projectId=PEST&mode=plan',
       '/api/offboarding/leaver%40contoso.com?projectId=PEST&mode=plan&replace=true',
     ]);
+    expect(bodies).toEqual([{ reason: 'Leaver', ticket: 'INC0012345' }, { reason: 'Leaver' }]); // the request's fields
   });
 });

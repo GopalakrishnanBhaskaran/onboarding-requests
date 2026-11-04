@@ -95,7 +95,7 @@ public sealed class ResourceService(DataStores stores, IClock clock, string? age
         if (project.Environments.Count > 0)
         {
             env = Environments.Canonical(project, environment)
-                  ?? throw AppException.Invalid($"environment must be one of {string.Join(", ", project.Environments)}.");
+                  ?? throw AppException.Invalid($"environment must be one of {string.Join(", ", Environments.Of(project))}.");
         }
         else
         {

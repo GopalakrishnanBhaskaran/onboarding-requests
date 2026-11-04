@@ -336,6 +336,32 @@ public class F1ResourceSelectorTests
     }
 
     /// <summary>
+    /// 4 Nov 2026 (Gokul: "all env to be added in the drop down"): the import lists only the environments it found groups
+    /// for, so an environment with no groups yet could not be chosen. A project that uses environments now offers the
+    /// standard four (and its own spellings); choosing one with no rows gives an empty list, not an error.
+    /// </summary>
+    [Fact]
+    public async Task F1_every_standard_environment_is_offered_even_without_groups()
+    {
+        Assert.Equal(["Dev", "Test", "PreProd", "Prod"], Environments.Of(new Project { Id = "p", ProjectId = "p", Name = "p", Environments = ["Dev", "Prod"] }));
+        Assert.Equal(["Dev", "Test", "UAT", "Pre-Prod", "Prod"],
+            Environments.Of(new Project { Id = "p", ProjectId = "p", Name = "p", Environments = ["Pre-Prod", "dev", "UAT"] }).Select(e => e == "dev" ? "Dev" : e));
+        Assert.Empty(Environments.Of(new Project { Id = "p", ProjectId = "p", Name = "p" })); // no environments: no environment field
+
+        var app = await App(Row("G-FIN-R", "Read", objectId: Id(), roles: Reader)); // the project lists Dev and Prod only
+        var me = await app.Call(TestApp.Alice, "GET", "me");
+        var project = me.Json.GetProperty("projects").EnumerateArray().Single(p => p.GetProperty("projectId").GetString() == Project);
+        Assert.Equal(["Dev", "Test", "PreProd", "Prod"], project.GetProperty("environments").EnumerateArray().Select(e => e.GetString()));
+
+        var test = await app.Call(TestApp.Alice, "GET", $"resources/options?projectId={Project}&environment=Test");
+        Assert.True(test.Status == 200, test.Body); // was 400 "environment must be one of Dev, Prod"
+        Assert.Empty(Options(test.Json));
+        var submit = await app.Call(TestApp.Alice, "POST", $"projects/{Project}/requests", TestApp.Intake(resource: "SAMPLE Finance", accessLevel: "Read", environment: "test"));
+        Assert.True(submit.Status == 201, submit.Body);
+        Assert.Equal("Test", submit.Request.GetProperty("environment").GetString()); // the offered spelling
+    }
+
+    /// <summary>
     /// 4 Nov 2026: a bundle ran every request's agent step inside the one HTTP call (40 s limit): a large one timed out
     /// half-way, with a 500 and the later groups never created. Every request is now saved; once the inline budget is used
     /// the rest wait as Submitted and the worker starts their reviews.

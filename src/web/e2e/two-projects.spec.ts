@@ -379,6 +379,10 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
   await open(paul.page, requestId);
   const panel = paul.page.getByRole('region', { name: 'Offboarding' });
   await expect(panel.getByRole('heading', { name: `Offboarding — ${upn}` })).toBeVisible();
+  // The request's fields (4 Nov 2026): the button waits for a reason; the ticket is optional.
+  await expect(panel.getByRole('button', { name: 'Offboard user' })).toBeDisabled();
+  await panel.getByRole('combobox', { name: 'Reason' }).selectOption('Leaver');
+  await panel.getByRole('textbox', { name: 'Ticket / reference' }).fill('INC0012345');
   // A request alone does not make the person the project's (any Requester can write one): not found until approved.
   await panel.getByRole('button', { name: 'Offboard user' }).click();
   await expect(panel.getByText(/Person in this project not found/)).toBeVisible();
@@ -394,7 +398,9 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
   await sam.ctx.close();
 
   await open(paul.page, requestId);
+  await panel.getByRole('combobox', { name: 'Reason' }).selectOption('Leaver');
   await panel.getByRole('button', { name: 'Offboard user' }).click();
+  await expect(panel.getByText('Reason: Leaver')).toBeVisible();
   // No worker runs locally: the plan stays with the AI agent, and nothing can be confirmed before it is ready.
   await expect(panel.getByText('Planning (the AI agent reads Entra and Azure)')).toBeVisible();
   await expect(panel.getByText(/works on it within about 5 minutes/)).toBeVisible();

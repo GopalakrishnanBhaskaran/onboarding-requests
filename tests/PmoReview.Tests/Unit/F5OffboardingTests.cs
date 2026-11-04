@@ -61,10 +61,13 @@ public class F5OffboardingTests
     }
 
     private static Task<Resp> Plan(TestApp app, string upn = Upn, string user = TestApp.Paul, string project = TestApp.Alpha) =>
-        app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={project}&mode=plan");
+        app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={project}&mode=plan", Why);
+
+    /// <summary>The fields of the offboarding request (4 Nov 2026): reason required, ticket optional.</summary>
+    private static readonly object Why = new { reason = "Leaver", ticket = "INC0012345" };
 
     private static Task<Resp> NewPlan(TestApp app, string upn = Upn, string user = TestApp.Paul) =>
-        app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={TestApp.Alpha}&mode=plan&replace=true");
+        app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={TestApp.Alpha}&mode=plan&replace=true", Why);
 
     private static Task<Resp> Execute(TestApp app, string offboardingId, string upn = Upn, string user = TestApp.Oscar, string project = TestApp.Alpha) =>
         app.Call(user, "POST", $"offboarding/{Uri.EscapeDataString(upn)}?projectId={project}&mode=execute", new { offboardingId });
@@ -96,7 +99,7 @@ public class F5OffboardingTests
     {
         var (app, requestId) = await Leaver();
         var planned = await Planned(app);
-        Assert.Equal(["offboardingId", "enterpriseId", "objectId", "mode", "status", "steps", "leftovers", "notCovered", "pmoNotified", "correlationId"],
+        Assert.Equal(["offboardingId", "enterpriseId", "objectId", "mode", "status", "steps", "leftovers", "notCovered", "pmoNotified", "correlationId", "reason", "ticket"],
             planned.Json.EnumerateObject().Select(p => p.Name));
         Assert.Equal(("plan", "Planned", Upn, false), (planned.Json.GetProperty("mode").GetString(), Status(planned), planned.Json.GetProperty("enterpriseId").GetString(), planned.Json.GetProperty("pmoNotified").GetBoolean()));
         Assert.Equal(app.Directory.User(Upn)!.ObjectId, planned.Json.GetProperty("objectId").GetString());
@@ -137,7 +140,8 @@ public class F5OffboardingTests
         // One mail, to the PMO only, with exactly the agreed text; nothing to the user, the manager or anyone else.
         var mail = Assert.Single(await OffboardingMails(app));
         Assert.Equal([Pmo], mail.To);
-        Assert.Equal($"Offboarding completed for SAMPLE Leaver ({Upn}) at {Messages.Time(app.Clock.UtcNow)}. Reference {done.Json.GetProperty("correlationId").GetString()}.", mail.Body);
+        Assert.Equal($"Offboarding completed for SAMPLE Leaver ({Upn}) at {Messages.Time(app.Clock.UtcNow)}. Reference {done.Json.GetProperty("correlationId").GetString()}." +
+            " Reason: Leaver. Ticket: INC0012345.", mail.Body);
         var audit = (await app.Stores.AuditEvents.ListAsync(TestApp.Alpha)).Select(a => a.Value.Action).ToList();
         foreach (var a in new[] { "offboarding-plan-requested", "offboarding-planned", "offboarding-confirmed", "offboarding-step", "offboarding-completed" })
             Assert.Contains(a, audit);
@@ -641,7 +645,7 @@ public class F5OffboardingTests
         Assert.Equal(403, (await Plan(app, user: TestApp.Sam)).Status);       // Security
         Assert.Equal(404, (await Plan(app, user: TestApp.Bob)).Status);       // no role in ALPHA
         Assert.Equal(400, (await app.Call(TestApp.Paul, "POST", $"offboarding/{Uri.EscapeDataString(Upn)}?projectId={TestApp.Alpha}&mode=delete")).Status);
-        Assert.Equal(404, (await app.Call(TestApp.Paul, "POST", $"offboarding/not-a-upn?projectId={TestApp.Alpha}&mode=plan")).Status);
+        Assert.Equal(404, (await app.Call(TestApp.Paul, "POST", $"offboarding/not-a-upn?projectId={TestApp.Alpha}&mode=plan", Why)).Status);
         var vestacy = await Plan(app, project: TestApp.Vestacy, user: TestApp.Paul); // another tenant: the agent does not touch it
         Assert.Equal((409, "tenant_not_connected"), (vestacy.Status, vestacy.ErrorCode));
     }
@@ -664,6 +668,30 @@ public class F5OffboardingTests
         Assert.Equal("Completed", Status(await Get(app, guest)));
         Assert.Equal([$"disable {guest}", $"delete-user {guest}"], app.Offboarding.Calls);
         Assert.Null(app.Directory.User(guest));
+    }
+
+    /// <summary>
+    /// 4 Nov 2026 (Gokul: "add fields for delete requests"): an offboarding request needs a reason from the dropdown and may
+    /// carry a ticket or reference; both are on the run, in the audit trail and in the PMO completion mail.
+    /// </summary>
+    [Fact]
+    public async Task F5_Plan_needs_a_reason_and_keeps_the_ticket()
+    {
+        var (app, _) = await Leaver();
+        string Url(string upn = Upn) => $"offboarding/{Uri.EscapeDataString(upn)}?projectId={TestApp.Alpha}&mode=plan";
+        Assert.Equal(400, (await app.Call(TestApp.Paul, "POST", Url())).Status);                                    // no body
+        Assert.Equal("invalid_input", (await app.Call(TestApp.Paul, "POST", Url(), new { ticket = "INC1" })).ErrorCode); // no reason
+        Assert.Equal(400, (await app.Call(TestApp.Paul, "POST", Url(), new { reason = 7 })).Status);              // not a dropdown value
+        Assert.Equal(400, (await app.Call(TestApp.Paul, "POST", Url(), new { reason = "Leaver", ticket = "<script>" })).Status);
+        Assert.Empty(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha)); // nothing saved for a refused request
+
+        var r = await app.Call(TestApp.Paul, "POST", Url(), new { reason = "ContractEnd", ticket = " ADO 4711 " });
+        Assert.Equal(202, r.Status);
+        Assert.Equal(("ContractEnd", "ADO 4711"), (r.Json.GetProperty("reason").GetString(), r.Json.GetProperty("ticket").GetString()));
+        var run = Assert.Single(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha)).Value;
+        Assert.Equal((OffboardingReason.ContractEnd, "ADO 4711"), (run.Reason, run.Ticket));
+        Assert.Contains(await app.Stores.AuditEvents.ListAsync(TestApp.Alpha),
+            a => a.Value.Action == "offboarding-plan-requested" && a.Value.Details!.Contains("reason Contract end; ticket ADO 4711"));
     }
 
     /// <summary>

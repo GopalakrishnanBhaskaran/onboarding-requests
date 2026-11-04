@@ -48,7 +48,8 @@ public static class Endpoints
                 var p = await stores.Projects.GetAsync(projectId, projectId, c.Ct);
                 projects.Add(new ProjectSummary(projectId, p?.Value.Name ?? projectId, roles.Order().ToList(), p?.Value.IsSample ?? false)
                 {
-                    TenantName = p?.Value.TenantName, Environments = p?.Value.Environments ?? [], DomainIdSuffix = p?.Value.DomainIdSuffix,
+                    // Every standard environment (plus the project's own), so one with no groups yet can still be chosen.
+                    TenantName = p?.Value.TenantName, Environments = Domain.Environments.Of(p?.Value), DomainIdSuffix = p?.Value.DomainIdSuffix,
                 });
             }
             var s = workflow.Settings;

@@ -187,7 +187,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var text = Text(requested, RequestFields.Environment, 40);
         if (text is null) throw AppException.Incomplete([RequestFields.Label(RequestFields.Environment)]);
         return Domain.Environments.Canonical(project, text)
-               ?? throw AppException.Invalid($"Environment must be one of {string.Join(", ", project.Environments)} for {Tenants.Label(project)}.");
+               ?? throw AppException.Invalid($"Environment must be one of {string.Join(", ", Domain.Environments.Of(project))} for {Tenants.Label(project)}.");
     }
 
     internal async Task<Versioned<AccessRequest>> LoadAsync(string projectId, string requestId, CancellationToken ct)

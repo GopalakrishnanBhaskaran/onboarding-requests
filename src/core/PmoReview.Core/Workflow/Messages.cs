@@ -131,11 +131,20 @@ public static class Messages
         return $"User: {r.FirstName} {r.LastName}; Enterprise ID {r.EnterpriseId}; domain-specific ID {r.DomainId}{(r.Guest ? " (guest)" : "")}.\n" +
                $"Group: {group}\n" +
                "Steps: create the user ID if missing; add the user to the group; then issue a ONE-TIME Temporary Access Pass with the " +
-               $"shortest lifetime (at most {tapMaxMinutes} minutes) and give it to the user directly, separately from the Enterprise ID. " +
+               $"shortest lifetime (at most {tapMaxMinutes} minutes) and give it to the user directly, separately from the Enterprise ID. " + OneTimeTapHow + " " +
                "Never put the pass in mail, tickets, chat or this app: record only issued time, expiry, one-time flag and issued-by.\n" +
                $"Approved summary:\n{scope.Summary}\n" +
                $"Approvals: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)}).";
     }
+
+    /// <summary>
+    /// How to issue a one-time pass (Learn, F127): the tenant TAP policy's One-time use is No by default, so a pass added in
+    /// the Entra admin center can be multi-use unless one-time is chosen; each user has one TAP and a new one replaces it.
+    /// </summary>
+    public const string OneTimeTapHow =
+        "In the Entra admin center: Users → the user → Authentication methods → Add authentication method → Temporary Access Pass, " +
+        "set One-time use to Yes (a new pass replaces the old one). To make every pass one-time, an Authentication Policy Administrator sets " +
+        "One-time use to Yes in Authentication methods → Policies → Temporary Access Pass → Configure.";
 
     /// <summary>After the agent created the user, group and membership: only the TAP is left for the ID team.</summary>
     public static string IdTeamTapInstructions(AccessRequest r, ReviewedScope scope, WorkflowState flow, string done, int tapMaxMinutes)
@@ -144,7 +153,7 @@ public static class Messages
         var security = flow.CurrentApproval(ApprovalStage.Security);
         return $"{done}\n" +
                $"Your step: issue a ONE-TIME Temporary Access Pass for {r.DomainId} with the shortest lifetime (at most {tapMaxMinutes} minutes) " +
-               "and give it to the user directly, separately from the Enterprise ID. Never put the pass in mail, tickets, chat or this app: " +
+               "and give it to the user directly, separately from the Enterprise ID. " + OneTimeTapHow + " Never put the pass in mail, tickets, chat or this app: " +
                "record only issued time, expiry, one-time flag and issued-by.\n" +
                $"Approved summary:\n{scope.Summary}\n" +
                $"Approvals: Owner {owner?.ByName} ({Time(owner?.At)}); Security {security?.ByName} ({Time(security?.At)}).";

@@ -97,10 +97,11 @@ print("  notifications by status:", dict(Counter(n["status"] for n in notes)) or
 print("  mail errors:", dict(Counter(n.get("lastError") for n in notes if n.get("lastError"))) or "none")
 print("  mailed to (test redirect shows one address):", dict(Counter(a for n in notes for a in (n.get("deliveredTo") or []))) or "none")
 # v1.1 F5: a plan keeps the worker settings of the moment it was made (e.g. OFFBOARD_DELETE_USER); "Make a new plan" replaces it.
-runs = q("offboardingRuns", "SELECT TOP 8 c.id, c.projectId, c.enterpriseId, c.status, c.requestedAt, c.plannedAt, c.steps FROM c ORDER BY c.requestedAt DESC")
+runs = q("offboardingRuns", "SELECT TOP 8 c.id, c.projectId, c.enterpriseId, c.status, c.requestedAt, c.plannedAt, c.steps, c.reason, c.ticket FROM c ORDER BY c.requestedAt DESC")
 print("  offboarding runs (latest 8):" if runs else "  offboarding runs: none")
 for r in runs:
     d = next((s for s in r.get("steps") or [] if s.get("name") == "Delete account"), None)
-    print(f"  {r['id']} {r.get('projectId')} {r.get('status')} {r.get('enterpriseId')} requested={r.get('requestedAt')} planned={r.get('plannedAt') or '-'}")
+    print(f"  {r['id']} {r.get('projectId')} {r.get('status')} {r.get('enterpriseId')} requested={r.get('requestedAt')} planned={r.get('plannedAt') or '-'} "
+          f"reason={r.get('reason') or '-'} ticket={r.get('ticket') or '-'}")
     print(f"      delete step: {d.get('result')} {d.get('detail')}" if d else "      delete step: not planned yet")
 PY
