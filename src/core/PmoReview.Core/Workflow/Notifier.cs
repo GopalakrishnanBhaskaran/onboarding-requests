@@ -101,6 +101,13 @@ public sealed record WorkflowSettings
     public TimeSpan OffboardPlanValidFor { get; init; } = TimeSpan.FromHours(24);
     /// <summary>F2 (<c>TAP_MAIL_SENDER</c>): the one shared mailbox the TAP mail is sent from (Graph sendMail, F81). Null = not configured.</summary>
     public string? TapMailSender { get; init; }
+    /// <summary>
+    /// The agent mails a new account's sign-in details: provisioning on, the agent TAP on and a TAP sender mailbox set. The
+    /// worker builds its direct mail on exactly this, and the website's wording follows it (the TAP mail never uses
+    /// <c>NOTIFY_SENDER</c>, so <see cref="MailEnabled"/> says nothing about it). Re-check 6: <c>AGENT_TAP</c> without
+    /// <c>TAP_MAIL_SENDER</c> (the live state on 31 Oct) made the site say the agent mails the pass while the ID team issued it.
+    /// </summary>
+    public bool TapMailByAgent => AgentProvisioning && AgentTap && !string.IsNullOrWhiteSpace(TapMailSender);
     /// <summary>F4 (<c>MAX_UPLOAD_BYTES</c>): largest accepted upload file. Default 5 MB, never above 25 MB (SWA request limit 30 MB, F88).</summary>
     public int MaxUploadBytes { get; init; } = 5 * 1024 * 1024;
     /// <summary>F4 (<c>EXTERNAL_UPLOAD_API_ENABLED</c>, default false): the app-only upload API answers; off it returns 404.</summary>

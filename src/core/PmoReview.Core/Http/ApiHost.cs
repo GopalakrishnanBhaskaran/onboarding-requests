@@ -70,8 +70,12 @@ public delegate Task<ApiResponse> RouteHandler(RouteContext ctx);
 /// Single entry point for every API call: authenticate from the platform header, resolve grants,
 /// route, and map failures to safe responses. Handlers do their own per-project authorisation.
 /// </summary>
-public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<string> allowedProviders, ILogger<ApiHost> logger)
+/// <param name="failures">Puts each unexpected error on the Issues list (F135: no App Insights, so nothing else keeps it).</param>
+public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<string> allowedProviders, ILogger<ApiHost> logger, ApiFailureLog? failures = null)
 {
+    /// <summary>What a person sees on an unexpected error (the SPA shows the reference under it).</summary>
+    public const string InternalErrorMessage = "Something went wrong. It was recorded for the project's Operators and Security (Issues and reports). Quote the reference below if you report it.";
+
     public const int MaxBodyBytes = 64 * 1024;
     /// <summary>Largest body any route accepts (file uploads: MAX_UPLOAD_BYTES ≤ 25 MB plus the multipart framing; SWA allows 30 MB, F88).</summary>
     public const int MaxUploadBodyBytes = 25 * 1024 * 1024 + 64 * 1024;
@@ -95,9 +99,14 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
 
     public async Task<ApiResponse> HandleAsync(ApiRequest request, CancellationToken ct)
     {
+        string? template = null;
+        CallerContext? caller = null;
+        IReadOnlyDictionary<string, string>? values = null;
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? queryValues = null;
         try
         {
             var (pathOnly, query) = SplitQuery(request.Path);
+            queryValues = query;
             var path = pathOnly.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
             var matches = _routes.Select(r => (Route: r, Values: TryMatch(r.Segments, path, out var v) ? v : null)).Where(m => m.Values is not null).ToList();
             var match = matches.FirstOrDefault(m => m.Route.Method == request.Method.ToUpperInvariant());
@@ -105,7 +114,8 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
             if (request.Size > (match.Values is null ? MaxBodyBytes : match.Route.MaxBody))
                 throw new AppException(ErrorKind.PayloadTooLarge, "payload_too_large", "Request body is too large.");
 
-            var caller = match.Values is not null && match.Route.AppToken
+            if (match.Values is not null) (template, values) = (string.Join('/', match.Route.Segments), match.Values);
+            caller = match.Values is not null && match.Route.AppToken
                 ? CallerContext.None
                 : await access.ResolveAsync(ClientPrincipalParser.Parse(request.Header(ClientPrincipalParser.HeaderName), allowedProviders), ct);
             if (match.Values is null)
@@ -126,8 +136,20 @@ public sealed partial class ApiHost(AccessService access, IReadOnlyCollection<st
         catch (Exception e) when (e is not OperationCanceledException)
         {
             // Never echo exception details to the caller.
-            logger.LogError("api {Method} failed {ExceptionType} cid={CorrelationId}", request.Method, e.GetType().Name, request.CorrelationId);
-            return Error(500, "internal_error", "Something went wrong. Quote the correlation id if you report this.", request.CorrelationId);
+            logger.LogError("api {Method} {Template} failed {ExceptionType} cid={CorrelationId}", request.Method, template, e.GetType().Name, request.CorrelationId);
+            if (failures is not null)
+            {
+                try
+                {
+                    var projects = new[] { values?.GetValueOrDefault("projectId"), queryValues?.GetValueOrDefault("projectId")?.FirstOrDefault() };
+                    await failures.RecordAsync(request.Method, template, e, request.CorrelationId, caller, projects, CancellationToken.None);
+                }
+                catch (Exception recordError)
+                {
+                    logger.LogError("api failure could not be recorded {ExceptionType} cid={CorrelationId}", recordError.GetType().Name, request.CorrelationId);
+                }
+            }
+            return Error(500, "internal_error", InternalErrorMessage, request.CorrelationId);
         }
     }
 

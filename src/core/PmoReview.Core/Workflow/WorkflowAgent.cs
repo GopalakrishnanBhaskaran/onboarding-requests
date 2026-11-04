@@ -539,6 +539,8 @@ public sealed partial class WorkflowAgent(
         // A simulation is never provisioned: the developer does the ID team step (no Entra write ever happens for it).
         if (!r.Simulated && ProvisioningPending(task, flow.Scope))
             return writer is null || directory is null ? null : await ProvisionAsync(r, task, cid, ct); // only the worker holds the writer
+        if (SwitchedOffWhileWaiting(task, flow, settings.AgentProvisioning))
+            return ToIdTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = ProvisioningSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
 
@@ -643,6 +645,8 @@ public sealed partial class WorkflowAgent(
         if (task is null) return null;
         if (!r.Simulated && RoleAssignmentPending(task, flow.Scope))
             return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
+        if (SwitchedOffWhileWaiting(task, flow, settings.AgentRoleAssignment))
+            return ToRoleTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = RoleAssignmentSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
 

@@ -78,8 +78,8 @@ Built on branch `claude/gifted-wozniak-7woywt`; merged into **`claude/nifty-bard
 **Start the next session with:**
 > Continue the PMO Access Portal v1.1 rollout on branch `claude/nifty-bardeen-j0pqm3` (PR 4). Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
 
-Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
-Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
+Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings, *Re-check 6*).
+Branch **`claude/serene-ramanujan-jqgfo3`**, pushed. It starts from `main` at `5824f22`: PR #5 (`claude/elegant-darwin-nfot4p`, everything up to the 31 Oct handoff) is merged. Clone this branch (or `main` once it is merged) in Cloud Shell, no longer `elegant-darwin`. No PR for it yet. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
 
 ## 31 Oct 2026 (later): live app broken by the .NET 10 API, fixed in code on `claude/nifty-bardeen-j0pqm3`
 - After the `app` deploy of `ef9fc7b` (00:46 UTC, first on `dotnet-isolated:10.0`) every page shows *Unexpected token 'B', "Backend call failure" is not valid JSON*: the API does not start. Settings checked and valid.
@@ -134,6 +134,13 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - **Account deletion switch** (`163a9ed`, decision F5b; Gokul asked "make it on"): `offboarding $SUB on --delete-user` adds Graph `User.ReadWrite.All` (F75, the only option, tenant-wide) and `OFFBOARD_DELETE_USER=true` — soft delete after disabling, restorable 30 days. Dry run → "approved" → `--approved-by`. `delete-off` switches it off. Fix with it: a refused or skipped planned delete is a leftover (was Completed + PMO mail, REVIEW 25).
   - `verify_features` line 17 now also checks deletion; line 16 no longer counts it as unapproved.
   - **Role renamed:** DataMaintainer → **DataSteward** (Data Steward), Gokul 31 Oct. Rows saved under the old name still load and are read as DataSteward; the tools register only the new name. Needs `app` before registering it.
+- **New on 4 Nov (code only, not deployed; `REVIEW.md` re-check 6, independent).** Needs `worker` then `app`:
+  - **Switch off mid-flight (28):** a task waiting for the agent when `provisioning … off` runs now goes to the ID team or the role assignment team (mail plus an action). Before, it stayed "waiting on the AI agent" with no action.
+  - **One failing worker job (29)** no longer stops reviews and mail; an unexpected error in one offboarding run becomes an issue.
+  - **TAP wording (30):** the website now says "the agent mails the pass" only when the worker can (`TAP_MAIL_SENDER` set). With the live settings (AGENT_TAP on, no sender) it will say the ID team issues the pass, which matches what happens. `app` now copies `TAP_MAIL_SENDER` to the website.
+  - **Start-up refusals (31):** worker *and* website refuse to start on an `AGENT_TENANT_ID` that is not a GUID, a bad id in `OFFBOARD_SUBSCRIPTIONS`, or a misspelt `NOTIFY_SENDER`. Check the live values before deploying (step 1).
+  - **Offboarding:** a delete switched off after the plan is "left to people" (32). Verify also reads the people inventory (27 closed).
+  - **"Something went wrong" is traceable (34).** Gokul saw it on the live site on 4 Nov, without a reference. Before this change nothing kept it: managed Functions errors are visible only through Application Insights, which is not allowed (F135). After the `app` deploy, each such error is an issue in Issues and reports: route, error type, code location and the last 5 references. The 4 Nov error itself cannot be traced: repeat what was done after the deploy, then read the issue.
 - **Code not yet deployed** (unless Gokul ran `worker` + `app` after `7922922`; `verify_features` line 1 tells):
   - worker: a run that sees no subscription is never Completed; verify looks again before a removal of its own counts as a leftover; a 403 names the token delay;
   - app: the switched-off message is information, not an error; the website follows the worker's `AGENT_OFFBOARDING` on every `app` deploy.
@@ -142,9 +149,13 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
 - **People:** each project has the Gmail tester (Requester, Owner, IdTeam, RoleTeam, PMO, Operator) and the pilot admin (Security). Data Steward and ProdApprover not registered yet (output not seen). No people inventory uploaded yet.
 
 ## Next steps (in order)
-1. **Fresh Cloud Shell** (`docs/V1_1_DEPLOY.md`): clone the branch, then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval). The `app` deploy now ships the **.NET 10 API**: it must end "Deployed commit …"; then sign in and open a request. If it fails with "Function language info isn't provided", roll back (`git checkout a88e69a && tools/deploy_free.sh app $SUB`) and log it under F21. Check the offboarding settings (read-only):
+1. **Fresh Cloud Shell** (`docs/V1_1_DEPLOY.md`): clone the branch. Before deploying, check the values the stricter start-up checks read (read-only; expect a GUID tenant id, GUID subscription ids, and `AcsEmail` / `Outbox` exactly; paste nothing secret):
+   `az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?name=='AGENT_TENANT_ID' || name=='OFFBOARD_SUBSCRIPTIONS' || name=='NOTIFY_SENDER' || name=='TAP_MAIL_SENDER'].{name:name, value:value}" -o table`
+   `az staticwebapp appsettings list -n swa-pmo-pilot-pkt2ofpqmlf3e -g rg-pmo-review-pilot --query "properties.{AGENT_TENANT_ID:AGENT_TENANT_ID, NOTIFY_SENDER:NOTIFY_SENDER}" -o table`
+   Then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval), in that order. The `app` deploy now ships the **.NET 10 API**: it must end "Deployed commit …"; then sign in and open a request. If it fails with "Function language info isn't provided", roll back (`git checkout a88e69a && tools/deploy_free.sh app $SUB`) and log it under F21. Check the offboarding settings (read-only):
    `az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?name=='AGENT_OFFBOARDING' || name=='OFFBOARD_SUBSCRIPTIONS' || name=='OFFBOARD_DELETE_USER']" -o table`
-   Then `bash tools/verify_features.sh $SUB`. Expected: lines 1, 16, 17 PASS; 5b and 15 WAIT. Log it as live check U.
+   Then repeat the action that showed "Something went wrong" on 4 Nov (ask Gokul which page). If it shows again, open **Issues and reports** → "The website's API failed on …", or run `bash tools/workflow_diag.sh $SUB` (NEEDS DEVELOPER lines). Bring back the route, error type and code location (`REVIEW.md` 34).
+   Then `bash tools/verify_features.sh $SUB`. Expected: lines 1, 16, 17 PASS; 5b and 15 WAIT (5b now reads "website says the ID team issues the pass"). Log it as live check U. If the worker or the website fails to start, its log names the setting (re-check 6, 31): fix the value with `environment` or `az … appsettings set` and deploy again.
 2. **Graph permissions held** (read-only): `tools/deploy_free.sh grant-graph $SUB` prints them. `User.RevokeSessions.All` and `User.EnableDisableAccount.All` must be listed. If they are missing, the switch-on did not run: dry run again, wait for "approved", then `--approved-by`.
 3. **Entra check:** the test account should no longer be in `azr-pes-rg-data-dev-ph-weu-dataengineers`. That confirms F104 (index lag).
 3b. **Account deletion (decision F5b):** `tools/deploy_free.sh offboarding $SUB on --delete-user` (dry run, after step 1's `worker`): expect `User.ReadWrite.All` NEW, the 7 others held, `OFFBOARD_DELETE_USER=true`, cost 0. Gokul replies "approved" → same command `--approved-by "Gokul <date>"` (Global Administrator or Privileged Role Administrator). `verify_features` line 17: PASS with "delete accounts on". The new permission can take up to 24 h (F61): until then a delete is refused and the run ends Partially completed (account disabled, not deleted).
@@ -157,8 +168,9 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
    - **ProdApprover:** a third account, `pmo.prodapprover@gopalakrishnanbaskarangmail.onmicrosoft.com` (display name *PMO Prod Approver (pilot)*), created in the Entra admin center with an auto-generated password, signed in once, then registered on PEST and VESTACY with `--roles ProdApprover` only.
    - Then the people inventory upload on the Data uploads page (validate → diff → apply).
 6. **Quality before more changes.**
-   - Re-check 5 is done (REVIEW.md), but **not independent** (same session as the code). A separate reviewer should re-read findings 25–27 and the `--delete-user` switch.
-   - Playwright 11/11 on `163a9ed` (31 Oct). Open from it: Low 27 (a Leaver step skipped by a half-way switch-off is not a leftover).
+   - **Re-check 6 is done, independent (4 Nov).** Findings 25 and 26 and the `--delete-user` switch hold. 27 was confirmed and is closed. New: 28–30 Medium, 31–33 Low, all closed in code except the 33 remainder.
+   - The re-check 6 fixes were written in the same session, so another reviewer should re-read them (`REVIEW.md` table).
+   - Playwright not re-run on 4 Nov (no SPA change); last 11/11 on `163a9ed`.
 
 ## Open decisions (Gokul; any Azure or permission change: dry run or what-if, then "approved")
 - **Option 2, agent TAP mail:** `tools/deploy_free.sh tap $SUB on --sender <shared mailbox>` plus the Exchange RBAC for Applications scope (F81). Until then the ID team issues passes.
@@ -181,9 +193,10 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
 ## Tests at hand-off (31 Oct, on `163a9ed` + panel caption; website redesign: SPA 37/37, Playwright 12/12, InfraConsistency 16/16)
 - .NET 501 (500 pass, 1 opt-in Cosmos emulator skip); all projects net10.0; `dotnet build PmoReview.slnx` with no warnings.
 - SPA 24/24; web build OK.
-- Python tool self-tests pass (verify_features, import, register, seed).
-- Mutation checks: SWA CLI pin 2.0.10 fails the runtime test; the refused-delete test failed before its fix.
-- Playwright 11/11 (SWA CLI 2.1.0 emulator with the .NET 10 config).
+- Python tool self-tests pass (verify_features with 4 new 5b cases, import, register, seed); Databricks AIM / SCIM self-tests pass.
+- Mutation checks: each re-check 6 fix undone in turn → its new test fails (11 of 11).
+  - When re-running mutations, `touch` the restored file. A restored older timestamp lets the incremental build keep the mutant: build with `--no-incremental` after.
+- Playwright 11/11 last on `163a9ed` (31 Oct; not re-run, no SPA change).
 - Local: the container used Ubuntu's `dotnet-sdk-10.0` (10.0.114); Cloud Shell installs .NET 10 itself (`ensure_dotnet10`).
 
 ## Reference: re-import (only after workbook changes; files are not in git)
@@ -222,4 +235,4 @@ Without `--update`, existing rows are kept. Never type a literal `<…>` placeho
 - The agent never approves and never extends its own rights. Offboarding runs only for a plan a person confirmed.
 - Evidence only: log what the pasted output shows. Mark inferences as inferred.
 - Never paste or log a TAP, password or connection string. Never record personal user ids in docs. Real workbooks stay out of git.
-- Commit trailers: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`. Push to `claude/elegant-darwin-nfot4p` (`git push -u origin claude/elegant-darwin-nfot4p`). No PR unless asked.
+- Commit trailers: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` + `Claude-Session: …`. Push to the session's branch (4 Nov: `git push -u origin claude/serene-ramanujan-jqgfo3`). No PR unless asked.

@@ -43,7 +43,7 @@ Sign in as a **Databricks account admin**, in the Entra tenant of the Databricks
 az login --tenant <tenant id>               # only if Cloud Shell is not already in that tenant
 az account set --subscription <subscription with the workspaces>
 cd ~ && { [ -d onboarding-requests ] || git clone -q https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git; }
-cd ~/onboarding-requests && git fetch -q origin && git checkout -q claude/elegant-darwin-nfot4p && git pull -q
+cd ~/onboarding-requests && git fetch -q origin && git checkout -q claude/serene-ramanujan-jqgfo3 && git pull -q
 A=tools/databricks/aim_setup.sh
 bash $A self-test                           # offline: "self-test passed"
 

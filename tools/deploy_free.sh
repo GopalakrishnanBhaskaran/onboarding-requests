@@ -435,7 +435,7 @@ agent_tap() {
     echo "Already granted: $GRAPH_TAP_ROLE"
   fi
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender"
-  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true -o none
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true "TAP_MAIL_SENDER=$tap_sender" -o none
   echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
   echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
@@ -829,9 +829,11 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv offb dbx
+  local env sender redirect tenant tap priv offb dbx tapsender
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
+  # The website says "the agent mails the pass" only when the worker can (AGENT_TAP, provisioning and this mailbox; re-check 6).
+  tapsender=$([[ -n "$w" ]] && worker_setting "$w" TAP_MAIL_SENDER || true)
   priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
   offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
   dbx=$([[ -n "$w" ]] && worker_setting "$w" AGENT_DATABRICKS || true)
@@ -840,7 +842,7 @@ app_settings_v2() {
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true

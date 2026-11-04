@@ -30,7 +30,7 @@ public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList
     public bool MailEnabled { get; init; }
     /// <summary>Non-production: every mail goes to this test address.</summary>
     public string? MailRedirectTo { get; init; }
-    /// <summary>Agent TAP on and mail on: the agent mails a new joiner's sign-in details (wording in the app follows it).</summary>
+    /// <summary>The agent mails a new joiner's sign-in details (<see cref="WorkflowSettings.TapMailByAgent"/>; wording in the app follows it).</summary>
     public bool AgentTap { get; init; }
     /// <summary>Agent provisioning on for rows flagged privileged too (never privileged administrator roles).</summary>
     public bool AgentPrivileged { get; init; }
@@ -56,7 +56,7 @@ public static class Endpoints
             return Ok(new MeResponse(c.Caller.UserId, c.Caller.DisplayName, projects, s.AgentProvisioning, s.AgentRoleAssignment)
             {
                 AppEnvironment = s.AppEnvironment, MailEnabled = s.MailEnabled, MailRedirectTo = s.MailRedirectTo,
-                AgentTap = s.AgentProvisioning && s.AgentTap && s.MailEnabled,
+                AgentTap = s.TapMailByAgent,
                 AgentPrivileged = s.AgentProvisioning && s.AgentPrivileged,
             });
         });

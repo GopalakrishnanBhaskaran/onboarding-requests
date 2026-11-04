@@ -62,7 +62,7 @@ public static class Messages
         "Only after both approvals the AI agent creates the user ID, group and membership" +
         (s.AgentRoleAssignment ? " and assigns the approved Azure role where the mapping sheet allows it" : "") + ". " +
         (s.AgentPrivileged ? "This includes rows flagged privileged, except privileged administrator roles (Owner, Contributor, User Access Administrator and the like). " : "") +
-        (s.AgentTap && s.MailEnabled
+        (s.TapMailByAgent
             ? "For a new account the agent also mails the joiner a one-time Temporary Access Pass, the initial password and the MFA set-up steps. " +
               $"The ID team handles what the agent leaves to it ({Left(s)}). "
             : $"The ID team issues the Temporary Access Pass and handles what the agent leaves to it ({Left(s)}). ") +

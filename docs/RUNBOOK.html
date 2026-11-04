@@ -559,9 +559,16 @@ auto-approves.</td>
 decide. Ignored; Security reviews.</td>
 </tr>
 <tr class="even">
-<td>User reports an error</td>
-<td>Ask for the "Reference" (correlation id) shown in the error bar;
-search logs for it.</td>
+<td>User reports an error ("Something went wrong")</td>
+<td>Ask for the "Reference" under the message, the page and the time.
+Then open <strong>Issues and reports</strong> in that project (Operator or
+Security): the issue "The website's API failed on &lt;route&gt; (&lt;error
+type&gt;)" lists the last 5 references, how often it happened and where in
+the code. Or run <code>bash tools/workflow_diag.sh &lt;sub&gt;</code> (NEEDS
+DEVELOPER lines, also for a person with no project). There are no other
+logs: managed Functions errors are visible only through Application
+Insights, which the pilot does not create (F135). Nothing from the request
+is kept, so ask the person what they did.</td>
 </tr>
 <tr class="odd">
 <td><em>The app's server did not answer (HTTP 500: Backend call

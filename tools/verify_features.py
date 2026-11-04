@@ -128,14 +128,23 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     # 5b. Agent TAP (sign-in details mailed by the agent). v1.1 F2: only through Graph sendMail from TAP_MAIL_SENDER (scoped
     # by Exchange RBAC for Applications, F81; not visible from here), never through the notification sender. Without the
     # sender mailbox the worker mails no pass and the ID team hands it over.
-    sender = bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", s.get("TAP_MAIL_SENDER") or ""))
-    tap_ok = on("AGENT_TAP") and TAP_ROLE in roles and on("AGENT_PROVISIONING") and sender and "Mail.Send" not in roles
+    mailbox = lambda v: bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v or ""))  # noqa: E731
+    sender = mailbox(s.get("TAP_MAIL_SENDER"))
+    # Re-check 6: the website says "the agent mails the pass" by the same rule as the worker (WorkflowSettings.TapMailByAgent),
+    # from its own settings; deploy_free.sh app copies them. Different means the banner and the request text are wrong.
+    swa_on = lambda k: str(swa.get(k, "")).lower() == "true"  # noqa: E731
+    site_says = swa_on("AGENT_PROVISIONING") and swa_on("AGENT_TAP") and mailbox(swa.get("TAP_MAIL_SENDER"))
+    worker_mails = on("AGENT_TAP") and on("AGENT_PROVISIONING") and sender
+    tap_ok = worker_mails and TAP_ROLE in roles and "Mail.Send" not in roles and site_says
     out.append(Result("5b. Agent issues the one-time TAP and mails it with the initial password and MFA steps", PASS if tap_ok else WAIT,
                       f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
                       f"TAP_MAIL_SENDER {'set' if sender else 'not set (v1.1: no pass is mailed; the ID team hands it over)'}; "
                       f"{'Graph Mail.Send held in Entra (remove it: it overrides the Exchange scope, F81); ' if 'Mail.Send' in roles else ''}"
-                      f"website shows it {'on' if str(swa.get('AGENT_TAP', '')).lower() == 'true' else 'off'}",
-                      "" if tap_ok else "P7 option 2: tools/deploy_free.sh tap <sub> on --sender <mailbox> (dry run → approval) and the Exchange scope it prints (F81)"))
+                      f"website says {'the agent mails the pass' if site_says else 'the ID team issues the pass'}"
+                      f"{'' if site_says == worker_mails else ' (not what the worker does: run tools/deploy_free.sh app <sub>)'}",
+                      "" if tap_ok else "tools/deploy_free.sh app <sub> (no approval: the website copies the worker's TAP settings)"
+                      if worker_mails and TAP_ROLE in roles and "Mail.Send" not in roles
+                      else "P7 option 2: tools/deploy_free.sh tap <sub> on --sender <mailbox> (dry run → approval) and the Exchange scope it prints (F81)"))
 
     # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
     prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
@@ -358,8 +367,8 @@ def self_test() -> None:
                                "AGENT_OFFBOARDING": "true", "OFFBOARD_SUBSCRIPTIONS": "s1",
                                "ROLE_ASSIGN_ALLOWED_ROLES": ",".join([*TEST_ROLES.values(), ROLE_IDS["storage blob data contributor"], ROLE_IDS["key vault secrets officer"]]),
                                "ROLE_ASSIGN_SCOPES": allowed},
-           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_TAP": "true", "AGENT_PRIVILEGED": "true",
-                            "AGENT_OFFBOARDING": "true"},
+           "swa_settings": {"APP_ENVIRONMENT": "test", "NOTIFY_REDIRECT_TO": "x@y.z", "NOTIFY_SENDER": "AcsEmail", "AGENT_PROVISIONING": "true", "AGENT_TAP": "true",
+                            "TAP_MAIL_SENDER": "tap-sender@company.example", "AGENT_PRIVILEGED": "true", "AGENT_OFFBOARDING": "true"},
            "containers": ["projects", "requests", *V11_CONTAINERS]}
     team = {"security": ["sec@company.example"], "idTeam": ["id@company.example"], "roleTeam": ["roles@company.example"]}
     projects = [{"projectId": "PEST", "tenantId": "t1", "tenantName": "PEST", "environments": ["Dev", "PreProd", "Prod"], "contacts": team, "contactsVersion": 1,
@@ -432,6 +441,17 @@ def self_test() -> None:
     entra = {**ctx, "graph_roles": [*ctx["graph_roles"], "Mail.Send"]}
     got5b = next(r for r in evaluate(entra, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
     assert got5b.status == WAIT and "F81" in got5b.detail, got5b.detail
+    # Re-check 6: the website's wording follows the worker. The live state of 31 Oct (AGENT_TAP on, no sender, the old site
+    # wording) and a sender the website was not given yet (needs the app deploy) are both WAIT.
+    def l5b(c):
+        return next(r for r in evaluate(c, projects, rows, requests, notes, []) if r.feature.startswith("5b."))
+    live = json.loads(json.dumps(ctx)); live["worker_settings"]["TAP_MAIL_SENDER"] = ""; live["swa_settings"]["TAP_MAIL_SENDER"] = ""
+    assert l5b(live).status == WAIT and "website says the ID team issues the pass" in l5b(live).detail and "not what the worker" not in l5b(live).detail, l5b(live)
+    stale = json.loads(json.dumps(ctx)); del stale["swa_settings"]["TAP_MAIL_SENDER"]
+    assert l5b(stale).status == WAIT and "not what the worker does" in l5b(stale).detail and "deploy_free.sh app" in l5b(stale).next, l5b(stale)
+    says_more = json.loads(json.dumps(ctx)); says_more["worker_settings"]["TAP_MAIL_SENDER"] = ""
+    assert l5b(says_more).status == WAIT and "not what the worker does" in l5b(says_more).detail and "--sender" in l5b(says_more).next, l5b(says_more)
+    assert l5b(ctx).status == PASS and "website says the agent mails the pass" in l5b(ctx).detail, l5b(ctx)
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
     # (Line 18, the agent's Databricks set-up, is off by default: WAIT until it is approved, tested below.)
     assert all(r.status == PASS for r in res if not r.feature.startswith(("15.", "18."))), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]
