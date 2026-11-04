@@ -81,7 +81,8 @@ export function RequestsPage({ project, projects = [project], onOpenProject }: {
   const [filter, setFilter] = useState<TrackerFilter>({ bucket: 'all', lane: null, query: '', longestFirst: false });
   const search = useRef<HTMLInputElement>(null);
   const queue = useActionQueue();
-  const canSubmit = project.roles.includes('Requester');
+  // Developers submit simulations (4 Nov 2026).
+  const canSubmit = project.roles.includes('Requester') || project.roles.includes('Developer');
 
   const load = useCallback(async () => {
     setError(null);
@@ -251,6 +252,7 @@ export function RequestsPage({ project, projects = [project], onOpenProject }: {
                         <TableCell className={s.wrap} style={{ verticalAlign: 'top', paddingTop: 10 }}><Caption1><Breakable text={r.requester} /></Caption1></TableCell>
                         <TableCell style={{ verticalAlign: 'top', paddingTop: 10 }}>
                           <Badge appearance="filled" color={statusColor[r.status]}>{r.currentStage}</Badge>
+                          {r.simulated && <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }}>SIMULATION</Badge>}
                           <JourneyDots steps={journey(r.status, r.done)} />
                         </TableCell>
                         <TableCell className={s.wrap} style={{ verticalAlign: 'top', paddingTop: 10 }}>

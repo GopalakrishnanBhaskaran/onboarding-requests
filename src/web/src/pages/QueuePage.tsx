@@ -3,7 +3,7 @@ import {
   Badge, Body1, Body1Strong, Button, Caption1, makeStyles, mergeClasses, shorthands, tokens,
 } from '@fluentui/react-components';
 import {
-  ArrowClockwise20Regular, ArrowRight16Regular, CheckmarkCircle20Filled, Clock16Regular, Edit20Regular, People20Regular,
+  ArrowClockwise20Regular, ArrowRight16Regular, CheckmarkCircle20Filled, Clock16Regular, Delete20Regular, Edit20Regular, People20Regular,
   PersonAvailable20Regular, ShieldCheckmark20Regular, Wrench20Regular,
 } from '@fluentui/react-icons';
 import { href } from '../lib/router';
@@ -20,6 +20,7 @@ export const ACTION_LABEL: Record<ActionName, string> = {
   IdTeamTask: 'ID team task',
   RoleTeamTask: 'Role assignment task',
   Resubmit: 'Correct and resubmit',
+  Delete: 'Delete request', // not listed here by the server (deleting is never waiting on anyone)
 };
 
 /** What the person does on the request page, in the words of the button that takes them there. */
@@ -29,6 +30,7 @@ const OPEN_LABEL: Record<ActionName, string> = {
   IdTeamTask: 'Open the task',
   RoleTeamTask: 'Open the task',
   Resubmit: 'Open and correct',
+  Delete: 'Open the request', // never listed (see ACTION_LABEL)
 };
 
 const ICON: Record<ActionName, React.ReactElement> = {
@@ -37,6 +39,7 @@ const ICON: Record<ActionName, React.ReactElement> = {
   IdTeamTask: <People20Regular />,
   RoleTeamTask: <Wrench20Regular />,
   Resubmit: <Edit20Regular />,
+  Delete: <Delete20Regular />,
 };
 
 const ORDER: ActionName[] = ['ApproveOwner', 'ApproveSecurity', 'IdTeamTask', 'RoleTeamTask', 'Resubmit'];

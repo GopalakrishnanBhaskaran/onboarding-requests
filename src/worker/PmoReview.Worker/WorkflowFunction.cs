@@ -16,7 +16,7 @@ public sealed class WorkflowFunction(WorkflowWorker worker, ILogger<WorkflowFunc
     {
         var cid = Guid.NewGuid().ToString("n");
         var s = await worker.RunOnceAsync(cid, ct);
-        logger.LogInformation("workflow-agent done advanced={Advanced} notifications={Notifications} workItems={WorkItems} daily={Daily} next={Next} cid={Cid}",
-            s.Advanced, s.Notifications, s.WorkItems, s.DailySummary, timer.ScheduleStatus?.Next, cid);
+        logger.LogInformation("workflow-agent done advanced={Advanced} notifications={Notifications} workItems={WorkItems} daily={Daily} failed={Failed} next={Next} cid={Cid}",
+            s.Advanced, s.Notifications, s.WorkItems, s.DailySummary, s.Failed.Count == 0 ? "none" : string.Join(", ", s.Failed), timer.ScheduleStatus?.Next, cid);
     }
 }

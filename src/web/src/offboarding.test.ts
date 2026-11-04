@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canConfirm, canPlan, changes, inProgress, planExpired, switchedOff } from './lib/offboarding';
+import { canConfirm, canPlan, changes, inProgress, planExpired, planInput, reasonLabel, switchedOff, ticketError } from './lib/offboarding';
 import type { OffboardingView } from './lib/types';
 
 const run = (status: OffboardingView['status'], results: OffboardingView['steps'][number]['result'][] = []): OffboardingView => ({
@@ -9,6 +9,17 @@ const run = (status: OffboardingView['status'], results: OffboardingView['steps'
 });
 
 describe('F5 offboarding panel', () => {
+  it('needs a reason; the ticket is optional and plain (same rule as the API)', () => {
+    expect(planInput('', 'INC1')).toBeNull();
+    expect(planInput('Leaver', '')).toEqual({ reason: 'Leaver' });
+    expect(planInput('ContractEnd', ' ADO 4711 ')).toEqual({ reason: 'ContractEnd', ticket: 'ADO 4711' });
+    expect(ticketError('<script>')).not.toBeNull();
+    expect(planInput('Leaver', '<script>')).toBeNull();
+    expect(ticketError('x'.repeat(101))).not.toBeNull();
+    expect(reasonLabel('SecurityIncident')).toBe('Security incident');
+    expect(reasonLabel(null)).toBe('not recorded');
+  });
+
   it('confirms only a ready plan that was checked', () => {
     expect(canConfirm(run('Planned'), true)).toBe(true);
     expect(canConfirm(run('Planned'), false)).toBe(false);

@@ -271,7 +271,8 @@ def row_doc(project, tenant, env, name, g, domain_label, role, grants, flag, not
 
 # The app's roles (AppRole); v1.1 adds ProdApprover (F3) and DataSteward (F4; named DataMaintainer until 31 Oct 2026, a name the
 # app still reads but no longer registers). The retired Reviewer / Maintainer grant nothing.
-ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataSteward"}
+# Developer (4 Nov 2026): simulations and deleting requests.
+ROLES = {"Requester", "Owner", "Security", "IdTeam", "RoleTeam", "PMO", "Operator", "ProdApprover", "DataSteward", "Developer"}
 RENAMED = {"DataMaintainer": "DataSteward"}
 SAFE_ID = re.compile(r"^[A-Za-z0-9_.:\-]{1,128}$")
 MAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

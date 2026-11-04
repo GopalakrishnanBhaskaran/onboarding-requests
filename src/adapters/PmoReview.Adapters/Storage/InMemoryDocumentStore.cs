@@ -67,6 +67,14 @@ public sealed class InMemoryDocumentStore<T>(params Func<T, string>[] uniqueKeys
         }
     }
 
+    public Task<bool> DeleteAsync(string partitionKey, string id, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(_docs.Remove((partitionKey, id)));
+        }
+    }
+
     private void EnsureUnique(T document, string? except)
     {
         foreach (var keyOf in uniqueKeys)

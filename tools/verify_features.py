@@ -294,7 +294,7 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
 
     # 18. v1.2 (Gokul, 2 Nov 2026): the agent sets up a Databricks row's group (A3-A5) after both approvals and tests it.
     # Worker and website switched on together, the role step on, the account, workspaces and catalogs named. The
-    # Databricks-side rights of the worker's identity are not visible from here: the first run proves them (F118).
+    # Databricks-side rights of the worker's identity are not visible from here: the first run proves them (F132).
     dbx_on, dbx_swa = on("AGENT_DATABRICKS"), str(swa.get("AGENT_DATABRICKS", "")).lower() == "true"
     dbx_ws = [w for w in (s.get("DATABRICKS_WORKSPACES") or "").split(",") if re.match(r"^[^=]+=(https://)?adb-\d+\.\d+\.azuredatabricks\.net/?$", w.strip())]
     dbx_cat = [c for c in (s.get("DATABRICKS_GRANT_CATALOGS") or "").split(",") if re.match(r"^[A-Za-z0-9_]+$", c.strip())]

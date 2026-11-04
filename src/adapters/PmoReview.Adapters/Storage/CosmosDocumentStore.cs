@@ -75,6 +75,19 @@ public sealed class CosmosDocumentStore<T>(Container container) : IDocumentStore
             throw new DocumentConflictException("unique key exists");
         }
     }
+
+    public async Task<bool> DeleteAsync(string partitionKey, string id, CancellationToken ct = default)
+    {
+        try
+        {
+            await container.DeleteItemAsync<T>(id, new PartitionKey(partitionKey), cancellationToken: ct);
+            return true;
+        }
+        catch (CosmosException e) when (e.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+    }
 }
 
 /// <summary>Skips stored documents older than the type's <see cref="IDocument.MinReadableSchemaVersion"/> (v1, left in place).</summary>

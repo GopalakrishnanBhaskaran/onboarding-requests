@@ -142,6 +142,8 @@ public sealed record Escalation : IDocument
     public required EscalationKind Kind { get; init; }
     public string? RequestId { get; init; }
     public int? RequestRevision { get; init; }
+    /// <summary>Raised for a developer's simulation: the developer decides it (4 Nov 2026).</summary>
+    public bool Simulated { get; init; }
     /// <summary>What the approvers saw (group, level, Azure roles, environment); the decision counts only for this.</summary>
     public string? ScopeFingerprint { get; init; }
     /// <summary>The person the access is for (Enterprise ID or domain-specific ID).</summary>
@@ -208,6 +210,22 @@ public sealed record GroupResolution : IDocument
     public static string MakeId(string normalisedName) => $"grp-{Workflow.Ids.Hash(normalisedName)}";
 }
 
+/// <summary>Why a person is offboarded (4 Nov 2026, Gokul: fields for delete requests). Required on every new plan.</summary>
+public enum OffboardingReason { Leaver, ContractEnd, Transfer, SecurityIncident, Other }
+
+public static class OffboardingReasons
+{
+    public static string Label(OffboardingReason? r) => r switch
+    {
+        OffboardingReason.Leaver => "Leaver",
+        OffboardingReason.ContractEnd => "Contract end",
+        OffboardingReason.Transfer => "Transfer",
+        OffboardingReason.SecurityIncident => "Security incident",
+        OffboardingReason.Other => "Other",
+        _ => "not recorded",
+    };
+}
+
 /// <summary>Offboarding run status. The four contract values, plus Planning / Executing while the worker works (decision 2). A plan not confirmed in time ends Failed (expired).</summary>
 public enum OffboardingStatus { Planning, Planned, Executing, Completed, PartiallyCompleted, Failed }
 
@@ -245,6 +263,10 @@ public sealed record OffboardingRun : IDocument
     public required string RequestedBy { get; init; }
     public string? RequestedByName { get; init; }
     public DateTimeOffset RequestedAt { get; init; }
+    /// <summary>Why (dropdown on the panel); null only on runs planned before 4 Nov 2026.</summary>
+    public OffboardingReason? Reason { get; init; }
+    /// <summary>Ticket or reference (ServiceNow, ADO, HR), optional; masked; in the PMO completion mail.</summary>
+    public string? Ticket { get; init; }
     public string? ConfirmedBy { get; init; }
     public string? ConfirmedByName { get; init; }
     public DateTimeOffset? ConfirmedAt { get; init; }

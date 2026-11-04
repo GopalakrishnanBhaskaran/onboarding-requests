@@ -24,7 +24,8 @@ export function EscalationsPage({ project }: { project: ProjectSummary }) {
   const s = useStyles();
   const [items, setItems] = useState<Item<Escalation>[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const canDecide = project.roles.includes('ProdApprover');
+  // A ProdApprover decides the Prod stage of a request; a Developer only that of a simulation (4 Nov 2026).
+  const canDecide = (simulated?: boolean) => project.roles.includes('ProdApprover') || (simulated === true && project.roles.includes('Developer'));
 
   const load = useCallback(() => {
     setError(null);
@@ -39,7 +40,7 @@ export function EscalationsPage({ project }: { project: ProjectSummary }) {
       <PageTitle>Escalations</PageTitle>
       <Body1>Decisions the system leaves to people. Nothing here is decided automatically.</Body1>
       <ErrorBar error={error} />
-      {canDecide && open.filter((i) => i.value.kind === 'ProdWrite').map((i) => (
+      {open.filter((i) => i.value.kind === 'ProdWrite' && canDecide(i.value.simulated)).map((i) => (
         <ProdDecisionPanel key={i.value.id} escalation={i.value} projectId={project.projectId} onDone={load} />
       ))}
       <Subtitle2 as="h2">All escalations ({open.length} open)</Subtitle2>

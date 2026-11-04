@@ -43,14 +43,19 @@ var host = new HostBuilder()
         services.AddSingleton(_ => CosmosDataStores.Create(
             CosmosDataStores.CreateClientWithIdentity(cosmosEndpoint, credential), Env("COSMOS_DATABASE") ?? "pmoreview"));
         services.AddSingleton<IDirectoryReader>(_ => new GraphDirectoryReader(Http(), credential));
+        // Incomplete mail settings never stop the agent (they used to throw here, on every run): each mail fails with the
+        // reason instead, on the request page and the Issues list.
         services.AddSingleton<INotificationSender>(_ => Env("NOTIFY_SENDER") switch
         {
-            "GraphMail" => new GraphMailSender(Http(), credential, Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox).")),
+            "GraphMail" => string.IsNullOrWhiteSpace(Env("NOTIFY_FROM"))
+                ? new MisconfiguredSender("NOTIFY_SENDER=GraphMail needs NOTIFY_FROM (the shared sender mailbox)")
+                : new GraphMailSender(Http(), credential, Env("NOTIFY_FROM")!),
             // Azure Communication Services Email with the worker's managed identity (deploy_free.sh email, approval-gated).
-            "AcsEmail" => new AcsEmailSender(
-                Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var acs) ? acs : throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs ACS_ENDPOINT (https://<name>.communication.azure.com)."),
-                credential,
-                Env("NOTIFY_FROM") ?? throw new InvalidOperationException("NOTIFY_SENDER=AcsEmail needs NOTIFY_FROM (DoNotReply@<managed domain>).")),
+            "AcsEmail" => !Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var acs)
+                ? new MisconfiguredSender("NOTIFY_SENDER=AcsEmail needs ACS_ENDPOINT (https://<name>.communication.azure.com)")
+                : string.IsNullOrWhiteSpace(Env("NOTIFY_FROM"))
+                    ? new MisconfiguredSender("NOTIFY_SENDER=AcsEmail needs NOTIFY_FROM (DoNotReply@<managed domain>)")
+                    : new AcsEmailSender(acs, credential, Env("NOTIFY_FROM")!),
             _ => new OutboxOnlySender(),
         });
         services.AddSingleton(sp =>
@@ -109,8 +114,11 @@ var host = new HostBuilder()
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
                 // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.
-                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId),
-                offboarding);
+                new GroupResolutionJob(parts.Stores, sp.GetRequiredService<IDirectoryReader>(), clock, loggers.CreateLogger<GroupResolutionJob>(), settings.Workflow.AgentTenantId,
+                    issues: parts.Issues),
+                offboarding,
+                // Each job on its own: a failing one is logged and on the issues list, and the agent still advances the requests.
+                parts.Stores, parts.Issues, loggers.CreateLogger<WorkflowWorker>());
         });
     })
     .Build();

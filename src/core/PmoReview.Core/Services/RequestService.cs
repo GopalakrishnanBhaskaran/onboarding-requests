@@ -77,16 +77,19 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
 
     /// <summary>Submits a new request (status Submitted). The caller then starts the AI review.</summary>
     /// <param name="bundleId">Set by the server for requests submitted together from one Resource* selection (F1); never from the body.</param>
-    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct, string? bundleId = null)
+    /// <param name="simulated">A developer's simulation (Permission.Simulate): set here by the server, never from the body.</param>
+    public async Task<Versioned<AccessRequest>> CreateAsync(CallerContext caller, string projectId, RequestInput input, CancellationToken ct, string? bundleId = null,
+        bool simulated = false)
     {
-        caller.Require(projectId, Permission.SubmitRequests);
+        caller.Require(projectId, simulated ? Permission.Simulate : Permission.SubmitRequests);
         var (clean, fixes) = Validate(input);
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
-        if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        if (simulated) flow = flow.Log(now, caller.UserId, "simulation", $"SIMULATION by {caller.DisplayName}: nothing is created in Entra or Azure, mails stay in the app, and the developer acts for every stage.");
         var doc = new AccessRequest
         {
             Id = Guid.NewGuid().ToString("n"),
@@ -102,6 +105,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Owner = clean.Owner,
             Guest = clean.Guest ?? false,
             BundleId = bundleId,
+            Simulated = simulated,
             CreatedBy = caller.UserId,
             CreatedByName = caller.DisplayName,
             CreatedAt = now,
@@ -135,10 +139,11 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
     public async Task<Versioned<AccessRequest>> ResubmitAsync(
         CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.SubmitRequests);
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         if (string.IsNullOrWhiteSpace(ifMatch)) throw AppException.EtagRequired();
-        var (clean, fixes) = Validate(input);
         var current = await LoadAsync(projectId, requestId, ct);
+        WorkflowService.RequireFor(caller, current.Value, Permission.SubmitRequests); // a simulation: the developer resubmits it
+        var (clean, fixes) = Validate(input);
         if (current.ETag != ifMatch) throw AppException.Stale();
         var flow = current.Value.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request and cannot be changed. Submit a new request.");
         if (flow.Status != RequestStatus.Returned)
@@ -149,7 +154,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
-        if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, "intake-format", $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
         var updated = current.Value with
         {
             EnterpriseId = clean.EnterpriseId,
@@ -187,7 +192,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var text = Text(requested, RequestFields.Environment, 40);
         if (text is null) throw AppException.Incomplete([RequestFields.Label(RequestFields.Environment)]);
         return Domain.Environments.Canonical(project, text)
-               ?? throw AppException.Invalid($"Environment must be one of {string.Join(", ", project.Environments)} for {Tenants.Label(project)}.");
+               ?? throw AppException.Invalid($"Environment must be one of {string.Join(", ", Domain.Environments.Of(project))} for {Tenants.Label(project)}.");
     }
 
     internal async Task<Versioned<AccessRequest>> LoadAsync(string projectId, string requestId, CancellationToken ct)

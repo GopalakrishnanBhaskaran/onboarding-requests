@@ -69,6 +69,8 @@ public sealed class TestApp
     /// <summary>F5: Graph and ARM for offboarding (reads always; writes only when AGENT_OFFBOARDING is on).</summary>
     public FakeOffboarding Offboarding { get; }
     public PilotSettings Settings { get; }
+    /// <summary>The offboarding job's settings: change it to model a worker restarted with other app settings (e.g. OFFBOARD_DELETE_USER).</summary>
+    public WorkflowSettings OffboardingSettings { get; set; }
 
     private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
         ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null)
@@ -77,6 +79,7 @@ public sealed class TestApp
         Stores = stores ?? InMemoryDataStores.Create();
         SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
         Settings = settings;
+        OffboardingSettings = settings.Workflow;
         Directory = FakeDirectory.SeededFromSample();
         Roles = new FakeRoles();
         Api = PilotApp.BuildWorkflow(Stores, settings, Clock, loggers, model, queue, apiDirectory);
@@ -114,17 +117,18 @@ public sealed class TestApp
     public bool ResolveGroups { get; set; }
 
     /// <summary>One worker cycle: agent steps for open requests (with the Entra reader), then notifications.</summary>
-    public async Task<WorkerSummary> RunWorker()
+    public async Task<WorkerSummary> RunWorker(CancellationToken ct = default)
     {
         var worker = new WorkflowWorker(Worker.Agent,
             new NotificationDispatcher(Stores, new OutboxOnlySender(), Worker.Issues, Clock, Loggers.CreateLogger<NotificationDispatcher>()),
             new AdoSync(Stores, Tracker, Worker.Issues, Clock, Loggers.CreateLogger<AdoSync>()),
             new DailySummaryJob(Stores, Worker.Notifier, Clock),
-            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null,
+            ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId, issues: Worker.Issues) : null,
             new PmoReview.Core.Offboarding.OffboardingJob(Stores, Directory, Offboarding, Offboarding,
-                Settings.Workflow.AgentOffboarding ? Offboarding : null, Settings.Workflow.AgentOffboarding ? Offboarding : null,
-                Worker.Notifier, Worker.Issues, Clock, Settings.Workflow, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()));
-        return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
+                OffboardingSettings.AgentOffboarding ? Offboarding : null, OffboardingSettings.AgentOffboarding ? Offboarding : null,
+                Worker.Notifier, Worker.Issues, Clock, OffboardingSettings, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()),
+            Stores, Worker.Issues, Loggers.CreateLogger<WorkflowWorker>());
+        return await worker.RunOnceAsync("test-cycle", ct);
     }
 
     public static object Intake(string enterpriseId = "sample.e1001@sample-corp.invalid", string resource = "SAMPLE Databricks Engineering", string accessLevel = "User",

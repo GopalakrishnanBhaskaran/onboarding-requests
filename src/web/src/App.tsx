@@ -24,7 +24,7 @@ import { DataUploadsPage } from './pages/DataUploadsPage';
 import { AGENT_BANNER, AGENT_TAP_BANNER, BANNER } from './lib/flow';
 
 /** Roles that handle escalations (v1.1): ProdApprovers decide the Prod ones; the others read them. */
-const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataSteward'];
+const ESCALATION_ROLES: AppRole[] = ['ProdApprover', 'Security', 'PMO', 'Operator', 'IdTeam', 'DataSteward', 'Developer'];
 
 const PROJECT_KEY = 'pmo-review.project';
 const NARROW = '@media (max-width: 1023px)';
@@ -239,7 +239,7 @@ function Shell() {
         {me && project ? (
           <div className={s.body}>
             <nav className={s.nav} aria-label="Main">
-              {has('Requester') && (
+              {has('Requester', 'Developer') && (
                 <Button as="a" href={href({ page: 'new' })} appearance="primary" icon={<Add20Regular />} className={s.navCta}>New request</Button>
               )}
               <span className={s.navGroup}>Work</span>
@@ -248,10 +248,10 @@ function Shell() {
               <span className={s.navGroup}>Reference</span>
               {item('sheet', 'Mapping sheet', <Table20Regular />)}
               {item('contacts', 'Team contacts', <People20Regular />)}
-              {(has(...ESCALATION_ROLES) || has('DataSteward', 'PMO') || has('Operator', 'Security', 'PMO')) && <span className={s.navGroup}>Oversight</span>}
+              {(has(...ESCALATION_ROLES) || has('DataSteward', 'PMO') || has('Operator', 'Security', 'PMO', 'Developer')) && <span className={s.navGroup}>Oversight</span>}
               {has(...ESCALATION_ROLES) && item('escalations', 'Escalations', <Warning20Regular />)}
               {has('DataSteward', 'PMO') && item('uploads', 'Data uploads', <ArrowUpload20Regular />)}
-              {has('Operator', 'Security', 'PMO') && item('operator', 'Issues and reports', <DataBarVertical20Regular />)}
+              {has('Operator', 'Security', 'PMO', 'Developer') && item('operator', 'Issues and reports', <DataBarVertical20Regular />)}
             </nav>
             <main id="main" className={s.main}>
               <Page route={route} project={project} projects={me.projects} onOpenProject={choose} agent={!!me.agentProvisioning} tap={!!me.agentTap} privileged={!!me.agentPrivileged} />

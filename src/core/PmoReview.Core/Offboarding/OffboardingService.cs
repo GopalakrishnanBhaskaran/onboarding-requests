@@ -10,14 +10,19 @@ using PmoReview.Core.Workflow;
 namespace PmoReview.Core.Offboarding;
 
 /// <summary>F5 output contract of <c>POST /api/offboarding/{enterpriseId}?mode=plan|execute</c>: exactly these fields.</summary>
+/// <remarks>4 Nov 2026: <c>reason</c> and <c>ticket</c> added after the F5 fields (what the person who asked gave).</remarks>
 public sealed record OffboardingView(string OffboardingId, string EnterpriseId, string ObjectId, string Mode, OffboardingStatus Status,
-    IReadOnlyList<OffboardingStep> Steps, IReadOnlyList<string> Leftovers, IReadOnlyList<string> NotCovered, bool PmoNotified, string CorrelationId)
+    IReadOnlyList<OffboardingStep> Steps, IReadOnlyList<string> Leftovers, IReadOnlyList<string> NotCovered, bool PmoNotified, string CorrelationId,
+    OffboardingReason? Reason = null, string? Ticket = null)
 {
     public static OffboardingView Of(OffboardingRun r) =>
-        new(r.Id, r.EnterpriseId, r.ObjectId ?? "", r.Mode, r.Status, r.Steps, r.Leftovers, r.NotCovered, r.PmoNotified, r.CorrelationId);
+        new(r.Id, r.EnterpriseId, r.ObjectId ?? "", r.Mode, r.Status, r.Steps, r.Leftovers, r.NotCovered, r.PmoNotified, r.CorrelationId, r.Reason, r.Ticket);
 }
 
 public sealed record OffboardingExecuteInput(string? OffboardingId);
+
+/// <summary>The fields of an offboarding request (the plan): why, and an optional ticket or reference.</summary>
+public sealed record OffboardingPlanInput(OffboardingReason? Reason, string? Ticket);
 
 /// <summary>
 /// F5 (v1.1): the API side of offboarding. PMO or an Operator asks for a plan (dry run); the worker reads Entra and Azure
@@ -40,10 +45,30 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     public static bool ValidEnterpriseId(string? id) => id is not null && EnterpriseIdFormat().IsMatch(id);
 
-    public async Task<(int Status, OffboardingView View)> PlanAsync(CallerContext caller, string? projectId, string enterpriseId, string cid, CancellationToken ct)
+    /// <summary>The reason is required (one of the dropdown values); the ticket is optional, short and plain.</summary>
+    public static (OffboardingReason Reason, string? Ticket) Fields(OffboardingPlanInput input)
+    {
+        if (input.Reason is not { } reason || !Enum.IsDefined(reason))
+            throw AppException.Invalid($"reason is required: {string.Join(", ", Enum.GetNames<OffboardingReason>())}.");
+        var ticket = string.IsNullOrWhiteSpace(input.Ticket) ? null : input.Ticket.Trim();
+        if (ticket is not null && !TicketFormat().IsMatch(ticket))
+            throw AppException.Invalid("ticket: at most 100 letters, digits, spaces and - _ . / # : (for example INC0012345 or ADO 4711).");
+        return (reason, SecretMasker.Apply(ticket));
+    }
+
+    [GeneratedRegex("^[A-Za-z0-9 _./#:-]{1,100}$")]
+    private static partial Regex TicketFormat();
+
+    /// <param name="replace">
+    /// Close a ready plan nobody confirmed and make a new one (a setting such as account deletion changed, or Entra did).
+    /// A plan the worker is planning or executing is never replaced.
+    /// </param>
+    public async Task<(int Status, OffboardingView View)> PlanAsync(CallerContext caller, string? projectId, string enterpriseId, bool replace,
+        OffboardingPlanInput input, string cid, CancellationToken ct)
     {
         var project = await AuthoriseAsync(caller, projectId, ct);
         var upn = Upn(enterpriseId);
+        var (reason, ticket) = Fields(input);
         if (!Owned(project, settings.AgentTenantId))
             throw AppException.Conflict("tenant_not_connected", $"Offboarding is not available for {Tenants.Label(project)}: " +
                 (Tenants.NotConnected(project, settings.AgentTenantId) ?? "the project names no Entra tenant, so the AI agent does not know the account is in its tenant") + ".");
@@ -53,9 +78,14 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         var runs = await RunsAsync(project.ProjectId, upn, ct);
         if (runs.FirstOrDefault(r => r.Status is OffboardingStatus.Planning or OffboardingStatus.Executing
                                      || (r.Status == OffboardingStatus.Planned && !Expired(r))) is { } open)
-            return (200, OffboardingView.Of(open)); // a double click, or a run still in progress: the same run
+        {
+            if (!replace || open.Status != OffboardingStatus.Planned)
+                return (200, OffboardingView.Of(open)); // a double click, or a run still in progress: the same run
+            if (await CloseAsync(project, open, caller, cid, expired: false, ct) is { } current)
+                return (200, OffboardingView.Of(current)); // confirmed at the same moment: that run goes on
+        }
         foreach (var stale in runs.Where(r => r.Status == OffboardingStatus.Planned && Expired(r)))
-            await ExpireAsync(project, stale, caller, cid, ct);
+            await CloseAsync(project, stale, caller, cid, expired: true, ct);
 
         var person = (await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(upn), ct))?.Value;
         var now = clock.UtcNow;
@@ -64,6 +94,7 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
             Id = $"off-{Ids.Hash($"{project.ProjectId}|{upn}|{runs.Count}")[..24]}", ProjectId = project.ProjectId, EnterpriseId = upn, DisplayName = person?.DisplayName,
             Mode = ModePlan, Status = OffboardingStatus.Planning, NotCovered = NotCoveredAlways, CorrelationId = cid,
             RequestedBy = caller.UserId, RequestedByName = caller.DisplayName, RequestedAt = now, UpdatedAt = now, IsSample = project.IsSample,
+            Reason = reason, Ticket = ticket,
         };
         try
         {
@@ -73,7 +104,8 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
         {
             return (200, OffboardingView.Of((await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct))!.Value)); // two clicks at once
         }
-        await AuditAsync(project, caller.UserId, "offboarding-plan-requested", upn, $"run {run.Id}", cid, ct);
+        await AuditAsync(project, caller.UserId, "offboarding-plan-requested", upn,
+            $"run {run.Id}; reason {OffboardingReasons.Label(reason)}{(ticket is null ? "" : $"; ticket {ticket}")}", cid, ct);
         return (202, OffboardingView.Of(run));
     }
 
@@ -166,7 +198,8 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     private static async Task<List<AccessRequest>> RequestsForAsync(DataStores stores, string projectId, string upn, CancellationToken ct) =>
         (await stores.Requests.ListAsync(projectId, ct)).Select(r => r.Value)
-            .Where(r => r.ProjectId == projectId && string.Equals(r.DomainId, upn, StringComparison.OrdinalIgnoreCase)).ToList();
+            // A developer's simulation grants nothing, so it never makes a person the project's own (offboardable).
+            .Where(r => r.ProjectId == projectId && !r.Simulated && string.Equals(r.DomainId, upn, StringComparison.OrdinalIgnoreCase)).ToList();
 
     /// <summary>The project's Owner and Security both approved this request (its access was, or is being, granted).</summary>
     private static bool Granted(AccessRequest r) =>
@@ -185,25 +218,35 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     private bool Expired(OffboardingRun run) => clock.UtcNow - (run.PlannedAt ?? run.RequestedAt) > settings.OffboardPlanValidFor;
 
-    /// <summary>A plan nobody confirmed in time is closed (Failed, audited), so a new one can be made.</summary>
-    private async Task ExpireAsync(Project project, OffboardingRun run, CallerContext caller, string cid, CancellationToken ct)
+    /// <summary>
+    /// A plan nobody confirmed is closed (Failed, audited) so a new one can be made: it expired, or a PMO or Operator asked
+    /// for a new one. Returns the run when it is no longer a ready plan (confirmed at the same moment), else null.
+    /// </summary>
+    private async Task<OffboardingRun?> CloseAsync(Project project, OffboardingRun run, CallerContext caller, string cid, bool expired, CancellationToken ct)
     {
         var v = await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct);
-        if (v is null || v.Value.Status != OffboardingStatus.Planned) return;
+        if (v is null) return null;
+        if (v.Value.Status != OffboardingStatus.Planned) return v.Value;
         var now = clock.UtcNow;
         try
         {
             await stores.OffboardingRuns.ReplaceAsync(v.Value with
             {
                 Status = OffboardingStatus.Failed, FinishedAt = now, UpdatedAt = now,
-                Leftovers = [$"plan expired: not confirmed within {settings.OffboardPlanValidFor.TotalHours:0} hours; nothing was changed; replaced by a new plan"],
+                Leftovers = [expired
+                    ? $"plan expired: not confirmed within {settings.OffboardPlanValidFor.TotalHours:0} hours; nothing was changed; replaced by a new plan"
+                    : "plan replaced before anyone confirmed it (a new plan was asked for); nothing was changed"],
             }, v.ETag, ct);
         }
         catch (ConcurrencyException)
         {
-            return; // confirmed or replaced at the same moment
+            // Changed at the same moment: closed by someone else (null, a new plan may follow) or confirmed (that run goes on).
+            return (await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct))?.Value is { Status: not OffboardingStatus.Failed } current ? current : null;
         }
-        await AuditAsync(project, caller.UserId, "offboarding-plan-expired", run.EnterpriseId, $"run {run.Id} (plan {run.PlanHash}) expired unconfirmed; a new plan was asked for", cid, ct);
+        await AuditAsync(project, caller.UserId, expired ? "offboarding-plan-expired" : "offboarding-plan-replaced", run.EnterpriseId,
+            expired ? $"run {run.Id} (plan {run.PlanHash}) expired unconfirmed; a new plan was asked for"
+                    : $"run {run.Id} (plan {run.PlanHash}) replaced unconfirmed; a new plan was asked for", cid, ct);
+        return null;
     }
 
     /// <summary>The steps' fingerprint: execute runs only the plan that was confirmed.</summary>

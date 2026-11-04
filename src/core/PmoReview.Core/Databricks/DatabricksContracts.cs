@@ -39,13 +39,13 @@ public interface IDatabricksAccess
     /// <summary>The group's entitlements in the workspace; null when the workspace does not show the group (yet).</summary>
     Task<IReadOnlyList<string>?> EntitlementsAsync(DatabricksWorkspace ws, string groupName, CancellationToken ct);
 
-    /// <summary>A4: adds entitlements to the group (F114).</summary>
+    /// <summary>A4: adds entitlements to the group (F128).</summary>
     Task AddEntitlementsAsync(DatabricksWorkspace ws, string groupName, IReadOnlyList<string> entitlements, CancellationToken ct);
 
-    /// <summary>The group's effective Unity Catalog privileges on a securable, inherited ones included (F115, F117).</summary>
+    /// <summary>The group's effective Unity Catalog privileges on a securable, inherited ones included (F129, F131).</summary>
     Task<IReadOnlyList<string>> EffectivePrivilegesAsync(DatabricksWorkspace ws, string securableType, string fullName, string groupName, CancellationToken ct);
 
-    /// <summary>A5: grants privileges to the group on a securable (adds only, F117).</summary>
+    /// <summary>A5: grants privileges to the group on a securable (adds only, F131).</summary>
     Task GrantAsync(DatabricksWorkspace ws, string securableType, string fullName, string groupName, IReadOnlyList<string> privileges, CancellationToken ct);
 }
 

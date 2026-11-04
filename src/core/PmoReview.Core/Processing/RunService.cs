@@ -68,6 +68,18 @@ public sealed partial class RunService(DataStores stores, IReviewDispatcher disp
         return await ResponseAsync(request.ProjectId, run.Id, duplicate: false);
     }
 
+    /// <summary>
+    /// The pilot's dispatcher processes a run inside the dispatch call, so a run still Queued afterwards was never processed
+    /// (its claim failed). With a queue (paid, off) a Queued run is waiting in the queue: not dispatched again here.
+    /// </summary>
+    public bool ProcessesInline => dispatcher.Name == "Inline";
+
+    /// <summary>Dispatches a Queued run again (inline dispatcher only; the claim is ETag-guarded, so it is processed once).</summary>
+    public async Task RedispatchQueuedAsync(string projectId, string runId, string correlationId)
+    {
+        if (ProcessesInline) await dispatcher.DispatchAsync(projectId, runId, correlationId);
+    }
+
     /// <summary>Operator: retry a failed run of the request's current revision.</summary>
     public async Task<RunStarted> RetryAsync(CallerContext caller, string projectId, string runId, RetryInput input, string correlationId, CancellationToken ct)
     {

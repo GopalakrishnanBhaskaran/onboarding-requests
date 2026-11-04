@@ -303,6 +303,48 @@ public partial class InfraConsistencyTests
     }
 
     [Fact]
+    public void Databricks_is_one_serverless_premium_workspace_off_by_default_and_its_group_tools_never_remove_or_lower()
+    {
+        Assert.Contains("param enableDatabricks bool = false", MainBicep());
+        Assert.Contains("enableDatabricks ? databricksResourceTypes : []", Pilot());
+        Assert.DoesNotContain("databricks.bicep", MainBicep()); // created only by deploy_free.sh databricks after approval
+
+        // Serverless (F114): nothing in the subscription but the workspace itself; no VNet, storage or managed resource group.
+        var bicep = Read("infra", "modules", "databricks.bicep");
+        Assert.Equal(["Microsoft.Databricks/workspaces"], ResourceType().Matches(bicep).Select(m => m.Groups[1].Value).Distinct());
+        Assert.Contains("computeMode: 'Serverless'", bicep);
+        Assert.Contains("name: 'premium'", bicep);
+        Assert.DoesNotMatch(new Regex(@"^\s*(managedResourceGroupId|parameters|customVirtualNetworkId|storageAccountName|natGatewayName|accessConnector|enableNoPublicIp)\s*:", RegexOptions.Multiline), bicep);
+
+        var deploy = Read("tools", "deploy_free.sh");
+        Assert.Contains("databricks_setup \"$DBX_LOCATION\"", deploy);
+        Assert.Contains("\"enableDatabricks\": v(sys.argv[5] == \"true\")", deploy); // params keeps the live policy type allowed
+        Assert.Contains("DATABRICKS='^Microsoft\\.Databricks/workspaces$'", Read("tools", "cost_check.sh"));
+
+        // Databricks groups and Unity Catalog grants: aim_setup.sh (one PUT for workspace assignments; PATCH only to add:
+        // entitlements by a SCIM "add" operation, Unity Catalog privileges by "add" from "grants" and from "apply --grant";
+        // never a remove, ALL_PRIVILEGES or MANAGE). Fabric: read-only without --approved-by.
+        var aim = Read("tools", "databricks", "aim_setup.sh");
+        Assert.Single(Regex.Matches(aim, @"\| call PUT "));
+        var patches = Regex.Matches(aim, @"\| call PATCH ""https://\$host(?<path>/api/[^""$]+)").Select(m => m.Groups["path"].Value).ToList();
+        Assert.Equal(Regex.Matches(aim, @"\| call PATCH ").Count, patches.Count);
+        Assert.Equal(["/api/2.0/preview/scim/v2/Groups/", "/api/2.1/unity-catalog/permissions/", "/api/2.1/unity-catalog/permissions/"], patches);
+        Assert.Contains("Operations: [{op: \"add\", path: \"entitlements\"", aim);
+        Assert.Contains("'{changes: [{principal: $p, add: ($a | split(\",\"))}]}'", aim);
+        Assert.Contains("'{changes: [{principal: $g, add: ($a | split(\",\"))}]}'", aim);
+        Assert.Contains("    READ:schema) printf 'USE_SCHEMA,SELECT' ;;", aim);
+        Assert.Contains("    WRITE:schema) printf 'USE_SCHEMA,SELECT,MODIFY,CREATE_TABLE' ;;", aim);
+        Assert.DoesNotContain("remove:", aim);
+        Assert.False(File.Exists(Path.Combine(Repo(), "tools", "databricks_setup.py")), "one Databricks group tool: aim_setup.sh");
+        var fabric = Read("tools", "fabric_groups.py");
+        Assert.Single(Regex.Matches(fabric, @"http\(""POST"""));
+        Assert.Contains("ROLES = (\"Viewer\", \"Contributor\", \"Member\")", fabric);
+        foreach (var py in new[] { fabric, Read("tools", "entra_rest.py") })
+            foreach (var verb in new[] { "\"DELETE\"", "\"PATCH\"" })
+                Assert.DoesNotContain(verb, py);
+    }
+
+    [Fact]
     public void Budget_is_the_approved_cap_with_staged_alerts()
     {
         var bicep = MainBicep() + Pilot();

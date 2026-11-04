@@ -1,8 +1,4 @@
-import type {
-  AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView,
-  ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation,
-  UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView,
-} from './types';
+import type { AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView, ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation, UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView, OffboardingPlanInput, DeletedRequest } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
 export class ApiError extends Error {
@@ -36,22 +32,48 @@ async function call<T>(method: string, path: string, body?: unknown, ifMatch?: s
     throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
   }
 
-  return read<T>(res);
+  return read<T>(res, method);
 }
 
-async function read<T>(res: Response, alsoOk: number[] = []): Promise<T> {
+async function read<T>(res: Response, method: string, alsoOk: number[] = []): Promise<T> {
   if (res.status === 401) {
     window.location.assign('/login');
     throw new ApiError(401, 'unauthenticated', 'Sign-in required.');
   }
 
   const text = await res.text();
-  const json = text ? JSON.parse(text) : null;
+  const json = parseJson(text);
+  if (json === undefined) throw notAnswered(res.status, text, method);
   if (!res.ok && !alsoOk.includes(res.status)) {
     const e = json?.error;
     throw new ApiError(res.status, e?.code ?? 'error', e?.message ?? `Request failed (${res.status}).`, e?.correlationId, e?.details ?? undefined);
   }
   return json as T;
+}
+
+/** The parsed body, null for an empty body, undefined when the body is not JSON. */
+function parseJson(text: string): any {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A reply that did not come from the API: the SWA gateway answers in plain text ("Backend call failure") when the
+ * API did not start, crashed or ran past the 45 s limit (VERIFIED_FACTS F3; the API may still finish the action).
+ */
+function notAnswered(status: number, text: string, method: string): ApiError {
+  const plain = text.trim();
+  const reason = plain.length <= 80 && !plain.includes('<') ? `: ${plain}` : '';
+  const saved = method === 'GET' ? '' : ' Reload the page first: your action may already be saved.';
+  return new ApiError(
+    status,
+    'gateway',
+    `The app's server did not answer (HTTP ${status}${reason}). Wait a minute and try again.${saved} If it repeats on every page, tell the Operator.`,
+  );
 }
 
 /**
@@ -67,7 +89,7 @@ async function sendFile<T>(path: string, file: File): Promise<T> {
   } catch {
     throw new ApiError(0, 'network', 'Could not reach the app. Your sign-in may have expired: reload the page (Ctrl+F5). If it repeats, sign out and sign in again.');
   }
-  return read<T>(res, [422]);
+  return read<T>(res, 'POST', [422]);
 }
 
 const p = (projectId: string) => `projects/${encodeURIComponent(projectId)}`;
@@ -104,6 +126,11 @@ export const api = {
   listRequests: (projectId: string) => call<{ items: StatusLine[]; flowOverview: string[]; whoDoesWhat: string }>('GET', `${p(projectId)}/requests`),
   getRequest: (projectId: string, requestId: string) => call<RequestView>('GET', `${p(projectId)}/requests/${id(requestId)}`),
   submit: (projectId: string, fields: IntakeFields) => call<RequestView>('POST', `${p(projectId)}/requests`, fields),
+  /** Developer: a simulation (dry run; the developer acts for every stage). */
+  simulate: (projectId: string, fields: IntakeFields) => call<RequestView>('POST', `${p(projectId)}/requests/simulate`, fields),
+  /** Developer: delete a request (a real one needs a reason). */
+  deleteRequest: (projectId: string, requestId: string, reason: string) =>
+    call<DeletedRequest>('POST', `${p(projectId)}/requests/${id(requestId)}/delete`, { reason: reason.trim() || null, confirm: true }),
   resubmit: (projectId: string, requestId: string, fields: IntakeFields, etag: string) =>
     call<RequestView>('PUT', `${p(projectId)}/requests/${id(requestId)}`, fields, etag),
   trail: (projectId: string, requestId: string) => call<{ text: string }>('GET', `${p(projectId)}/requests/${id(requestId)}/trail`),
@@ -144,7 +171,8 @@ export const api = {
     call<ResourceOptions>('GET', `resources/options?projectId=${id(projectId)}&environment=${id(environment)}`),
   resolve: (projectId: string, environment: string, resources: string[]) =>
     call<ResolveResult>('GET', `resources/resolve?projectId=${id(projectId)}&environment=${id(environment)}${resources.map((r) => `&resource=${id(r)}`).join('')}`),
-  submitBundle: (projectId: string, input: BundleInput) => call<BundleResult>('POST', `${p(projectId)}/requests/bundle`, input),
+  submitBundle: (projectId: string, input: BundleInput, simulate = false) =>
+    call<BundleResult>('POST', `${p(projectId)}/requests/bundle${simulate ? '?simulate=true' : ''}`, input),
   escalations: (projectId: string) => call<{ items: Item<Escalation>[] }>('GET', `${p(projectId)}/escalations`),
   uploads: (projectId: string) => call<UploadsOverview>('GET', `${p(projectId)}/uploads`),
   upload: (projectId: string, kind: UploadKind, file: File, o: { mode: 'validate' | 'apply'; retireMissing: boolean; sheet?: string; baseVersion?: number }) => {
@@ -155,8 +183,9 @@ export const api = {
   },
   offboarding: (projectId: string, enterpriseId: string) =>
     call<OffboardingView>('GET', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}`),
-  planOffboarding: (projectId: string, enterpriseId: string) =>
-    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan`),
+  /** replace: close the plan nobody confirmed yet and make a new one (e.g. after account deletion was switched on). */
+  planOffboarding: (projectId: string, enterpriseId: string, input: OffboardingPlanInput, replace = false) =>
+    call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=plan${replace ? '&replace=true' : ''}`, input),
   confirmOffboarding: (projectId: string, enterpriseId: string, offboardingId: string) =>
     call<OffboardingView>('POST', `offboarding/${id(enterpriseId)}?projectId=${id(projectId)}&mode=execute`, { offboardingId }),
   rollbackUpload: (projectId: string, kind: UploadKind, version: number) =>

@@ -18,6 +18,7 @@ import { Breakable, Empty, ErrorBar, Loading, PageTitle, useStyles } from '../co
 import { OffboardingPanel } from '../components/OffboardingPanel';
 import { JourneyStepper } from '../components/Journey';
 import { CheckDigest } from '../components/CheckDigest';
+import { DeleteRequestPanel } from '../components/DeleteRequestPanel';
 
 const POLL_MS = 15000;
 const POLL_LIMIT_MS = 12 * 60000;
@@ -131,6 +132,7 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
               {name && <Body1Strong>{name}</Body1Strong>}
               {r.enterpriseId && <Body1 className={s.wrap}><Breakable text={r.enterpriseId} /></Body1>}
               {r.guest && <Badge appearance="tint" color="warning">Guest</Badge>}
+              {r.simulated && <Badge appearance="outline" color="warning">SIMULATION</Badge>}
             </div>
             <div className={l.chips}>
               {r.resource && <Badge appearance="tint" color="brand" size="large">{`${r.accessLevel ?? '—'} on ${r.resource}`}</Badge>}
@@ -146,6 +148,15 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
         <JourneyStepper steps={steps} seconds={stepSeconds(view.timings.perStage)} />
       </section>
       <ErrorBar error={error} />
+      {r.simulated && (
+        <MessageBar intent="warning" layout="multiline">
+          <MessageBarBody>
+            <MessageBarTitle>SIMULATION</MessageBarTitle>
+            A developer&apos;s dry run: the developer acts for the Owner, Security and the teams; the AI agent creates nothing in Entra or Azure,
+            the checks are simulated and mails stay in the app.
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
       <div className={l.layout}>
         <div className={s.stack} style={{ minWidth: 0 }}>
@@ -223,9 +234,10 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
             </section>
           ) : null}
 
-          {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && (
+          {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && !r.simulated && (
             <OffboardingPanel project={project} enterpriseId={r.domainId} />
           )}
+          {view.actions.includes('Delete') && <DeleteRequestPanel request={r} />}
 
           <TabList selectedValue={tab} onTabSelect={(_, d) => setTab(d.value as typeof tab)} aria-label="Request details">
             <Tab value="review" icon={<Sparkle20Regular />}>AI review ({runs.length})</Tab>

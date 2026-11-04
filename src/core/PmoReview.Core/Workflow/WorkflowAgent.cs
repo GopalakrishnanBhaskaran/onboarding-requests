@@ -36,6 +36,8 @@ public sealed partial class WorkflowAgent(
 {
     private const string Agent = WorkflowState.AgentActor;
     private const int MaxStepsPerCall = 8;
+    /// <summary>Logged by <c>RequestService</c> after submit/resubmit when the intake format was auto-fixed.</summary>
+    public const string IntakeFormatStep = "intake-format";
 
     /// <param name="Stop">End this call after saving (a retry waits for the next agent run instead of looping now).</param>
     private sealed record Step(AccessRequest Next, List<Func<CancellationToken, Task>> Effects, bool Stop = false);
@@ -84,21 +86,31 @@ public sealed partial class WorkflowAgent(
             {
                 await runs.RecoverStuckAsync(project.Value.ProjectId, ct);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
             {
                 await RecordErrorAsync(project.Value.ProjectId, null, "stuck-run recovery", e, ct); // the requests still get their turn
             }
-            foreach (var r in await stores.Requests.ListAsync(project.Value.ProjectId, ct))
+            IReadOnlyList<Versioned<AccessRequest>> open;
+            try
             {
-                if (r.Value.Flow is not { IsOpen: true }) continue;
+                open = (await stores.Requests.ListAsync(project.Value.ProjectId, ct)).Where(r => r.Value.Flow is { IsOpen: true }).ToList();
+            }
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
+            {
+                await RecordErrorAsync(project.Value.ProjectId, null, "reading the requests", e, ct); // the other projects still get their turn
+                continue;
+            }
+            foreach (var r in open)
+            {
                 try
                 {
-                    var before = r.Value.Flow.Events.Count;
+                    var before = r.Value.Flow!.Events.Count;
                     var after = await AdvanceAsync(r.Value.ProjectId, r.Value.Id, correlationId, ct);
                     if (after?.Flow?.Events.Count > before) advanced++;
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (Exception e) when (Failures.NotCancelled(e, ct))
                 {
+                    // Also a Cosmos or HTTP timeout (an OperationCanceledException while the run's own token is not cancelled).
                     await RecordErrorAsync(r.Value, e, ct);
                 }
             }
@@ -113,7 +125,7 @@ public sealed partial class WorkflowAgent(
     public Task RecordErrorAsync(AccessRequest r, Exception e, CancellationToken ct) =>
         RecordErrorAsync(r.ProjectId, r.Id, StatusText.Label(r.Flow?.Status ?? RequestStatus.Submitted), e, ct);
 
-    private async Task RecordErrorAsync(string projectId, string? requestId, string where, Exception e, CancellationToken ct)
+    public async Task RecordErrorAsync(string projectId, string? requestId, string where, Exception e, CancellationToken ct)
     {
         var type = e.GetType().Name;
         logger.LogError("agent: {Where} failed {ExceptionType} request={RequestId}", where, type, requestId);
@@ -125,7 +137,7 @@ public sealed partial class WorkflowAgent(
                 $"The AI agent could not process {what} ({type}). Nothing was changed and every agent run retries; a developer is needed while this recurs (see last seen).",
                 $"{e.GetType().FullName}: {message}", ct);
         }
-        catch (Exception inner) when (inner is not OperationCanceledException)
+        catch (Exception inner) when (Failures.NotCancelled(inner, ct))
         {
             logger.LogError("agent: could not record the error ({ExceptionType})", inner.GetType().Name);
         }
@@ -136,9 +148,11 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         return flow.Status switch
         {
-            RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault()?.Step ?? "submit", cid, ct),
+            // The trigger is the person's step (submit / resubmit), not the format auto-fix logged after it: with "intake-format"
+            // as the trigger the requester got no confirmation mail at submit (4 Nov 2026).
+            RequestStatus.Submitted => await StartReviewAsync(r, flow.Events.LastOrDefault(e => e.Step != IntakeFormatStep)?.Step ?? "submit", cid, ct),
             RequestStatus.AiReview => await AfterReviewAsync(r, cid, ct),
-            RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
+            RequestStatus.AwaitingOwner or RequestStatus.AwaitingSecurity => await MappingChangedAsync(r, ct) ?? await EnsureAskedAsync(r, ct) ?? await ApprovalSlaAsync(r, ct),
             RequestStatus.AwaitingProdApproval => await MappingChangedAsync(r, ct) ?? await ProdApprovalAsync(r, ct),
             // F3: the Prod guard runs before anything at the granting stages.
             RequestStatus.WithIdTeam => await MappingChangedAsync(r, ct) ?? await ProdBlockAsync(r, ct) ?? await IdTeamAsync(r, cid, ct),
@@ -167,6 +181,8 @@ public sealed partial class WorkflowAgent(
             && latest.ProcessingStatus != ProcessingStatus.Failed)
         {
             runId = latest.Id;
+            // Left Queued (e.g. its claim lost a Cosmos write): dispatch it now instead of waiting for stuck-run recovery.
+            if (latest.ProcessingStatus == ProcessingStatus.Queued) await runs.RedispatchQueuedAsync(r.ProjectId, latest.Id, cid);
         }
         else
         {
@@ -188,6 +204,13 @@ public sealed partial class WorkflowAgent(
         if (run is null || run.RequestRevision != r.Revision || run.ProcessingStatus == ProcessingStatus.Superseded)
             return await StartReviewAsync(r, "review", cid, ct);
 
+        if (run.ProcessingStatus == ProcessingStatus.Queued && runs.ProcessesInline)
+        {
+            // Never processed (its claim failed): dispatch it again (the claim is ETag-guarded, so it runs once) and look at it
+            // afresh, instead of waiting at AI review for stuck-run recovery.
+            await runs.RedispatchQueuedAsync(r.ProjectId, run.Id, cid);
+            run = (await stores.Runs.GetAsync(r.ProjectId, run.Id, ct))?.Value ?? run;
+        }
         switch (run.ProcessingStatus)
         {
             case ProcessingStatus.Queued or ProcessingStatus.Running:
@@ -264,7 +287,7 @@ public sealed partial class WorkflowAgent(
         };
         var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();
-        await UpsertResponseRecordAsync(r, scope, ct);
+        if (!r.Simulated) await UpsertResponseRecordAsync(r, scope, ct); // a simulation never enters the response document
         if (scope.GroupExistsInEntra == true && scope.GroupState == GroupState.ToBeCreated)
             effects.Add(c => issues.RecordAsync(r.ProjectId, r.Id, $"review:{run.Id}", IssueKind.AutoFixApplied, IssueSeverity.Info,
                 $"Group {scope.EntraGroup} already exists in Entra; the ID team task says to reuse it.", null, c, IssueStatus.AutoFixed));
@@ -273,7 +296,7 @@ public sealed partial class WorkflowAgent(
         if (flow.ResumeStatus is { } resume && flow.Scope is { } previous && previous.SameAccess(scope))
         {
             var resumed = (flow with { Scope = scope, ResumeStatus = null })
-                .To(resume, WaitingFor(resume, flow), now, Agent, "review-pass", "Mapping sheet changed; the new review passed with the same group and role. Continuing.");
+                .To(resume, WaitingFor(resume, flow, r.Simulated), now, Agent, "review-pass", "Mapping sheet changed; the new review passed with the same group and role. Continuing.");
             effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.MappingChangedAfterReview], c));
             if (resume == RequestStatus.AwaitingSecurity) effects.Add(c => AskApprovalAsync(r, ApprovalStage.Security, scope, resumed, project, c));
             if (resume == RequestStatus.AwaitingOwner) effects.Add(c => AskApprovalAsync(r, ApprovalStage.Owner, scope, resumed, project, c));
@@ -297,21 +320,29 @@ public sealed partial class WorkflowAgent(
         return new Step(r with { Flow = next }, effects);
     }
 
-    private WaitingOn WaitingFor(RequestStatus s, WorkflowState flow) => s switch
+    private WaitingOn WaitingFor(RequestStatus s, WorkflowState flow, bool simulated) => s switch
     {
         RequestStatus.AwaitingOwner => WaitingOn.Owner,
         RequestStatus.AwaitingSecurity => WaitingOn.Security,
         RequestStatus.AwaitingProdApproval => WaitingOn.ProdApprover,
-        RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || ProvisioningPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.IdTeam,
-        RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || RoleAssignmentPending(t, flow.Scope)) ? WaitingOn.Agent : WaitingOn.RoleTeam,
+        RequestStatus.WithIdTeam => flow.IdTeamTask is { } t && (t.State == TeamTaskState.Reported || (!simulated && ProvisioningPending(t, flow.Scope))) ? WaitingOn.Agent : WaitingOn.IdTeam,
+        RequestStatus.WithRoleTeam => flow.RoleTeamTask is { } t && (t.State == TeamTaskState.Reported || (!simulated && RoleAssignmentPending(t, flow.Scope))) ? WaitingOn.Agent : WaitingOn.RoleTeam,
         _ => WaitingOn.Agent, // Verifying included: the agent checks the access itself, nobody else is waited on
+    };
+
+    /// <summary>What the response document would hold for a simulation (only in memory: a simulation is never stored there).</summary>
+    private ResponseRecord SimulatedRecord(AccessRequest r, ReviewedScope scope) => new()
+    {
+        Id = r.Id, ProjectId = r.ProjectId, RequestId = r.Id, UserId = r.DomainId!, Resource = r.Resource!, AccessLevel = r.AccessLevel!,
+        Environment = r.Environment, AzureRoles = scope.Grants(), EntraGroup = scope.EntraGroup, Role = scope.Role, RoleScope = scope.RoleScope,
+        State = ResponseState.Approved, Justification = "SIMULATION", UpdatedBy = Agent, UpdatedAt = clock.UtcNow, Version = 1,
     };
 
     public Task AskApprovalAsync(AccessRequest r, ApprovalStage stage, ReviewedScope scope, WorkflowState flow, Project? project, CancellationToken ct)
     {
         var (subject, body) = Messages.ApprovalRequested(r, stage, scope, stage == ApprovalStage.Security ? flow.CurrentApproval(ApprovalStage.Owner) : null, settings);
         var to = stage == ApprovalStage.Owner ? Recipients.Owner(r) : Recipients.Security(project);
-        return notifier.EnqueueAsync(r.ProjectId, r.Id, $"{stage.ToString().ToLowerInvariant()}-approval:{scope.ReviewRunId}", NotificationKind.ApprovalRequested, to, subject, body, ct);
+        return notifier.EnqueueAsync(r.ProjectId, r.Id, ApprovalStep(stage, scope), NotificationKind.ApprovalRequested, to, subject, body, ct);
     }
 
     /// <summary>Writes (or updates) this request's record in the response document from the passing review.</summary>
@@ -382,6 +413,25 @@ public sealed partial class WorkflowAgent(
                 $"Mapping sheet changed after the AI review (at {StatusText.Label(from)}); review re-run.", null, c),
         ]);
     }
+
+    /// <summary>
+    /// The approval request mail of the current review is in the outbox. It is written after the step that asks for the
+    /// approval is saved; if that write failed (e.g. a Cosmos error right after an Owner approved), the approver was never
+    /// asked and the request only waited for the SLA reminder. Re-asking is idempotent (same notification id). No step.
+    /// </summary>
+    private async Task<Step?> EnsureAskedAsync(AccessRequest r, CancellationToken ct)
+    {
+        var flow = r.Flow!;
+        if (flow.Scope is not { } scope) return null;
+        var stage = flow.Status == RequestStatus.AwaitingOwner ? ApprovalStage.Owner : ApprovalStage.Security;
+        var id = Notification.MakeId(Ids.Key(r.Id, ApprovalStep(stage, scope)), NotificationKind.ApprovalRequested);
+        if (await stores.Notifications.GetAsync(r.ProjectId, id, ct) is not null) return null;
+        logger.LogWarning("agent: {Stage} approval request missing request={RequestId}; asking again", stage, r.Id);
+        await AskApprovalAsync(r, stage, scope, flow, await ProjectAsync(r, ct), ct);
+        return null;
+    }
+
+    private static string ApprovalStep(ApprovalStage stage, ReviewedScope scope) => $"{stage.ToString().ToLowerInvariant()}-approval:{scope.ReviewRunId}";
 
     private async Task<Step?> ApprovalSlaAsync(AccessRequest r, CancellationToken ct)
     {
@@ -474,7 +524,7 @@ public sealed partial class WorkflowAgent(
         if (task is null || task.State == TeamTaskState.Cancelled)
         {
             var created = NewIdTeamTask(r, flow);
-            if (settings.AgentProvisioning)
+            if (settings.AgentProvisioning && !r.Simulated)
             {
                 // The agent provisions first; the ID team is told what is left (the TAP, or the whole task on a fallback).
                 var waiting = (flow with { IdTeamTask = created }).Waiting(WaitingOn.Agent, clock.UtcNow)
@@ -486,7 +536,8 @@ public sealed partial class WorkflowAgent(
             var (taskSubject, taskBody) = Messages.TeamTask(r, created, settings);
             return new Step(r with { Flow = next }, [c => notifier.EnqueueAsync(r.ProjectId, r.Id, created.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), taskSubject, taskBody, c)]);
         }
-        if (ProvisioningPending(task, flow.Scope))
+        // A simulation is never provisioned: the developer does the ID team step (no Entra write ever happens for it).
+        if (!r.Simulated && ProvisioningPending(task, flow.Scope))
             return writer is null || directory is null ? null : await ProvisionAsync(r, task, cid, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
@@ -494,7 +545,8 @@ public sealed partial class WorkflowAgent(
         var projectDoc = await ProjectAsync(r, ct);
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
         var pattern = string.IsNullOrWhiteSpace(projectDoc?.GroupNamePattern) ? policy.DefaultGroupNamePattern : projectDoc!.GroupNamePattern!;
-        var v = await verifier.IdTeamAsync(r, flow.Scope!, flow, task.IdReport, sheet, pattern, ct, NotConnected(projectDoc));
+        var v = r.Simulated ? Verification.Simulated(CheckGroups.IdTeam, "user, group, membership and TAP")
+            : await verifier.IdTeamAsync(r, flow.Scope!, flow, task.IdReport, sheet, pattern, ct, NotConnected(projectDoc));
         if (v.Pending) return null; // the worker (with the Entra reader) finishes it
 
         if (v.Failed) return Returned(r, task with { Checks = v.Checks }, v, projectDoc,
@@ -510,8 +562,9 @@ public sealed partial class WorkflowAgent(
             return new Step(r with { Flow = again }, [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.VerificationMismatch], c)]);
         }
 
-        // Passed: the role assignment team gets user, group and role from the response document.
-        var record = (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id);
+        // Passed: the role assignment team gets user, group and role from the response document (a simulation is never in it).
+        var record = r.Simulated ? SimulatedRecord(r, flow.Scope!)
+            : (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id);
         if (record is null) return null;
         var roleTask = new TeamTask
         {
@@ -522,7 +575,7 @@ public sealed partial class WorkflowAgent(
             CreatedAt = now,
             SinceAt = now,
         };
-        var byAgent = settings.AgentRoleAssignment;
+        var byAgent = settings.AgentRoleAssignment && !r.Simulated;
         var advanced = (flow with { IdTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks }, RoleTeamTask = roleTask })
             .Log(now, Agent, "id-team-verified", "AI verified the ID team's work: user, group, membership, mapping sheet and TAP rules.")
             .To(RequestStatus.WithRoleTeam, byAgent ? WaitingOn.Agent : WaitingOn.RoleTeam, now, Agent, "role-team-task",
@@ -588,14 +641,15 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         var task = flow.RoleTeamTask;
         if (task is null) return null;
-        if (RoleAssignmentPending(task, flow.Scope))
+        if (!r.Simulated && RoleAssignmentPending(task, flow.Scope))
             return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
 
         var project = await ProjectAsync(r, ct);
-        var record = (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id);
-        var v = await verifier.RoleTeamAsync(flow.Scope!, record, task.RoleReport, ct, NotConnected(project));
+        var v = r.Simulated ? Verification.Simulated(CheckGroups.RoleTeam, "the role assignment")
+            : await verifier.RoleTeamAsync(flow.Scope!, (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id),
+                task.RoleReport, ct, NotConnected(project));
         if (v.Pending) return null;
         if (v.Failed) return Returned(r, task with { Checks = v.Checks }, v, project, IssueKind.RoleMismatch, "role-team");
 
@@ -619,7 +673,8 @@ public sealed partial class WorkflowAgent(
     {
         var flow = r.Flow!;
         var project = await ProjectAsync(r, ct);
-        var v = await verifier.FinalAsync(r, flow.Scope!, ct, NotConnected(project));
+        var v = r.Simulated ? Verification.Simulated(CheckGroups.FinalVerification, "the account, the group membership and the roles")
+            : await verifier.FinalAsync(r, flow.Scope!, ct, NotConnected(project));
         var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();
         var changed = !SameChecks(flow.FinalChecks, v.Checks);

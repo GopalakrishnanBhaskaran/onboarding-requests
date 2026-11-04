@@ -17,7 +17,7 @@ public sealed record DatabricksTarget(string Workspace, string Catalog, string? 
     public override string ToString() => $"{Prefix}{Workspace}/{Catalog}{(Schema is null ? "" : "." + Schema)}";
 }
 
-/// <summary>What the group's name decides (F114, F115; policy file <c>config/databricks-access.json</c>).</summary>
+/// <summary>What the group's name decides (F128, F129; policy file <c>config/databricks-access.json</c>).</summary>
 public sealed record DatabricksDecision(
     string Level,
     bool ByAgent,
@@ -34,11 +34,11 @@ public sealed record DatabricksDecision(
 /// </summary>
 public sealed class DatabricksPolicy
 {
-    /// <summary>The only entitlements the policy may give (F114). Cluster or pool creation is never automated.</summary>
+    /// <summary>The only entitlements the policy may give (F128). Cluster or pool creation is never automated.</summary>
     public static readonly IReadOnlySet<string> AllowedEntitlements =
         new HashSet<string>(StringComparer.Ordinal) { "workspace-access", "databricks-sql-access", "workspace-consume" };
 
-    /// <summary>The only Unity Catalog privileges the policy may grant (F115). Never ALL_PRIVILEGES, MANAGE or ownership.</summary>
+    /// <summary>The only Unity Catalog privileges the policy may grant (F129). Never ALL_PRIVILEGES, MANAGE or ownership.</summary>
     public static readonly IReadOnlySet<string> AllowedPrivileges = new HashSet<string>(StringComparer.Ordinal)
     {
         "BROWSE", "USE_CATALOG", "USE_SCHEMA", "SELECT", "MODIFY", "CREATE_TABLE", "READ_VOLUME", "WRITE_VOLUME", "CREATE_VOLUME",

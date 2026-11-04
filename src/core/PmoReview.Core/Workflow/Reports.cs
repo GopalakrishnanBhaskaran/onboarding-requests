@@ -23,7 +23,11 @@ public sealed record StatusLine(
     string? Resource,
     string? AccessLevel,
     DateTimeOffset UpdatedAt,
-    string? BundleId = null);
+    string? BundleId = null)
+{
+    /// <summary>A developer's simulation (badge in the lists).</summary>
+    public bool Simulated { get; init; }
+}
 
 public sealed record DurationItem(string Name, long Seconds, string Text);
 
@@ -67,7 +71,7 @@ public static class Reports
         var inStage = flow.IsOpen || flow.Status == RequestStatus.Returned ? now - flow.StageSince : TimeSpan.Zero;
         return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? r.CreatedBy, flow.Status, StatusText.Label(flow.Status), flow.WaitingOn,
             StatusText.Label(flow.WaitingOn), Done(flow), Next(flow), (long)inStage.TotalSeconds, Span(inStage), flow.Ado?.Url,
-            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId);
+            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId) { Simulated = r.Simulated };
     }
 
     private static IReadOnlyList<string> Done(WorkflowState f)
@@ -216,7 +220,7 @@ public static class Reports
     {
         var from = new DateTimeOffset(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
         var to = from.AddDays(1);
-        var flows = requests.Where(r => r.Flow is not null).ToList();
+        var flows = requests.Where(r => r.Flow is not null && !r.Simulated).ToList(); // simulations are not counted
         bool On(DateTimeOffset t) => t >= from && t < to;
         int Count(string step) => flows.Count(r => r.Flow!.Events.Any(e => e.Step == step && On(e.At)));
 

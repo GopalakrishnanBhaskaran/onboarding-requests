@@ -51,6 +51,13 @@ public sealed record RequestView(
 
 public sealed record ActionItem(StatusLine Status, string Action);
 
+/// <param name="Reason">Why (required for a real request; kept in the audit trail).</param>
+/// <param name="Confirm">Must be true: deleting cannot be undone.</param>
+public sealed record DeleteRequestInput(string? Reason, bool? Confirm);
+
+public sealed record DeletedRequest(string RequestId, bool Simulated, string StatusAtDeletion, int ReviewRunsRemoved, int NotificationsRemoved, int IssuesRemoved,
+    int EscalationsRemoved, bool ResponseRecordKept, string Note);
+
 public static class Actions
 {
     public const string ApproveOwner = "ApproveOwner";
@@ -58,6 +65,8 @@ public static class Actions
     public const string IdTeamTask = "IdTeamTask";
     public const string RoleTeamTask = "RoleTeamTask";
     public const string Resubmit = "Resubmit";
+    /// <summary>Developer: delete this request (4 Nov 2026).</summary>
+    public const string Delete = "Delete";
 }
 
 /// <summary>
@@ -77,12 +86,77 @@ public sealed partial class WorkflowService(
 {
     public WorkflowSettings Settings => settings;
 
+    /// <summary>
+    /// The permission for this action on this request: the role's own, or — on a developer's simulation only — Simulate
+    /// (the developer acts for every stage; nothing is granted). Throws like <see cref="CallerContext.Require"/>.
+    /// </summary>
+    public static void RequireFor(CallerContext caller, AccessRequest r, Permission permission)
+    {
+        if (!Can(caller, r, permission)) caller.Require(r.ProjectId, permission);
+    }
+
+    public static bool Can(CallerContext caller, AccessRequest r, Permission permission) =>
+        caller.Has(r.ProjectId, permission) || (r.Simulated && caller.Has(r.ProjectId, Permission.Simulate));
+
+    /// <summary>A developer's simulation: submitted like a request, run with nothing written to Entra or Azure.</summary>
+    public Task<RequestView> SimulateAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct) =>
+        SubmitAsync(caller, projectId, input, cid, ct, simulated: true);
+
+    /// <summary>
+    /// Developer (4 Nov 2026, Gokul: "requests can be deleted"): deletes a request with its review runs, mails and issues; an
+    /// audit event keeps who, when, why and what it was. A real request needs a reason. Deleting does not remove access already
+    /// granted in Entra or Azure (Offboard user does), so a real request's response document record stays once it was approved.
+    /// </summary>
+    public async Task<DeletedRequest> DeleteAsync(CallerContext caller, string projectId, string requestId, DeleteRequestInput input, string cid, CancellationToken ct)
+    {
+        caller.Require(projectId, Permission.DeleteRequests);
+        var r = (await requests.LoadAsync(projectId, requestId, ct)).Value;
+        if (input.Confirm != true) throw AppException.Invalid("confirm must be true: deleting a request cannot be undone.");
+        var reason = SecretMasker.Apply(RequestService.Text(input.Reason, "reason", 500));
+        if (!r.Simulated && (reason is null || reason.Length < 5))
+            throw AppException.Invalid("A real request needs a reason (at least 5 characters): it is kept in the audit trail.");
+        var status = r.Flow is null ? "legacy v1" : StatusText.Label(r.Flow.Status);
+
+        // The request first, so the agent stops at once (its next save finds nothing); then what belongs to it.
+        await stores.Requests.DeleteAsync(projectId, requestId, ct);
+        async Task<int> RemoveAsync<T>(IDocumentStore<T> store, Func<T, bool> mine) where T : class, IDocument
+        {
+            var n = 0;
+            foreach (var d in (await store.ListAsync(projectId, ct)).Select(x => x.Value).Where(mine))
+                if (await store.DeleteAsync(d.PartitionKey, d.Id, ct)) n++;
+            return n;
+        }
+        var runs = await RemoveAsync(stores.Runs, x => x.RequestId == requestId);
+        var mails = await RemoveAsync(stores.Notifications, x => x.RequestId == requestId);
+        var issueCount = await RemoveAsync(stores.Issues, x => x.RequestId == requestId);
+        // Request-bound escalations: all of a simulation; of a real request only an undecided Prod one (nothing left to decide).
+        var escalations = await RemoveAsync(stores.Escalations, x => x.RequestId == requestId
+            && (r.Simulated || (x.Kind == EscalationKind.ProdWrite && x.Status == EscalationStatus.Open)));
+        var record = (await stores.ResponseDocument.GetAsync(projectId, requestId, ct))?.Value;
+        var keep = record is not null && record.State is not (ResponseState.PendingApproval or ResponseState.Rejected);
+        if (record is not null && !keep) await stores.ResponseDocument.DeleteAsync(projectId, requestId, ct);
+
+        var what = $"{(r.Simulated ? "simulation" : "request")} {requestId} at {status} ({r.AccessLevel} on {r.Resource}{(r.Environment is null ? "" : $", {r.Environment}")}, {r.DomainId})";
+        await stores.AuditEvents.CreateAsync(new AuditEvent
+        {
+            Id = AuditEvent.NewId(clock.UtcNow), ProjectId = projectId, At = clock.UtcNow, Actor = caller.DisplayName, Action = "request-deleted",
+            Target = $"request {requestId}", CorrelationId = cid,
+            Details = $"Deleted {what}. Reason: {reason ?? "-"}. Removed {runs} review run(s), {mails} mail(s), {issueCount} issue(s), {escalations} escalation(s); " +
+                      (record is null ? "no response document record." : keep ? "response document record kept (access may have been granted)." : "response document record removed."),
+        }, ct);
+        logger.LogInformation("request deleted request={RequestId} simulated={Simulated} by={UserId} cid={Cid}", requestId, r.Simulated, caller.UserId, cid);
+        return new DeletedRequest(requestId, r.Simulated, status, runs, mails, issueCount, escalations, keep,
+            r.Simulated ? "Simulation deleted." : "Request deleted. Access already granted in Entra or Azure stays: use Offboard user to remove it.");
+    }
+
     // ---- Stage 1 ------------------------------------------------------------------------------------------------
 
-    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct, string? bundleId = null)
+    /// <param name="advance">False: saved as Submitted only; the worker starts the review on its next run (bundle time budget).</param>
+    public async Task<RequestView> SubmitAsync(CallerContext caller, string projectId, RequestInput input, string cid, CancellationToken ct, string? bundleId = null,
+        bool advance = true, bool simulated = false)
     {
-        var created = await requests.CreateAsync(caller, projectId, input, ct, bundleId);
-        await AdvanceSavedAsync(created.Value, cid, ct);
+        var created = await requests.CreateAsync(caller, projectId, input, ct, bundleId, simulated);
+        if (advance) await AdvanceSavedAsync(created.Value, cid, ct);
         return await ViewAsync(caller, projectId, created.Value.Id, ct);
     }
 
@@ -97,15 +171,24 @@ public sealed partial class WorkflowService(
     /// The request is already saved: an agent error here goes on the issues list and the worker retries, instead of a
     /// 500 that makes the requester submit the same request again.
     /// </summary>
-    private async Task AdvanceSavedAsync(AccessRequest saved, string cid, CancellationToken ct)
+    private Task AdvanceSavedAsync(AccessRequest saved, string cid, CancellationToken ct) =>
+        AfterSavedAsync(saved.ProjectId, saved.Id, StatusText.Label(saved.Flow?.Status ?? RequestStatus.Submitted), c => agent.AdvanceAsync(saved.ProjectId, saved.Id, cid, c), ct);
+
+    /// <summary>
+    /// The person's action is saved: what follows (the response document, mails, the agent step) must not turn it into an
+    /// error page. Before 4 Nov 2026 an error there gave the Owner a 500 although the approval counted, Security was never
+    /// asked, and the Owner's retry was refused as "not an approver". Now it goes on the issues list and the agent repeats
+    /// it (an approval request is asked again on its next run; the worker continues every open request).
+    /// </summary>
+    private async Task AfterSavedAsync(string projectId, string requestId, string where, Func<CancellationToken, Task> work, CancellationToken ct)
     {
         try
         {
-            await agent.AdvanceAsync(saved.ProjectId, saved.Id, cid, ct);
+            await work(ct);
         }
-        catch (Exception e) when (e is not (OperationCanceledException or AppException))
+        catch (Exception e) when (e is not AppException && Failures.NotCancelled(e, ct))
         {
-            await agent.RecordErrorAsync(saved, e, ct);
+            await agent.RecordErrorAsync(projectId, requestId, where, e, ct);
         }
     }
 
@@ -131,9 +214,10 @@ public sealed partial class WorkflowService(
             throw AppException.Conflict("wrong_stage", $"The request is waiting for the {stage} approval, not {asked}.");
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
-        var authorized = stage == ApprovalStage.Owner
+        // A simulation: the developer acts for the Owner and Security (nothing is granted from it).
+        var authorized = (r.Simulated && caller.Has(projectId, Permission.Simulate)) || (stage == ApprovalStage.Owner
             ? caller.Has(projectId, Permission.ApproveAsOwner) && caller.Is(r.Owner)
-            : caller.Has(projectId, Permission.ApproveAsSecurity);
+            : caller.Has(projectId, Permission.ApproveAsSecurity));
         if (!authorized)
         {
             // Nobody else approves: ignore it, log it and alert Security.
@@ -151,7 +235,7 @@ public sealed partial class WorkflowService(
         if (decision == ApprovalDecision.Rejected && remarks is null) throw AppException.Invalid("Remarks are required when rejecting.");
         if (flow.Scope is null || input.ReviewRunId != flow.Scope.ReviewRunId)
             throw AppException.Conflict("stale_review", "The AI review changed since you opened this page. Refresh and read the current summary before deciding.");
-        if (stage == ApprovalStage.Security && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
+        if (stage == ApprovalStage.Security && !r.Simulated && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
             throw AppException.Conflict("same_approver", "You gave the Owner approval. The Security approval must come from a different person.");
 
         // Mapping sheet changed after the AI review (or the reviewed row was retired or ended): re-run the review before continuing.
@@ -210,11 +294,14 @@ public sealed partial class WorkflowService(
         }
 
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
-        await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, ct);
-        // The decision ends the wait: an "approval past SLA" issue for this request is closed (it stays in the daily counts).
-        effects.Add(c => issues.ResolveAsync(projectId, requestId, [IssueKind.ApprovalSlaBreached], c));
-        foreach (var e in effects) await e(ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, $"{stage} approval", async c =>
+        {
+            await UpdateResponseRecordAsync(projectId, requestId, caller.UserId, record, c);
+            // The decision ends the wait: an "approval past SLA" issue for this request is closed (it stays in the daily counts).
+            effects.Add(x => issues.ResolveAsync(projectId, requestId, [IssueKind.ApprovalSlaBreached], x));
+            foreach (var e in effects) await e(c);
+            await agent.AdvanceAsync(projectId, requestId, cid, c);
+        }, ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -229,8 +316,9 @@ public sealed partial class WorkflowService(
 
     public async Task<RequestView> PickUpAsync(CallerContext caller, string projectId, string requestId, AppRole team, CancellationToken ct)
     {
-        caller.Require(projectId, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         var current = await requests.LoadAsync(projectId, requestId, ct);
+        RequireFor(caller, current.Value, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
         var (flow, task) = OpenTask(current.Value, team);
         if (task.PickedUpAt is null)
         {
@@ -250,8 +338,9 @@ public sealed partial class WorkflowService(
     /// </summary>
     public async Task<RequestView> HandBackAsync(CallerContext caller, string projectId, string requestId, AppRole team, CancellationToken ct)
     {
-        caller.Require(projectId, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         var current = await requests.LoadAsync(projectId, requestId, ct);
+        RequireFor(caller, current.Value, team == AppRole.IdTeam ? Permission.WorkIdTeamTasks : Permission.WorkRoleTeamTasks);
         var (flow, task) = OpenTask(current.Value, team);
         if (!(team == AppRole.IdTeam ? settings.AgentProvisioning : settings.AgentRoleAssignment))
             throw AppException.Conflict("agent_off", $"The AI agent's {(team == AppRole.IdTeam ? "provisioning" : "role assignment")} is switched off: your team does this task.");
@@ -269,8 +358,9 @@ public sealed partial class WorkflowService(
 
     public async Task<RequestView> ReportIdTeamAsync(CallerContext caller, string projectId, string requestId, IdTeamReportInput input, string cid, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.WorkIdTeamTasks);
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         var current = await requests.LoadAsync(projectId, requestId, ct);
+        RequireFor(caller, current.Value, Permission.WorkIdTeamTasks);
         var (flow, task) = OpenTask(current.Value, AppRole.IdTeam);
         await RequireProdApprovedAsync(current.Value, ct);
         var now = clock.UtcNow;
@@ -324,14 +414,15 @@ public sealed partial class WorkflowService(
         var next = (flow with { IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, caller.UserId, "id-team-reported", tap is null ? "ID team recorded completion." : "ID team recorded completion and TAP metadata (issued, expiry, one-time, issued-by).");
         await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "ID team report", c => agent.AdvanceAsync(projectId, requestId, cid, c), ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
     public async Task<RequestView> ReportRoleTeamAsync(CallerContext caller, string projectId, string requestId, RoleTeamReportInput input, string cid, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.WorkRoleTeamTasks);
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         var current = await requests.LoadAsync(projectId, requestId, ct);
+        RequireFor(caller, current.Value, Permission.WorkRoleTeamTasks);
         var (flow, task) = OpenTask(current.Value, AppRole.RoleTeam);
         await RequireProdApprovedAsync(current.Value, ct);
         var roles = (input.AssignedRoles ?? [])
@@ -357,7 +448,7 @@ public sealed partial class WorkflowService(
         var next = (flow with { RoleTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, caller.UserId, "role-team-reported", "Role assignment team recorded the assignment and updated the response document.");
         await SaveAsync(current, current.Value with { Flow = next, UpdatedAt = now }, ct);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "role team report", c => agent.AdvanceAsync(projectId, requestId, cid, c), ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -390,9 +481,12 @@ public sealed partial class WorkflowService(
             .To(status, waiting, now, caller.UserId, "resume",
                 $"Resumed by {caller.DisplayName} after a developer fix: back to {StatusText.Label(status)}; the agent re-runs this stage's checks.");
         await SaveAsync(current, r with { Flow = next, UpdatedAt = now }, ct);
-        await issues.ResolveAsync(projectId, requestId, [IssueKind.NeedsDeveloper], ct);
         logger.LogInformation("resume request={RequestId} to={Status} by={UserId} cid={Cid}", requestId, status, caller.UserId, cid);
-        await agent.AdvanceAsync(projectId, requestId, cid, ct);
+        await AfterSavedAsync(projectId, requestId, "resume", async c =>
+        {
+            await issues.ResolveAsync(projectId, requestId, [IssueKind.NeedsDeveloper], c);
+            await agent.AdvanceAsync(projectId, requestId, cid, c);
+        }, ct);
         return await ViewAsync(caller, projectId, requestId, ct);
     }
 
@@ -456,7 +550,7 @@ public sealed partial class WorkflowService(
         var items = new List<ActionItem>();
         foreach (var projectId in caller.ProjectsWith(Permission.ViewRequests))
             foreach (var r in await stores.Requests.ListAsync(projectId, ct))
-                foreach (var action in ActionsFor(caller, r.Value))
+                foreach (var action in ActionsFor(caller, r.Value).Where(a => a != Actions.Delete)) // deleting is never "waiting on you"
                     items.Add(new ActionItem(Reports.StatusLine(r.Value, now), action));
         return items.OrderBy(i => i.Status.UpdatedAt).ToList();
     }
@@ -500,14 +594,17 @@ public sealed partial class WorkflowService(
         if (f is null) return [];
         var p = r.ProjectId;
         var list = new List<string>();
-        if (f.Status == RequestStatus.AwaitingOwner && caller.Has(p, Permission.ApproveAsOwner) && caller.Is(r.Owner)) list.Add(Actions.ApproveOwner);
-        if (f.Status == RequestStatus.AwaitingSecurity && caller.Has(p, Permission.ApproveAsSecurity) && f.CurrentApproval(ApprovalStage.Owner)?.By != caller.UserId)
+        // A simulation: the developer acts for every stage (Simulate). Never on a real request.
+        var sim = r.Simulated && caller.Has(p, Permission.Simulate);
+        if (f.Status == RequestStatus.AwaitingOwner && (sim || (caller.Has(p, Permission.ApproveAsOwner) && caller.Is(r.Owner)))) list.Add(Actions.ApproveOwner);
+        if (f.Status == RequestStatus.AwaitingSecurity && (sim || (caller.Has(p, Permission.ApproveAsSecurity) && f.CurrentApproval(ApprovalStage.Owner)?.By != caller.UserId)))
             list.Add(Actions.ApproveSecurity);
-        if (f.Status == RequestStatus.WithIdTeam && f.WaitingOn == WaitingOn.IdTeam && f.IdTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkIdTeamTasks))
+        if (f.Status == RequestStatus.WithIdTeam && f.WaitingOn == WaitingOn.IdTeam && f.IdTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && Can(caller, r, Permission.WorkIdTeamTasks))
             list.Add(Actions.IdTeamTask);
-        if (f.Status == RequestStatus.WithRoleTeam && f.WaitingOn == WaitingOn.RoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && caller.Has(p, Permission.WorkRoleTeamTasks))
+        if (f.Status == RequestStatus.WithRoleTeam && f.WaitingOn == WaitingOn.RoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && Can(caller, r, Permission.WorkRoleTeamTasks))
             list.Add(Actions.RoleTeamTask);
-        if (f.Status == RequestStatus.Returned && caller.Has(p, Permission.SubmitRequests)) list.Add(Actions.Resubmit);
+        if (f.Status == RequestStatus.Returned && Can(caller, r, Permission.SubmitRequests)) list.Add(Actions.Resubmit);
+        if (caller.Has(p, Permission.DeleteRequests)) list.Add(Actions.Delete);
         return list;
     }
 

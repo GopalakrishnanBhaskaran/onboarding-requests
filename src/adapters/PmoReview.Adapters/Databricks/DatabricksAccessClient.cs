@@ -11,12 +11,12 @@ namespace PmoReview.Adapters.Databricks;
 
 /// <summary>
 /// Databricks REST for a request's group (v1.2, worker only, held only with <c>AGENT_DATABRICKS</c>; the worker's managed
-/// identity is a Databricks service principal, F118). Calls, all read before written, all add-only:
+/// identity is a Databricks service principal, F132). Calls, all read before written, all add-only:
 /// <list type="bullet">
 /// <item>A3 account: <c>GET /api/2.0/identity/accounts/{account}/external-groups/{entra object id}</c> adds the Entra group (F111).</item>
 /// <item>A3 workspace: <c>GET|PUT /api/2.0/accounts/{account}/workspaces/{id}/permissionassignments[/principals/{id}]</c>, USER only (F112).</item>
-/// <item>A4: workspace SCIM <c>GET /api/2.0/preview/scim/v2/Groups?filter=displayName eq "…"</c>, <c>PATCH …/Groups/{id}</c> add entitlements (F114).</item>
-/// <item>A5: <c>GET /api/2.1/unity-catalog/effective-permissions/{type}/{name}?principal=</c>, <c>PATCH /api/2.1/unity-catalog/permissions/{type}/{name}</c> add (F117).</item>
+/// <item>A4: workspace SCIM <c>GET /api/2.0/preview/scim/v2/Groups?filter=displayName eq "…"</c>, <c>PATCH …/Groups/{id}</c> add entitlements (F128).</item>
+/// <item>A5: <c>GET /api/2.1/unity-catalog/effective-permissions/{type}/{name}?principal=</c>, <c>PATCH /api/2.1/unity-catalog/permissions/{type}/{name}</c> add (F131).</item>
 /// </list>
 /// Never a remove, never ADMIN, never a name that is not a Unity Catalog name. Errors are categories only.
 /// </summary>

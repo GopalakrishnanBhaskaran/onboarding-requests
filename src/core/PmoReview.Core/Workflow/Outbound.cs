@@ -71,6 +71,19 @@ public interface INotificationSender
     Task SendAsync(Notification notification, CancellationToken ct);
 }
 
+/// <summary>
+/// The worker's mail settings are incomplete (e.g. NOTIFY_SENDER=AcsEmail without ACS_ENDPOINT or NOTIFY_FROM). Before
+/// 4 Nov 2026 that threw when the worker built its parts, so every run failed before the agent started. Now the agent runs,
+/// and each mail fails with this reason (visible on the request page and, after 3 attempts, on the Issues list).
+/// </summary>
+public sealed class MisconfiguredSender(string reason) : INotificationSender
+{
+    public string Name => "Misconfigured";
+    public bool Delivers => true;
+    public string Reason => reason;
+    public Task SendAsync(Notification notification, CancellationToken ct) => throw new OutboundException($"MailNotConfigured: {reason}");
+}
+
 /// <summary>ACTIVE in the pilot: nothing leaves the app; every notification stays visible on the request page.</summary>
 public sealed class OutboxOnlySender : INotificationSender
 {
@@ -146,6 +159,10 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
             all.AddRange(await stores.Notifications.ListAsync(project.Value.ProjectId, ct));
         }
         var pending = all.Where(n => n.Value.Status == NotificationStatus.Pending).ToList();
+        // A developer's simulation is never mailed (no real Owner, team or joiner is told; the ACS limit is kept for real mail).
+        var simulated = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var p in pending.Select(n => (n.Value.ProjectId, n.Value.RequestId)).Where(x => x.RequestId is not null).Distinct())
+            if ((await stores.Requests.GetAsync(p.ProjectId, p.RequestId!, ct))?.Value.Simulated == true) simulated.Add(p.RequestId!);
         var room = sender.Delivers ? MailBudget.Room(all.Select(n => n.Value), clock.UtcNow, limits ?? MailLimits.None, reserve) : 0;
         var throttled = false;
         var waiting = new List<Notification>();
@@ -156,6 +173,10 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
             if (!sender.Delivers || n.To.Count == 0)
             {
                 next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow };
+            }
+            else if (n.RequestId is not null && simulated.Contains(n.RequestId))
+            {
+                next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow, LastError = "Simulation: kept in the app, not mailed" };
             }
             else if (throttled || room < MailLimits.Mails(Outgoing(n).To.Count))
             {
@@ -180,14 +201,17 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
                     if (n.LastError == "MailThrottled") continue;
                     next = n with { LastError = "MailThrottled" };
                 }
-                catch (OutboundException e)
+                catch (Exception e) when (e is not OutboundException { Category: "MailThrottled" } && Failures.NotCancelled(e, ct))
                 {
+                    // A sender error (OutboundException), or one it did not classify (e.g. ArgumentException for an empty
+                    // address): this mail uses an attempt; the queue goes on with the next one instead of stopping on it.
+                    var category = e is OutboundException o ? o.Category : $"SendError:{e.GetType().Name}";
                     var attempts = n.Attempts + 1;
-                    next = n with { Attempts = attempts, LastError = e.Category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
-                    logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", e.Category, n.Kind, n.RequestId, attempts);
+                    next = n with { Attempts = attempts, LastError = category, Status = attempts >= maxAttempts ? NotificationStatus.Failed : NotificationStatus.Pending };
+                    logger.LogWarning("notify send failed {Category} kind={Kind} request={RequestId} attempt={Attempt}", category, n.Kind, n.RequestId, attempts);
                     if (attempts >= maxAttempts)
                         await issues.RecordAsync(n.ProjectId, n.RequestId, $"notify:{n.Id}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
-                            $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({e.Category}).", null, ct);
+                            $"{n.Kind} notification could not be sent after {maxAttempts} attempts ({category}).", null, ct);
                 }
             }
             try
@@ -252,7 +276,7 @@ public sealed class AdoSync(DataStores stores, IWorkItemTracker tracker, IssueLo
             {
                 var r = v.Value;
                 var flow = r.Flow;
-                if (flow is null) continue;
+                if (flow is null || r.Simulated) continue; // a simulation is not tracked in Azure DevOps
                 var ado = flow.Ado ?? new AdoLink();
                 var close = flow.IsFinal;
                 if (ado.SyncedEvents >= flow.Events.Count && (!close || ado.Closed)) continue;
@@ -333,22 +357,78 @@ public sealed class DailySummaryJob(DataStores stores, Notifier notifier, IClock
     }
 }
 
-public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary);
-
-/// <summary>One worker cycle: agent steps for open requests, notifications, Azure DevOps, daily summary.</summary>
-public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null,
-    Offboarding.OffboardingJob? offboarding = null)
+public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary)
 {
+    /// <summary>Jobs of this cycle that failed (each logged and on the issues list); every other job still ran.</summary>
+    public IReadOnlyList<string> Failed { get; init; } = [];
+}
+
+/// <summary>
+/// One worker cycle: group resolution, offboarding, agent steps for open requests, notifications, Azure DevOps, daily
+/// summary. Each job runs on its own: one that fails (a poison document, Graph, ARM or Cosmos down) is logged and put on
+/// every project's issues list, and the next jobs still run. Before 4 Nov 2026 a failing group resolution or offboarding
+/// run stopped the cycle, so the agent advanced no request at all ("the site did not start the agent").
+/// </summary>
+public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null,
+    Offboarding.OffboardingJob? offboarding = null, DataStores? stores = null, IssueLog? issues = null, ILogger<WorkflowWorker>? logger = null)
+{
+    public const string GroupsJob = "group resolution", OffboardingJobName = "offboarding", AgentJob = "request steps", MailJob = "notifications",
+        AdoJob = "Azure DevOps sync", DailyJob = "daily summary";
+
     public async Task<WorkerSummary> RunOnceAsync(string correlationId, CancellationToken ct)
     {
+        var failed = new List<string>();
+        async Task<T> Job<T>(string name, Func<Task<T>> run, T none)
+        {
+            try
+            {
+                return await run();
+            }
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
+            {
+                failed.Add(name);
+                await ReportAsync(name, e, correlationId, ct);
+                return none;
+            }
+        }
+
         // v1.1 (F1): group names resolved in Entra first, so the selector and the escalations are fresh.
-        if (groups is not null) await groups.RunOnceAsync(ct);
+        if (groups is not null) await Job(GroupsJob, () => groups.RunOnceAsync(ct), 0);
         // v1.1 (F5): offboarding plans and confirmed runs, before the requests (it closes the person's open ones).
-        if (offboarding is not null) await offboarding.RunOnceAsync(ct);
-        var advanced = await agent.RunOnceAsync(correlationId, ct);
-        var sent = await notifications.RunOnceAsync(ct);
-        var items = await ado.RunOnceAsync(ct);
-        var summary = await daily.RunOnceAsync(ct);
-        return new WorkerSummary(advanced, sent, items, summary);
+        if (offboarding is not null) await Job(OffboardingJobName, () => offboarding.RunOnceAsync(ct), 0);
+        var advanced = await Job(AgentJob, () => agent.RunOnceAsync(correlationId, ct), 0);
+        var sent = await Job(MailJob, () => notifications.RunOnceAsync(ct), 0);
+        var items = await Job(AdoJob, () => ado.RunOnceAsync(ct), 0);
+        var summary = await Job(DailyJob, () => daily.RunOnceAsync(ct), false);
+        return new WorkerSummary(advanced, sent, items, summary) { Failed = failed };
     }
+
+    /// <summary>Never silent, never throws: the log, and one counted issue per project and job + error type.</summary>
+    private async Task ReportAsync(string job, Exception e, string correlationId, CancellationToken ct)
+    {
+        var type = e.GetType().Name;
+        logger?.LogError("worker: {Job} failed {ExceptionType} cid={CorrelationId}; the other jobs still run", job, type, correlationId);
+        if (stores is null || issues is null) return;
+        try
+        {
+            var message = e.Message.Length > 300 ? e.Message[..300] + "…" : e.Message;
+            foreach (var p in await stores.Projects.ListAllAsync(ct))
+                await issues.RecordAsync(p.Value.ProjectId, null, $"worker-job:{job}:{type}", IssueKind.NeedsDeveloper, IssueSeverity.High,
+                    $"The AI agent's {job} job failed in a worker run ({type}). The other jobs still ran and every run (about 5 minutes) retries it; a developer is needed while this recurs (see last seen).",
+                    $"{e.GetType().FullName}: {message}", ct);
+        }
+        catch (Exception inner) when (Failures.NotCancelled(inner, ct))
+        {
+            logger?.LogError("worker: could not record the {Job} failure ({ExceptionType})", job, inner.GetType().Name);
+        }
+    }
+}
+
+public static class Failures
+{
+    /// <summary>
+    /// An error to handle, not the host stopping: a timeout of an HTTP or Cosmos call is an OperationCanceledException too
+    /// (TaskCanceledException, CosmosOperationCanceledException) while the run's own token is not cancelled.
+    /// </summary>
+    public static bool NotCancelled(Exception e, CancellationToken ct) => e is not OperationCanceledException || !ct.IsCancellationRequested;
 }

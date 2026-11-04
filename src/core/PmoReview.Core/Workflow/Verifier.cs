@@ -8,6 +8,7 @@ namespace PmoReview.Core.Workflow;
 public static class VerifyCodes
 {
     public const string UserId = "ID_USER_NAME";
+    public const string Simulated = "SIMULATED";
     public const string GroupName = "ID_GROUP_NAME";
     public const string GroupConvention = "ID_GROUP_CONVENTION";
     public const string MembershipReported = "ID_MEMBERSHIP_REPORTED";
@@ -30,6 +31,10 @@ public static class VerifyCodes
 /// <summary>Verification outcome. <see cref="Pending"/>: something cannot be checked yet (no Entra reader here: the worker checks it).</summary>
 public sealed record Verification(IReadOnlyList<CheckResult> Checks)
 {
+    /// <summary>A developer's simulation: nothing was created or assigned, so nothing is read in Entra or Azure (4 Nov 2026).</summary>
+    public static Verification Simulated(string group, string what) =>
+        new([new CheckResult(VerifyCodes.Simulated, group, CheckStatus.Pass, $"SIMULATION: {what} not checked in Entra or Azure (nothing was created or assigned).")]);
+
     public bool Failed => Checks.Any(c => c.Status == CheckStatus.Fail);
     public bool Pending => !Failed && Checks.Any(c => c.Status == CheckStatus.Pending);
     public bool Passed => !Failed && !Pending;
@@ -131,7 +136,7 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
         if (security is null || security.Decision != ApprovalDecision.Approved || tap.IssuedAt < Minute(security.At))
             problems.Add("The TAP was issued before all approvals were complete.");
         if (!report.AddedToGroup) problems.Add("The TAP must be issued only after the group membership.");
-        if (!tap.OneTime) problems.Add("The TAP must be one-time use.");
+        if (!tap.OneTime) problems.Add($"The TAP must be one-time use. {Messages.OneTimeTapHow}");
         var lifetime = (tap.ExpiresAt - tap.IssuedAt).TotalMinutes;
         var limit = TapLimit(flow);
         if (lifetime > limit) problems.Add($"TAP lifetime is {lifetime:0} minutes; use the shortest lifetime (at most {limit}).");
@@ -156,7 +161,7 @@ public sealed class Verifier(IDirectoryReader? directory, IRoleAssignmentReader?
         const string G = CheckGroups.IdTeam;
         if (tap is null) return new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Pass, "No TAP on the account now (already used or removed).");
         var problems = new List<string>();
-        if (tap.IsUsableOnce == false) problems.Add("Entra shows the TAP is not one-time use.");
+        if (tap.IsUsableOnce == false) problems.Add($"Entra shows the TAP is not one-time use. {Messages.OneTimeTapHow} Then record the new pass's metadata here.");
         if (tap.LifetimeMinutes > limit) problems.Add($"Entra shows a TAP lifetime of {tap.LifetimeMinutes} minutes (maximum {limit}).");
         return problems.Count == 0
             ? new CheckResult(VerifyCodes.EntraTap, G, CheckStatus.Pass, "Entra shows a one-time TAP within the lifetime limit.")

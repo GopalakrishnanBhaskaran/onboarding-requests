@@ -7,7 +7,7 @@ using Xunit;
 
 namespace PmoReview.Tests.Contract;
 
-/// <summary>v1.2 Databricks adapter against mocked REST: exact calls (F111, F112, F114, F117), add-only, categories.</summary>
+/// <summary>v1.2 Databricks adapter against mocked REST: exact calls (F111, F112, F128, F131), add-only, categories.</summary>
 public class DatabricksContractTests
 {
     private const string Account = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";

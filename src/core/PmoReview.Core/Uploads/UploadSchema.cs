@@ -92,7 +92,7 @@ public static partial class UploadSchema
             var type = e.Enum("ResourceGroupType", ResourceGroupTypes.Values);
             var env = e.Enum("Environment", UploadEnvironments);
             if (env is not null && project.Environments.Count > 0 && Environments.Canonical(project, env) is null)
-                e.Add("Environment", "InvalidValue", $"The project has no environment {env} (it has {string.Join(", ", project.Environments)}).");
+                e.Add("Environment", "InvalidValue", $"The project has no environment {env} (it has {string.Join(", ", Environments.Of(project))}).");
             var level = e.Enum("AccessLevel", AccessLevels.Ordered);
             var group = e.Required("EntraGroupName", 256);
             var objectId = e.Optional("EntraGroupObjectId", 36);

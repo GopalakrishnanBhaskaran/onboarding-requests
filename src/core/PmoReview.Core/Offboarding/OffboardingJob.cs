@@ -42,7 +42,17 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         foreach (var project in (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value))
         {
             if (!Tenants.Connected(project, settings.AgentTenantId)) continue; // the agent reads and writes only its own tenant
-            foreach (var v in (await stores.OffboardingRuns.ListAsync(project.ProjectId, ct)).Where(r => r.Value.Status is OffboardingStatus.Planning or OffboardingStatus.Executing))
+            IReadOnlyList<Versioned<OffboardingRun>> open;
+            try
+            {
+                open = (await stores.OffboardingRuns.ListAsync(project.ProjectId, ct)).Where(r => r.Value.Status is OffboardingStatus.Planning or OffboardingStatus.Executing).ToList();
+            }
+            catch (Exception e) when (Failures.NotCancelled(e, ct))
+            {
+                await ErrorAsync(project, null, e, ct); // this project's runs wait for the next worker run; the others go on
+                continue;
+            }
+            foreach (var v in open)
             {
                 try
                 {
@@ -65,6 +75,13 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 {
                     // Another worker instance moved this run on; the next run looks again.
                 }
+                catch (Exception e) when (Failures.NotCancelled(e, ct))
+                {
+                    // An error no step expects (a Cosmos or ARM error, a document it cannot handle): never the end of the worker
+                    // run. Logged and on the issues list; the run stays where it is and is tried again, at most 3 times
+                    // (each step reads before it writes, so a repeat changes nothing twice); then people take over.
+                    await ErrorAsync(project, v.Value, e, ct);
+                }
             }
             // Finished runs (this one's, and those that finished before this step existed): the response document follows.
             foreach (var v in (await stores.OffboardingRuns.ListAsync(project.ProjectId, ct))
@@ -77,6 +94,11 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 catch (ConcurrencyException)
                 {
                     // A record or the run changed meanwhile: the next run looks again (revoked records are skipped then).
+                }
+                catch (Exception e) when (Failures.NotCancelled(e, ct))
+                {
+                    // Never the end of the worker run: logged and on the issues list; the next run looks again.
+                    await ErrorAsync(project, v.Value, e, ct);
                 }
             }
         }
@@ -116,6 +138,32 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         await SaveAsync(project, v, run with { AccessRecordsRevokedAt = now, UpdatedAt = now }, "offboarding-access-records",
             $"{revoked.Count} access record(s) marked Revoked{(revoked.Count == 0 ? "" : $": {string.Join("; ", revoked)}")}" +
             $"{(kept.Count == 0 ? "" : $"; kept (still a member): {string.Join("; ", kept)}")}", ct);
+    }
+
+    /// <summary>
+    /// An unexpected error on one run (or on reading a project's runs): logged and counted on the issues list. The run
+    /// itself counts it like a failed read (<see cref="TransientAsync"/>): retried on the next worker runs, then Failed (plan:
+    /// nothing changed) or Partially completed (execute: what is done is in its steps). Never throws.
+    /// </summary>
+    private async Task ErrorAsync(Project project, OffboardingRun? run, Exception e, CancellationToken ct)
+    {
+        var type = e.GetType().Name;
+        logger.LogError("offboarding: run={RunId} project={ProjectId} failed {ExceptionType}; the other runs and jobs go on", run?.Id, project.ProjectId, type);
+        try
+        {
+            var what = run is null ? "the offboarding runs of this project could not be read" : $"offboarding run {run.Id} of {run.EnterpriseId} hit an error";
+            await issues.RecordAsync(project.ProjectId, null, $"offboarding-error:{run?.Id ?? "list"}:{type}", IssueKind.NeedsDeveloper, IssueSeverity.High,
+                $"The AI agent: {what} ({type}). Nothing else was held up; the next worker run tries again (at most 3 times for a run).",
+                $"{e.GetType().FullName}: {(e.Message.Length > 300 ? e.Message[..300] + "…" : e.Message)}", ct);
+            if (run is null) return;
+            var fresh = await stores.OffboardingRuns.GetAsync(project.ProjectId, run.Id, ct);
+            if (fresh?.Value.Status is OffboardingStatus.Planning or OffboardingStatus.Executing)
+                await TransientAsync(project, fresh, fresh.Value.Status == OffboardingStatus.Planning ? "plan" : "execute", type, ct);
+        }
+        catch (Exception inner) when (Failures.NotCancelled(inner, ct))
+        {
+            logger.LogError("offboarding: could not record the error of run={RunId} ({ExceptionType})", run?.Id, inner.GetType().Name);
+        }
     }
 
     // ---- plan (dry run: reads only) ---------------------------------------------------------------------------------
@@ -263,8 +311,16 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                     "offboarding-failed", "account changed", ct);
                 return;
             }
-            memberships = deleted ? [] : await reader.MembershipsAsync(run.ObjectId!, ct);
-            taps = deleted ? [] : await reader.TapMethodIdsAsync(run.ObjectId!, ct);
+            try
+            {
+                memberships = deleted ? [] : await reader.MembershipsAsync(run.ObjectId!, ct);
+                taps = deleted ? [] : await reader.TapMethodIdsAsync(run.ObjectId!, ct);
+            }
+            catch (DirectoryReadException e) when (e.Category == "GraphNotFound" && DeletedHere(run))
+            {
+                // The search still lists the account this run deleted (replication), but reading it by id is a 404: it is gone.
+                (memberships, taps) = ([], []);
+            }
         }
         catch (DirectoryReadException e)
         {
@@ -393,22 +449,34 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             var deleteDone = DoneHere(Delete);
             if (user is not null && user.ObjectId == run.ObjectId)
             {
-                if (deleteDone) { leftovers.Add("the account still exists although it was deleted (replication can lag; look again)"); lagging++; }
-                if (user.AccountEnabled)
+                var found = new List<string>();
+                var lag = 0;
+                try
                 {
-                    leftovers.Add("the account is still enabled");
-                    if (DoneHere(Disable)) lagging++;
-                }
-                foreach (var m in await reader.MembershipsAsync(run.ObjectId!, ct))
-                    if (m.Direct || m.NotChangeable is not null)
+                    if (deleteDone) { found.Add("the account still exists although it was deleted (replication can lag; look again)"); lag++; }
+                    if (user.AccountEnabled)
                     {
-                        leftovers.Add($"still in {m.DisplayName}{(m.NotChangeable is null ? "" : $" ({m.NotChangeable})")}");
-                        if (m.NotChangeable is null && DoneHere(Membership, m.GroupObjectId)) lagging++;
+                        found.Add("the account is still enabled");
+                        if (DoneHere(Disable)) lag++;
                     }
-                if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0)
+                    foreach (var m in await reader.MembershipsAsync(run.ObjectId!, ct))
+                        if (m.Direct || m.NotChangeable is not null)
+                        {
+                            found.Add($"still in {m.DisplayName}{(m.NotChangeable is null ? "" : $" ({m.NotChangeable})")}");
+                            if (m.NotChangeable is null && DoneHere(Membership, m.GroupObjectId)) lag++;
+                        }
+                    if ((await reader.TapMethodIdsAsync(run.ObjectId!, ct)).Count > 0)
+                    {
+                        found.Add("a Temporary Access Pass is still registered");
+                        if (DoneHere(Tap)) lag++;
+                    }
+                    leftovers.AddRange(found);
+                    lagging += lag;
+                }
+                catch (DirectoryReadException e) when (e.Category == "GraphNotFound" && deleteDone)
                 {
-                    leftovers.Add("a Temporary Access Pass is still registered");
-                    if (DoneHere(Tap)) lagging++;
+                    // The user search still lists the account this run deleted (replication), but reading it by id is a 404:
+                    // it is deleted. Before 4 Nov 2026 this counted as a read outage and the run ended Partially completed.
                 }
             }
             var (assignments, unreadable) = await AssignmentsAsync(run.ObjectId!, ct);
@@ -450,7 +518,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             var e = new Escalation
             {
                 Id = Escalation.MakeId(EscalationKind.OffboardingLeftover, $"{project.ProjectId}|{run.Id}"), ProjectId = project.ProjectId, Kind = EscalationKind.OffboardingLeftover,
-                User = run.EnterpriseId, Reason = $"Offboarding {run.Id} left {leftovers.Count} thing(s): {string.Join("; ", leftovers)}. No completion mail was sent.",
+                User = run.EnterpriseId, Reason = $"Offboarding {run.Id}{Ref(run)} left {leftovers.Count} thing(s): {string.Join("; ", leftovers)}. No completion mail was sent.",
                 RequestedBy = Actor, CreatedAt = now, CorrelationId = run.CorrelationId, IsSample = project.IsSample,
             };
             try { await stores.Escalations.CreateAsync(e, ct); } catch (DocumentConflictException) { /* raised already */ }
@@ -468,7 +536,8 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
         if (to.Count > 0)
         {
             await notifier.EnqueueAsync(project.ProjectId, null, $"offboarding:{run.Id}", NotificationKind.OffboardingCompleted, to, $"Offboarding completed: {name}",
-                $"Offboarding completed for {name} ({run.EnterpriseId}) at {Messages.Time(now)}. Reference {run.CorrelationId}.", ct);
+                $"Offboarding completed for {name} ({run.EnterpriseId}) at {Messages.Time(now)}. Reference {run.CorrelationId}." +
+                (run.Reason is null ? "" : $" Reason: {OffboardingReasons.Label(run.Reason)}.") + (run.Ticket is null ? "" : $" Ticket: {run.Ticket}."), ct);
             notified = true;
         }
         else
@@ -482,7 +551,11 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
 
     // ---- helpers -------------------------------------------------------------------------------------------------------
 
-    /// <summary>A read failed (Graph or ARM unavailable): the run stays where it is and the next worker run tries again, at most 3 times.</summary>
+    private static string Ref(OffboardingRun run) => run.Ticket is null ? "" : $" (ticket {run.Ticket})";
+
+    private static bool DeletedHere(OffboardingRun run) => run.Steps.Any(s => s.Name == Delete && s.Result == OffboardingStepResult.Done);
+
+    /// <summary>A read failed (Graph or ARM unavailable) or an unexpected error: the run stays where it is and the next worker run tries again, at most 3 times.</summary>
     private async Task TransientAsync(Project project, Versioned<OffboardingRun> v, string phase, string category, CancellationToken ct)
     {
         var run = v.Value;
@@ -494,7 +567,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             return;
         }
         var now = clock.UtcNow;
-        var leftovers = phase == "plan" ? [] : new List<string> { $"the {phase} could not read Entra or Azure ({category}): what was done is in the steps; check the rest by hand" };
+        var leftovers = phase == "plan" ? [] : new List<string> { $"the {phase} could not finish ({category}): what was done is in the steps; check the rest by hand" };
         await SaveAsync(project, v, run with
         {
             Status = phase == "plan" ? OffboardingStatus.Failed : OffboardingStatus.PartiallyCompleted, Attempts = attempts, Leftovers = leftovers, FinishedAt = now, UpdatedAt = now,

@@ -295,6 +295,11 @@ public sealed record AccessRequest : IDocument
     public bool Guest { get; init; }
     /// <summary>v1.1 (F1): requests submitted together from one Resource* selection share this id (one request per resolved group).</summary>
     public string? BundleId { get; init; }
+    /// <summary>
+    /// A developer's simulation (set by the server on <c>POST …/requests/simulate</c>, never from the body). The agent writes
+    /// nothing to Entra or Azure for it, keeps it out of the response document, ADO and the daily counts, and its mails stay in the app.
+    /// </summary>
+    public bool Simulated { get; init; }
     public required string CreatedBy { get; init; }
     /// <summary>Requester's sign-in name (notifications).</summary>
     public string? CreatedByName { get; init; }

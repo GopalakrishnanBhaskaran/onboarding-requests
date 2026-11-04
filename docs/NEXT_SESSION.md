@@ -1,10 +1,91 @@
-# Next session — handoff (updated 31 Oct 2026: API on .NET 10 and account deletion switch, both code only; v1.1 live, agent offboarding switched on)
+# Next session — handoff (updated 31 Oct 2026: API back on .NET 9, offboarding "Make a new plan", Databricks + Fabric merged — code only; v1.1 live, agent offboarding and account deletion switched on)
+
+## 4 Nov 2026 — handoff (session on branch `claude/sweet-euler-lpwcpx`; code only, nothing deployed from here)
+**Start the next session with:**
+> Continue the PMO Access Portal on branch `claude/sweet-euler-lpwcpx`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md` (4 Nov section first) and the last 6 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through the 4 Nov *Next steps*, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
+
+**Branch:** `claude/sweet-euler-lpwcpx` = PR 4's branch (`claude/nifty-bardeen-j0pqm3`: API on .NET 9, the live app) + this session. Deploy from it, **not `main`** (`main` has the .NET 10 API that did not start on 31 Oct). No PR opened. Commits: `ba33898`, `ef9817c` (agent start), `192b16a` (fields, environments, TAP wording), then the Developer commit and this handoff.
+
+### What changed (details: `DEPLOYMENT_LOG.md`, 4 Nov rows)
+1. **"The site did not start the agent" (cause found in code, not yet proven live).** A request waits at *AI Review* for the worker's Entra check; the worker ran group resolution and offboarding before the agent with no isolation, so one error stopped every 5-minute run. Each job now runs on its own (failures on the Issues list as `worker-job:` / `agent-error:`). Plus: confirmation mail after an auto-fixed intake, a Queued review run re-dispatched, an approval whose follow-up fails is kept (200) and Security asked again, mail queue and bad mail settings no longer block, bundles within a 15 s budget, a refused group name skipped, soft-delete lag, `restore_worker_settings` never writes empty values. `workflow_diag.sh` shows worker runs per hour (F126).
+2. **Offboarding (delete) requests:** Reason dropdown (required) + Ticket/reference (optional) on the panel, run, audit and PMO mail.
+3. **Environments:** every project that uses environments offers Dev, Test, PreProd, Prod (+ its own) in all dropdowns.
+4. **TAP "not one-time use":** the check was right (the pass was multi-use). Messages now say how: Entra → user → Authentication methods → Add → Temporary Access Pass → **One-time use: Yes** (a new pass replaces the old), or enforce **One-time use** in the tenant TAP policy (F127). **Automatic TAP** (the agent mails the pass) still needs option 2: `tap … on --sender <mailbox>` (approval), an Exchange Online mailbox + RBAC for Applications scope (F81), and a people-inventory EnterpriseEmail per joiner equal to the account's mail/UPN (F2). In the pilot tenant a new joiner's UPN has no mailbox, so a pass mailed to it could not be read: decide the recipient model first.
+5. **Developer role** (Gokul's choices): simulations where the developer acts for every stage (nothing written to Entra/Azure, mails kept in the app, not in the response document, ADO or counts) and deleting any request (reason for real ones, audited; access already granted stays). Recorded in `CLAUDE.md` rule 5 and the API permissions line.
+
+### Next steps (order matters)
+1. **Deploy worker, then app** (code only, no approval). The worker must be first: an older worker ignores the simulation flag and would provision a simulation.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/sweet-euler-lpwcpx
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+df -h ~
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-04"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-04"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+   Expect `Worker deployed: … (commit …)` and `Deployed commit … to https://icy-smoke-04dcd4300.6.azurestaticapps.net`.
+2. **Register the Gmail tester as Developer** (after step 1: an older API cannot read the role). Registering **replaces** a person's roles, so list first and keep every role shown, adding `Developer`:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/sweet-euler-lpwcpx
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+PY=$(tools/cosmos_python.sh)
+export COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g rg-pmo-review-pilot -n cosmos-pmo-pilot-pkt2ofpqmlf3e --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+$PY tools/register_user.py --project PEST --list
+$PY tools/register_user.py --project VESTACY --list
+# Keep every role --list showed for the tester and add Developer (expected: Requester,Owner,IdTeam,RoleTeam,PMO,Operator):
+$PY tools/register_user.py --project PEST --user gopalakrishnan.baskaran@gmail.com --roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,Developer
+$PY tools/register_user.py --project VESTACY --user gopalakrishnan.baskaran@gmail.com --roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,Developer
+unset COSMOS_CONNECTION_STRING
+```
+3. **Check (read-only):** `bash tools/workflow_diag.sh $SUB` (same block start). Expect about 12 worker runs an hour and no `worker-job:` / `agent-error:` under NEEDS DEVELOPER. If one is listed, it names the job and error that was stopping the agent: send it.
+4. **Live tests on the site:**
+   - a real request (e.g. PEST Dev Support Reader) reaches *Awaiting Owner* within about 5 minutes, with the confirmation mail;
+   - a simulation (form switch *Simulation*): approve as Owner and Security yourself, do both team steps, *Completed*, nothing new in Entra; then *Delete simulation*;
+   - the environment dropdown lists Dev, Test, PreProd, Prod;
+   - *Offboard user* asks for a Reason first.
+5. **rashmi.prakash request (live, With ID Team):** in Entra add a new TAP for the user with **One-time use: Yes** and a lifetime of at most 60 minutes (it replaces the multi-use one), then record its metadata on the request again.
+
+### Open
+- Automatic TAP: recipient model + option 2 approval (above).
+- A document no code version can read (e.g. written by a newer app than the worker) still stops that project's request list (reported, not silent): deploy worker and app from the same commit. A suggested follow-up task covers skipping unreadable documents.
+- .NET 9 support ends **10 Nov 2026**: retry the SWA API on .NET 10 (F21) with a way to see the start-up error first.
+- Earlier open items below (31 Oct sections) still apply.
+
+## 31 Oct 2026 — Databricks + Fabric
+**Live (31 Oct, approved by Gokul):** serverless workspace `dbw-pmo-pkt2ofpqmlf3e`; Databricks account admin: the pilot admin and Gokul; the Dev data engineers group on the workspace as USER (automatic identity management) with WRITE on `dbw_pmo_pkt2ofpqmlf3e.default` (Unity Catalog grants, PASS). Open: member test on the SAMPLE table `sample_access_test`, then drop it and stop the SQL warehouse; `cost_check.sh`; the Dev Support Reader group does not exist in the pilot tenant yet (create it through the onboarding flow, then re-run `aim_setup.sh apply` + `grants` with `=READ`).
+
+Build notes (code):
+Built on branch `claude/gifted-wozniak-7woywt`; merged into **`claude/nifty-bardeen-j0pqm3`** (PR 4) on 31 Oct 2026, facts renumbered F114–F122. Runbook: `docs/DATABRICKS_FABRIC.md`; facts F114–F122.
+- **Databricks:** `tools/deploy_free.sh databricks $SUB` (dry run: plan + what-if) → after "approved" `… --approved-by "<name> <date>"`. It registers `Microsoft.Databricks`, adds `Microsoft.Databricks/workspaces` to the policy (`enableDatabricks`, stage A), waits, then creates one **serverless** Premium workspace (`infra/modules/databricks.bicep`). No managed resource group, VNet or storage account, so it fits rules 1–2 once approved. `params` keeps the policy type, and `cost_check.sh` allows exactly one workspace.
+- **Entra groups → Databricks:** after the first account admin (an Entra Global Administrator signs in at accounts.azuredatabricks.net) and the account id: `bash tools/databricks/aim_setup.sh plan … --workspace <ws> --group <group>` → `apply … --approved-by`, then data access with `aim_setup.sh grants --workspace <ws> --catalog <c> --schema <s> --group <group>[=WRITE]` → `--approved-by` (31 Oct: `databricks_setup.py` removed, one tool). Automatic identity management syncs membership at sign-in; per joiner only the Entra membership is needed.
+- **Fabric:** trial capacity, no Azure resource. Tenant settings, trial and workspace in the portal, then `python3 tools/fabric_groups.py --workspace "<name>" --group <group>[=Contributor]` (dry run) → `--approved-by`.
+- **Tests:**
+  - .NET: 382 (381 pass, 1 opt-in skip), including a new infra test.
+  - `python3 tools/test_platform_groups.py`, both `--self-test`s.
+  - `bicep build` of `main.bicep` and `databricks.bicep`: exit 0 (only the old BCP187 warning).
+  - Not run against Azure: no credentials in the build session.
+- **Open:**
+  - Default storage **is billed** (Learn, 11 Sep 2026: storage space + API operations, DSUs; F119), unlike the branch's earlier note: the workspace is not free while it holds data. DBU and DSU rates not read: check the pricing pages before approval.
+  - Az CLI token for the Fabric API is only seen in search results (F121).
+  - Databricks and Fabric rows still go to the role team (possible later change: "granted by group").
+
 
 **Start the next session with:**
-> Continue the PMO Access Portal v1.1 rollout on branch `claude/elegant-darwin-nfot4p`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
+> Continue the PMO Access Portal v1.1 rollout on branch `claude/nifty-bardeen-j0pqm3` (PR 4). Read `CLAUDE.md`, `docs/NEXT_SESSION.md`, `docs/V1_1_DEPLOY.md` and the last 8 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one at a time, from a fresh Cloud Shell. Log every result in `DEPLOYMENT_LOG.md`.
 
 Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
 Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
+
+## 31 Oct 2026 (later): live app broken by the .NET 10 API, fixed in code on `claude/nifty-bardeen-j0pqm3`
+- After the `app` deploy of `ef9fc7b` (00:46 UTC, first on `dotnet-isolated:10.0`) every page shows *Unexpected token 'B', "Backend call failure" is not valid JSON*: the API does not start. Settings checked and valid.
+- Branch `claude/nifty-bardeen-j0pqm3` = `claude/elegant-darwin-nfot4p` + API back on .NET 9 + clear SPA message for a gateway reply. **Deploy it:** `git fetch origin && git checkout claude/nifty-bardeen-j0pqm3 && tools/deploy_free.sh app $SUB` (code only, no approval), then reload the app and run `verify_features.sh` line 1. Worker unchanged.
+- Then: retry .NET 10 before **10 Nov 2026** (.NET 9 end of support), with a way to see the API start-up error first (F21).
+- Offboarding account deletion is on (approved, 31 Oct). Plans made before that keep *Delete — off*: after the `app` redeploy use **Make a new plan** on such a run (worker unchanged). `workflow_diag.sh` lists the runs with their plan time and delete step.
 
 ## Live state (evidence in `DEPLOYMENT_LOG.md`, 30 Oct 2026)
 - **v1.1 option 1 applied** (~16:40 UTC, `apply` of `9105ddd`, approved by Gokul): 8 new Cosmos containers, worker data roles, app + worker deployed, cost unchanged (budget ₹2,000, spent ₹12.57).
@@ -22,7 +103,7 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
   - **Rehire returned as a duplicate, fixed** (live: "Response document: This user already has this access … (Assigned, request …)" after the person was offboarded and re-added as Active). Cause: offboarding never updated the response document. Now the worker marks the person's active access records **Revoked** once a run finishes (Completed or PartiallyCompleted); a group the person is still in (leftover) keeps its record; records written after the run (a rehire's) are never touched; runs that finished earlier are caught up on the next worker run (`OffboardingRun.AccessRecordsRevokedAt`, audit `offboarding-access-records`). **Worker deployed (`4c739cf`), catch-up verified live 03:45 UTC**; next: resubmit the returned request unchanged.
   - **Agent TAP to the Enterprise ID on the request** (Gokul: "send the tap … to the user enterprise id which was asked for … automatic … ask them to reset the password immediately"). Live symptom: the joiner was not in the people inventory, so F2 escalated *TAP recipient mismatch* and the ID team had to hand the pass over.
     - Recipient now: the Enterprise ID entered on the request, approved by the Owner and Security; the approval page and mail name it. Refused for a guest form, a personal domain, the requester's / Owner's / an approver's own address, or when the people inventory says otherwise. Then the old F2 inventory rule; else the escalation (`docs/ROOT_CAUSE.md`, "Change on 2 Nov 2026").
-    - Mail: "IMPORTANT: right after you sign in with the Temporary Access Pass … change the temporary password" + step 4 `https://mysignins.microsoft.com/security-info/password/change` (F119).
+    - Mail: "IMPORTANT: right after you sign in with the Temporary Access Pass … change the temporary password" + step 4 `https://mysignins.microsoft.com/security-info/password/change` (F133).
     - Requests already left to the ID team keep their pass with the ID team (hand back does not re-send); test with a new request, with an Enterprise ID mailbox you control.
   - **Returned "Admin-level" for Data Engineer, fixed** (Gokul's live test, 2 Nov: Data Engineer on PEST ph returned with "Admin-level access is requested …").
     - Cause: rows whose roles include Contributor are flagged Privileged on import, and the review ranked every Privileged row as admin.
@@ -39,7 +120,7 @@ Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oc
     - tests live and logs to the trail, the checks and the audit log;
     - the verification re-tests every role-team report;
     - a `dbx:` row with Azure roles goes to people.
-  - **Databricks-side rights of the worker identity** (account admin, workspace admin, `USE CATALOG` + `MANAGE` per catalog) are printed by the dry run. They are F118 and ASSUMED until the first run.
+  - **Databricks-side rights of the worker identity** (account admin, workspace admin, `USE CATALOG` + `MANAGE` per catalog) are printed by the dry run. They are F132 and ASSUMED until the first run.
   - `verify_features` line 18 (WAIT until switched on).
   - **Open (rule 1):** the pilot Databricks workspace `dbw-pmo-pkt2ofpqmlf3e` has no recorded approval or cost line.
   - **Website redesign** (SPA only; same API, same flow, same guardrails; ships with the next `app` deploy, no approval):
@@ -134,6 +215,7 @@ Without `--update`, existing rows are kept. Never type a literal `<…>` placeho
 - Cloud Shell is reset after a short idle time. It loses only the clone, `.local/` (params, workbooks, deploy stamps) and `~/.dotnet`; Azure keeps everything.
 
 ## Working rules
+- **Cloud Shell is ephemeral:** every command for Gokul comes as the full block from `docs/RUNBOOK.md` *Pilot session start* (subscription, clean-up, shallow clone or checkout, command, clean-up). Never assume anything survived.
 - Any Azure resource or permission change: show the what-if or dry run and wait for an explicit "approved".
   - Such changes: `provisioning … on`, `tap … on`, `privileged … on`, `offboarding … on`, `revoke-graph-writes`, `email`, `apply`.
   - No approval needed: `app`, `worker`, `environment`, imports, registrations, any `… off`.

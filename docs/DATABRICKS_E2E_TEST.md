@@ -1,6 +1,6 @@
 # Databricks end-to-end test: control plane and data plane, Reader and Data Engineer groups
 
-Written 1 Nov 2026, automated 2 Nov 2026, **Data Engineer group added 2 Nov 2026**. Facts: F106, F110–F118, F120 (`docs/VERIFIED_FACTS.md`). Tools: `tools/databricks/aim_setup.sh` (`docs/DATABRICKS_AIM.md`).
+Written 1 Nov 2026, automated 2 Nov 2026, **Data Engineer group added 2 Nov 2026**. Facts: F106, F110–F132, F134 (`docs/VERIFIED_FACTS.md`). Tools: `tools/databricks/aim_setup.sh` (`docs/DATABRICKS_AIM.md`).
 Log every result in `docs/DEPLOYMENT_LOG.md` as **live check V** (`V-reader`, `V-engineer`). About 1–1.5 hours the first time, plus about 30 minutes for the second group.
 
 ## The model being tested
@@ -23,10 +23,10 @@ Databricks access is set up **once per Entra group**. After that, each joiner ne
 | Plane | What | Who | When |
 |---|---|---|---|
 | Control: Entra | user, group membership | AI agent after Owner + Security approval (else the ID team) | every joiner |
-| Control: Azure RBAC | none needed to use Databricks. If wanted, **Reader** on the workspace resource only, on a row and group of its own; Contributor or Owner makes the user a **workspace admin** (F116) | role assignment team | optional |
+| Control: Azure RBAC | none needed to use Databricks. If wanted, **Reader** on the workspace resource only, on a row and group of its own; Contributor or Owner makes the user a **workspace admin** (F130) | role assignment team | optional |
 | Data: account + workspace (A3) | group added via AIM, assigned USER | AI agent (or `aim_setup.sh apply`) | once per group |
-| Data: entitlements (A4) | by group name (F114: not inherited since 14 Sep 2026) | AI agent (or `aim_setup.sh apply`) | once per group |
-| Data: Unity Catalog (A5) | by group name (F115, F117) | AI agent (or `aim_setup.sh apply --grant`) | once per group |
+| Data: entitlements (A4) | by group name (F128: not inherited since 14 Sep 2026) | AI agent (or `aim_setup.sh apply`) | once per group |
+| Data: Unity Catalog (A5) | by group name (F129, F131) | AI agent (or `aim_setup.sh apply --grant`) | once per group |
 | Data: compute (A6) | readers: SQL warehouse **Can use**; engineers: cluster **Can restart** | workspace admin | once per group |
 | Data: the user | created in Databricks on first sign-in, status Active | AIM, automatic | every joiner |
 
@@ -46,7 +46,7 @@ Run the Reader test first; the Data Engineer test is the same steps with the val
 | Must work | read `curated` | read, insert into and create tables in `curated` |
 | Must fail | write anything; read `restricted` | read or create in `restricted` |
 
-Why the engineer uses a notebook: *Workspace access* covers notebooks, jobs and pipelines; *Databricks SQL access* covers the SQL editor, queries and SQL warehouses (F120). The policy gives engineers no Databricks SQL access, so they work on clusters.
+Why the engineer uses a notebook: *Workspace access* covers notebooks, jobs and pipelines; *Databricks SQL access* covers the SQL editor, queries and SQL warehouses (F134). The policy gives engineers no Databricks SQL access, so they work on clusters.
 
 **Do not reuse the existing `azr-pes-rg-data-dev-ph-weu-dataengineers` group.** Its mapping rows carry Azure roles (Contributor and others), so the agent leaves a Databricks request on them to people (rule 1), and the review treats them as Privileged. The test uses a Databricks-only group.
 
@@ -117,7 +117,7 @@ Expect, for each group, `PASS DBX_WORKSPACE`, `PASS DBX_ENTITLEMENTS`, `PASS DBX
 ```bash
 tools/deploy_free.sh databricks $SUB on --account-id "$ACC" --workspace dbw-pmo-pkt2ofpqmlf3e --catalogs sample_e2e
 ```
-One switch covers both groups: the agent reads the level from each request's group name. The dry run prints the worker identity's client id and the **Databricks-side rights** an account admin gives it once (F118):
+One switch covers both groups: the agent reads the level from each request's group name. The dry run prints the worker identity's client id and the **Databricks-side rights** an account admin gives it once (F132):
 1. Service principal (Entra ID managed).
 2. **Account admin** (needed for A3).
 3. **Admin** on the workspace (needed for A4).
@@ -127,7 +127,7 @@ Then run the same command with `--approved-by "Gokul <date>"`, run `tools/deploy
 
 **A6. Compute** (workspace admin; costs DBUs and VM time only while running; stop it after the test):
 - **Reader group:** SQL warehouses → the smallest warehouse with the shortest auto-stop → Permissions → `…-datareaders`: **Can use**.
-- **Data Engineer group:** Compute → *Create compute*: access mode **Standard** (Unity Catalog), single node, the smallest node type, *Terminate after 10 minutes of inactivity* (the minimum). Then on the compute's row: ⋮ → **Edit permissions** → `…-dataengineers` → **Can restart** → *Add* → *Save*. *Can restart* lets the joiner start it again after auto-termination; *Can attach to* would leave starting it to an admin (F120).
+- **Data Engineer group:** Compute → *Create compute*: access mode **Standard** (Unity Catalog), single node, the smallest node type, *Terminate after 10 minutes of inactivity* (the minimum). Then on the compute's row: ⋮ → **Edit permissions** → `…-dataengineers` → **Can restart** → *Add* → *Save*. *Can restart* lets the joiner start it again after auto-termination; *Can attach to* would leave starting it to an admin (F134).
 
 ## B. The joiner, through the app (once per group)
 

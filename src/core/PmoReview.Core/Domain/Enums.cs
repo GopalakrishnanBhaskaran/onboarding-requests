@@ -37,6 +37,11 @@ public enum AppRole
     DataSteward,
     /// <summary>Earlier name of <see cref="DataSteward"/> (until 31 Oct 2026). Kept so rows saved under it still load; read as DataSteward.</summary>
     DataMaintainer,
+    /// <summary>
+    /// 4 Nov 2026 (Gokul): developers simulate requests end to end (the agent writes nothing to Entra or Azure, mails stay in the
+    /// app, the developer acts for every stage of a simulation) and delete requests. No approval or team right on real requests.
+    /// </summary>
+    Developer,
 }
 
 /// <summary>I1 ResourceGroupType values and the F1 "All" option.</summary>
