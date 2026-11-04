@@ -132,7 +132,6 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
               {name && <Body1Strong>{name}</Body1Strong>}
               {r.enterpriseId && <Body1 className={s.wrap}><Breakable text={r.enterpriseId} /></Body1>}
               {r.guest && <Badge appearance="tint" color="warning">Guest</Badge>}
-              {r.simulated && <Badge appearance="outline" color="warning">SIMULATION</Badge>}
             </div>
             <div className={l.chips}>
               {r.resource && <Badge appearance="tint" color="brand" size="large">{`${r.accessLevel ?? '—'} on ${r.resource}`}</Badge>}

@@ -1,10 +1,58 @@
-# Next session — handoff (updated 31 Oct 2026: API back on .NET 9, offboarding "Make a new plan", Databricks + Fabric merged — code only; v1.1 live, agent offboarding and account deletion switched on)
+# Next session — handoff (updated 4 Nov 2026: three diverged branches merged into `claude/optimistic-thompson-jj8a4u`; code only, nothing deployed from it yet)
+
+## 4 Nov 2026 (latest) — one branch again: `claude/optimistic-thompson-jj8a4u`
+**Start the next session with:**
+> Continue the PMO Access Portal on branch `claude/optimistic-thompson-jj8a4u`. Read `CLAUDE.md`, this section of `docs/NEXT_SESSION.md` and the last 6 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
+
+**Why:** three sessions branched off `main` (`5824f22`) and none contained the others:
+- `claude/portal-ux-redesign` — **the live code** (app `9e89873`, worker `4c739cf`, 2 Nov): website redesign, agent TAP to the request's Enterprise ID, privileged review rule, resubmit a whole submission, offboarding marks access records Revoked, Databricks agent set-up (off), verify line 5 fix.
+- `claude/sweet-euler-lpwcpx` (4 Nov, with the 31 Oct `nifty-bardeen` history): worker job isolation and agent-start edge cases, Developer simulations and deleting requests, offboarding Reason + Ticket, every environment in the dropdowns, Databricks workspace + Fabric tools, gateway message; it had rolled the API back to .NET 9.
+- `claude/serene-ramanujan-jqgfo3` (4 Nov): re-check 6 (switch-off mid-flight, start-up checks, TAP wording) and API errors on the Issues list (REVIEW 34).
+Deploying either 4 Nov branch alone would have removed the 2 Nov features from the live site (and the old verify line 5 advised removing `User.ReadWrite.All`, which account deletion needs). This branch merges all three (merge commits `e54ddb7`, `bed5b09`; details in their messages and the 4 Nov log row).
+
+**Decisions in the merge:**
+- **API on .NET 10** (`dotnet-isolated:10.0`): the 2 Nov `app` deploy of `9e89873` ran on 10.0 and answered requests; the 31 Oct failure (`ef9fc7b`) is unexplained (F21). .NET 9 ends 10 Nov.
+- One failing worker job is logged and put on every project's Issues list (`worker-job:<job>:<type>`); the cycle goes on (sweet-euler's design; serene's "throw at the end" dropped: with no App Insights it is invisible, F135).
+- Facts renumbered: the redesign's F114–F120 → **F128–F134**; serene's F114 → **F135**; sweet-euler's F114–F127 unchanged (used live).
+- `deploy_free.sh databricks`: `… on|off` = agent set-up (approval); otherwise the workspace + policy deploy (used 31 Oct).
+
+**Tests (this container, 4 Nov):** .NET 612 (611 pass, 1 opt-in Cosmos skip), build without warnings; SPA 51/51, tsc, web build; Playwright 14/14 (fresh local emulator); Python tool self-tests; `aim_setup.sh self-test`; `bash -n` on every script. Not run: `bicep build` (no Bicep CLI here), anything against Azure.
+
+### Next steps (order matters)
+1. **Read-only settings check** (the stricter start-up checks refuse a non-GUID `AGENT_TENANT_ID`, a bad `OFFBOARD_SUBSCRIPTIONS` id or a misspelt `NOTIFY_SENDER`). Expect a GUID, the pilot subscription id, `AcsEmail`; `TAP_MAIL_SENDER` empty. Paste nothing secret.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/optimistic-thompson-jj8a4u
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?name=='AGENT_TENANT_ID' || name=='OFFBOARD_SUBSCRIPTIONS' || name=='NOTIFY_SENDER' || name=='TAP_MAIL_SENDER' || name=='AGENT_OFFBOARDING' || name=='OFFBOARD_DELETE_USER'].{name:name, value:value}" -o table
+az staticwebapp appsettings list -n swa-pmo-pilot-pkt2ofpqmlf3e -g rg-pmo-review-pilot --query "properties.{AGENT_TENANT_ID:AGENT_TENANT_ID, NOTIFY_SENDER:NOTIFY_SENDER, APP_ENVIRONMENT:APP_ENVIRONMENT}" -o table
+```
+2. **Deploy worker, then app** (code only, no approval; worker first: an older worker ignores the simulation flag). Expect `Worker deployed: … (commit …)`, `API runtime: dotnet-isolated 10.0`, `Deployed commit … to https://icy-smoke-04dcd4300.6.azurestaticapps.net`.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/optimistic-thompson-jj8a4u
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip src/web/node_modules .local/api .local/worker*; df -h ~
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-04"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-04"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+   Then sign in and open a request. **If every page says "The app's server did not answer (… Backend call failure)"**, the .NET 10 API did not start: redeploy what was live before, `git fetch -q --depth 1 origin claude/portal-ux-redesign && git checkout -q FETCH_HEAD && tools/deploy_free.sh app $SUB` (`9e89873`/`021e7e4`, .NET 10, worked 2 Nov); if that fails too, `ca3ceaf` (.NET 9, 31 Oct). Log it under F21.
+3. **Repeat what showed "Something went wrong" on 4 Nov** (ask Gokul which page and action). Two messages now differ:
+   - *Something went wrong. It was recorded for the project's Operators and Security (Issues and reports)…* with a reference → **Issues and reports** → "The website's API failed on <route> (<error type>)": bring back route, error type, code location and count (REVIEW 34).
+   - *The app's server did not answer (HTTP 500: Backend call failure)* → the API did not run; no issue exists. Wait a minute and retry; on every page see step 2.
+   Possibly already fixed by the merge (not proven): an approval, team report, resume or Prod decision whose follow-up failed after the save used to answer 500 although it counted (sweet-euler `ef9817c`); it now answers 200 and puts the error on the Issues list.
+4. **Check (read-only):** `bash tools/workflow_diag.sh $SUB` (same block start): about 12 worker runs an hour, no `worker-job:` / `agent-error:` / `api:` lines under NEEDS DEVELOPER; then `bash tools/verify_features.sh $SUB | tee .local/verify.txt` (same Cloud Shell as step 2, line 1 needs the deploy stamps). Expect lines 1, 16, 17 PASS; 5b and 15 WAIT. Log it as live check U.
+5. Then the sweet-euler steps below (register Developer, live tests, the one-time TAP for the request With ID Team) and the open items of the earlier sections.
+
 
 ## 4 Nov 2026 — handoff (session on branch `claude/sweet-euler-lpwcpx`; code only, nothing deployed from here)
 **Start the next session with:**
 > Continue the PMO Access Portal on branch `claude/sweet-euler-lpwcpx`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md` (4 Nov section first) and the last 6 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through the 4 Nov *Next steps*, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
 
-**Branch:** `claude/sweet-euler-lpwcpx` = PR 4's branch (`claude/nifty-bardeen-j0pqm3`: API on .NET 9, the live app) + this session. Deploy from it, **not `main`** (`main` has the .NET 10 API that did not start on 31 Oct). No PR opened. Commits: `ba33898`, `ef9817c` (agent start), `192b16a` (fields, environments, TAP wording), then the Developer commit and this handoff.
+**Superseded (4 Nov, later):** deploy from `claude/optimistic-thompson-jj8a4u` (above), not from this branch. **Branch:** `claude/sweet-euler-lpwcpx` = PR 4's branch (`claude/nifty-bardeen-j0pqm3`: API on .NET 9) + this session. No PR opened. Commits: `ba33898`, `ef9817c` (agent start), `192b16a` (fields, environments, TAP wording), then the Developer commit and this handoff.
 
 ### What changed (details: `DEPLOYMENT_LOG.md`, 4 Nov rows)
 1. **"The site did not start the agent" (cause found in code, not yet proven live).** A request waits at *AI Review* for the worker's Entra check; the worker ran group resolution and offboarding before the agent with no isolation, so one error stopped every 5-minute run. Each job now runs on its own (failures on the Issues list as `worker-job:` / `agent-error:`). Plus: confirmation mail after an auto-fixed intake, a Queued review run re-dispatched, an approval whose follow-up fails is kept (200) and Security asked again, mail queue and bad mail settings no longer block, bundles within a 15 s budget, a refused group name skipped, soft-delete lag, `restore_worker_settings` never writes empty values. `workflow_diag.sh` shows worker runs per hour (F126).

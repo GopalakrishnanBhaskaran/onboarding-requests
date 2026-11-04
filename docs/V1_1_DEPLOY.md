@@ -43,7 +43,7 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
 ## Fresh Cloud Shell (ephemeral: run the whole block every time)
 Azure keeps every resource, setting and permission. A new session has no clone, no `.local/` (params, workbooks, deploy stamps), no `~/.dotnet` and no shell variables. Start every block with these lines (they are already in each block below):
 ```bash
-SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=main   # before PR 4 is merged: BR=claude/nifty-bardeen-j0pqm3
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/optimistic-thompson-jj8a4u   # 4 Nov: the merged branch (main lacks the live 2 Nov code); main once it is merged
 az account set --subscription $SUB
 [ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
 cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
