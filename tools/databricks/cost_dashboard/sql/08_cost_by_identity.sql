@@ -1,0 +1,101 @@
+-- =============================================================================
+-- Dataset 08  cost_by_identity         Page 3 Cost by user        Visual: bar + table
+-- Top users and service principals by cost, ranked.
+--
+-- Attribution (Learn, identity_metadata reference):
+--   all-purpose compute -> system.compute.clusters.owned_by (run_as there is the
+--                          identity that CREATED the cluster, not its owner);
+--   everything else     -> identity_metadata.run_as (jobs, serverless, pipelines),
+--                          then owned_by (SQL warehouse usage only), then
+--                          created_by (Apps, Knowledge Assistant, Supervisor Agent).
+--   Nothing found       -> '(unattributed)'.
+-- identity_type: '@' = user; a GUID = service principal application ID;
+-- anything else = group or system identity.
+--
+-- Tables  system.billing.usage, system.billing.list_prices (global),
+--         system.compute.clusters (regional; latest owner per cluster).
+-- Params  :start_date, :end_date (DATE).
+-- =============================================================================
+WITH priced AS (
+  -- One row per usage record with its USD list cost (Learn: "Join the pricing with usage tables").
+  SELECT
+    u.*,
+    CAST(u.usage_quantity AS DOUBLE)
+      * CAST(COALESCE(p.pricing.effective_list.default, p.pricing.default) AS DOUBLE) AS list_cost_usd
+  FROM system.billing.usage AS u
+  LEFT JOIN system.billing.list_prices AS p
+    ON  p.sku_name = u.sku_name
+    AND p.cloud = u.cloud
+    AND p.usage_unit = u.usage_unit
+    AND p.currency_code = 'USD'
+    AND u.usage_end_time >= p.price_start_time
+    AND (p.price_end_time IS NULL OR u.usage_end_time < p.price_end_time)
+  WHERE u.usage_date BETWEEN :start_date AND :end_date
+),
+clusters_latest AS (
+  SELECT workspace_id, cluster_id, owned_by
+  FROM (SELECT c.*, ROW_NUMBER() OVER (PARTITION BY c.workspace_id, c.cluster_id ORDER BY c.change_time DESC) AS rn
+        FROM system.compute.clusters AS c) AS t
+  WHERE rn = 1
+),
+attributed AS (
+  SELECT
+    p.workspace_id,
+    p.billing_origin_product,
+    p.list_cost_usd,
+    p.usage_quantity,
+    p.usage_unit,
+    CASE WHEN p.billing_origin_product = 'ALL_PURPOSE' AND c.owned_by IS NOT NULL THEN c.owned_by
+         ELSE COALESCE(p.identity_metadata.run_as, p.identity_metadata.owned_by,
+                       p.identity_metadata.created_by, c.owned_by)
+    END AS identity,
+    CASE WHEN p.billing_origin_product = 'ALL_PURPOSE' AND c.owned_by IS NOT NULL THEN 'cluster owner'
+         WHEN p.identity_metadata.run_as     IS NOT NULL THEN 'run_as'
+         WHEN p.identity_metadata.owned_by   IS NOT NULL THEN 'warehouse owner'
+         WHEN p.identity_metadata.created_by IS NOT NULL THEN 'created_by'
+         WHEN c.owned_by                     IS NOT NULL THEN 'cluster owner'
+         ELSE 'none'
+    END AS attribution_source
+  FROM priced AS p
+  LEFT JOIN clusters_latest AS c
+    ON c.workspace_id = p.workspace_id
+   AND c.cluster_id = p.usage_metadata.cluster_id
+),
+by_identity_product AS (
+  SELECT identity, billing_origin_product, SUM(list_cost_usd) AS cost_usd
+  FROM attributed
+  GROUP BY identity, billing_origin_product
+),
+by_identity AS (
+  SELECT
+    a.identity,
+    SUM(a.list_cost_usd)                                          AS cost_usd,
+    SUM(CASE WHEN a.usage_unit = 'DBU' THEN a.usage_quantity END) AS dbus,
+    COUNT(DISTINCT a.workspace_id)                                AS workspaces,
+    array_join(array_sort(collect_set(a.attribution_source)), ', ') AS attribution_sources
+  FROM attributed AS a
+  GROUP BY a.identity
+),
+top_product AS (
+  SELECT identity, max_by(billing_origin_product, cost_usd) AS top_product
+  FROM by_identity_product
+  GROUP BY identity
+)
+SELECT
+  RANK() OVER (ORDER BY COALESCE(b.cost_usd, 0) DESC)                AS cost_rank,
+  COALESCE(b.identity, '(unattributed)')                             AS identity,
+  CASE WHEN b.identity IS NULL THEN 'Unattributed'
+       WHEN b.identity LIKE '%@%' THEN 'User'
+       WHEN b.identity RLIKE '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            THEN 'Service principal'
+       ELSE 'Group or system'
+  END                                                                AS identity_type,
+  ROUND(b.cost_usd, 2)                                               AS cost_usd,
+  ROUND(CAST(b.dbus AS DOUBLE), 1)                                   AS dbus,
+  b.workspaces,
+  tp.top_product,
+  b.attribution_sources,
+  ROUND(try_divide(b.cost_usd, SUM(b.cost_usd) OVER ()) * 100, 1)    AS share_of_total_pct
+FROM by_identity AS b
+LEFT JOIN top_product AS tp ON tp.identity <=> b.identity
+ORDER BY cost_rank;

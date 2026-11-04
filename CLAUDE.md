@@ -76,6 +76,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 | Databricks AIM (separate tool, preferred over SCIM) | `bash tools/databricks/aim_setup.sh plan --account-id <id>` → console toggle (no API, F110) → `… plan/apply --workspace <ws> --group <g> [--admin] --approved-by "<name> <date>"`; `status`; `self-test` (`docs/DATABRICKS_AIM.md`) |
 | Databricks SCIM from Entra (separate tool, no Azure resource) | `bash tools/databricks/entra_scim_setup.sh plan --scim-url <Account SCIM URL> --group <group>` → `… apply … --approved-by "<name> <date>"`; `status`; `pause`; `self-test` (`docs/DATABRICKS_SCIM.md`; AIM first, F106) |
+| Databricks cost dashboard, all PEST workspaces (separate tool, no Azure resource) | `bash tools/databricks/cost_dashboard.sh plan --host <workspace URL> --warehouse <id\|name>` → `validate` (runs the 17 datasets once) → `apply … --approved-by "<name> <date>" [--alert-threshold <USD> --alert-email <mail>]`; `status`; `self-test`; SQL tests `python3 tools/databricks/cost_dashboard/test_cost_dashboard.py` (PySpark for the Spark part); after a SQL edit `python3 tools/databricks/cost_dashboard/build_dashboard.py` (`docs/DATABRICKS_COST_DASHBOARD.md`) |
 
 ## Security rules for API code
 - Identity comes **only** from `x-ms-client-principal`. Ignore any user/project field in the body. The named Owner is matched on the principal's sign-in name (`userDetails`).

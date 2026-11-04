@@ -6,6 +6,11 @@
 Read first: `CLAUDE.md`, this file, `docs/V1_1_DEPLOY.md` (runbook incl. *Fresh Cloud Shell* and *Option 3*), last rows of `docs/DEPLOYMENT_LOG.md`, `REVIEW.md` (open findings).
 Branch **`claude/elegant-darwin-nfot4p`**, pushed (latest commit or later; 31 Oct session: `a88e69a`, `2ccb5f1`, `163a9ed`, then the handoff commit). No PR. v1.1 instructions: `PMO_Access_Portal_v1.1_Feature_Prompt.md`; decisions `docs/V1_1_PLAN.md` (12a, 13a–c, F3a, F4a, **F5a**); phase results `docs/V1_1_PHASES.md`.
 
+## Databricks cost dashboard (4 Nov 2026, branch `claude/amazing-wozniak-3r0xkt`, code only, not deployed)
+- AI/BI dashboard over the system tables for all PEST workspaces: cost by workspace, resource and user, six waste checks with USD, recommendations with monthly saving, daily-cost alert. Guide `docs/DATABRICKS_COST_DASHBOARD.md`, facts F114–F129.
+- Tested here only (local Spark SQL on SAMPLE rows, 593 checks; deploy script self-test 17 checks). Not yet run on PEST data, and the dashboard file was never imported.
+- Next: in the PEST admin workspace run `plan`, then `validate` (first live proof of the SQL), then `apply --approved-by` after Gokul's "approved". Import the built-in usage dashboard v2.0 alongside it.
+
 ## Live state (evidence in `DEPLOYMENT_LOG.md`, 30 Oct 2026)
 - **v1.1 option 1 applied** (~16:40 UTC, `apply` of `9105ddd`, approved by Gokul): 8 new Cosmos containers, worker data roles, app + worker deployed, cost unchanged (budget ₹2,000, spent ₹12.57).
 - **Runbook step 5 done:** PEST and VESTACY name the agent's (pilot) tenant and are marked *not production*.
