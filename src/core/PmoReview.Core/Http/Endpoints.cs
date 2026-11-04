@@ -67,6 +67,11 @@ public static class Endpoints
             Ok(new { items = await workflow.ListAsync(c.Caller, c["projectId"], c.Ct), flowOverview = StatusText.FlowOverview, whoDoesWhat = Messages.WhoDoesWhatFor(workflow.Settings) }));
         host.Map("POST", "projects/{projectId}/requests", async c =>
             new ApiResponse(201, await workflow.SubmitAsync(c.Caller, c["projectId"], c.Body<RequestInput>(), c.Request.CorrelationId, c.Ct)));
+        // Developer (4 Nov 2026): a simulation (dry run, the developer acts for every stage), and deleting a request.
+        host.Map("POST", "projects/{projectId}/requests/simulate", async c =>
+            new ApiResponse(201, await workflow.SimulateAsync(c.Caller, c["projectId"], c.Body<RequestInput>(), c.Request.CorrelationId, c.Ct)));
+        host.Map("POST", "projects/{projectId}/requests/{requestId}/delete", async c =>
+            Ok(await workflow.DeleteAsync(c.Caller, c["projectId"], c["requestId"], c.Body<DeleteRequestInput>(), c.Request.CorrelationId, c.Ct)));
         host.Map("GET", "projects/{projectId}/requests/{requestId}", async c =>
             Ok(await workflow.ViewAsync(c.Caller, c["projectId"], c["requestId"], c.Ct)));
         host.Map("PUT", "projects/{projectId}/requests/{requestId}", async c =>
@@ -139,7 +144,8 @@ public static class Endpoints
             return Ok(result); // exactly the F1 output contract
         });
         host.Map("POST", "projects/{projectId}/requests/bundle", async c =>
-            new ApiResponse(201, await bundles.SubmitAsync(c.Caller, c["projectId"], c.Body<BundleInput>(), c.Request.CorrelationId, c.Ct)));
+            new ApiResponse(201, await bundles.SubmitAsync(c.Caller, c["projectId"], c.Body<BundleInput>(), c.Request.CorrelationId, c.Ct,
+                simulated: c.QueryValue("simulate") == "true")));
         // F3. Escalations: listed for the roles that handle them; a ProdApprover decides the ProdWrite ones.
         host.Map("GET", "projects/{projectId}/escalations", async c =>
             Ok(new { items = await workflow.EscalationsAsync(c.Caller, c["projectId"], c.Ct) }));

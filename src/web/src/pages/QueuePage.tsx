@@ -13,6 +13,7 @@ const actionLabel: Record<ActionName, string> = {
   IdTeamTask: 'ID team task',
   RoleTeamTask: 'Role assignment task',
   Resubmit: 'Correct and resubmit',
+  Delete: 'Delete request', // not listed here by the server (deleting is never waiting on anyone)
 };
 
 /** Everything waiting on the signed-in person, across their projects (computed by the server). */

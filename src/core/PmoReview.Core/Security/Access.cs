@@ -42,6 +42,13 @@ public enum Permission
     ViewPeopleInventory,
     /// <summary>F5: plan, confirm and run an offboarding. PMO and Operators.</summary>
     Offboard,
+    /// <summary>
+    /// Developer: submit a simulated request and act for every stage of a simulation (Owner, Security, ProdApprover, ID team,
+    /// role team). Never on a real request; a simulation never writes to Entra or Azure and is never mailed.
+    /// </summary>
+    Simulate,
+    /// <summary>Developer: delete a request (a real one needs a reason; access already granted stays: Offboard user removes it).</summary>
+    DeleteRequests,
 }
 
 /// <summary>Role → permission table. Single place to change who can do what. Nobody but Owner and Security approves.</summary>
@@ -64,6 +71,8 @@ public static class AccessPolicy
         [AppRole.ProdApprover] = [.. Read, Permission.ViewEscalations, Permission.DecideProdEscalation],
         [AppRole.DataSteward] = [.. Read, Permission.UploadData, Permission.ViewUploads, Permission.ViewMappingQuality, Permission.ViewPeopleInventory,
             Permission.ViewEscalations],
+        // 4 Nov 2026: simulations (dry runs, every stage by the developer) and deleting requests; the developer report and issues.
+        [AppRole.Developer] = [.. Read, Permission.Simulate, Permission.DeleteRequests, Permission.ViewIssues, Permission.ViewReports, Permission.ViewEscalations],
         // Legacy v1 roles grant nothing (Maintainer is not the v1.1 Data Steward: old rows must not gain upload rights).
         [AppRole.Reviewer] = [],
         [AppRole.Maintainer] = [],

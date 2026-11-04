@@ -1,4 +1,4 @@
-import type { AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView, ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation, UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView, OffboardingPlanInput } from './types';
+import type { AccessRequest, ActionItem, AssignedRole, ContactInventory, ContactInventoryInput, DailySummary, DeveloperReport, IntakeFields, Issue, Item, MappingRow, Me, RequestView, ResponseRecord, ReviewRun, StatusLine, ResourceOptions, ResolveResult, BundleInput, BundleResult, Escalation, UploadKind, UploadView, UploadsOverview, DataVersionView, OffboardingView, OffboardingPlanInput, DeletedRequest } from './types';
 
 /** Error returned by the API: safe message plus a correlation id to quote when reporting. */
 export class ApiError extends Error {
@@ -126,6 +126,11 @@ export const api = {
   listRequests: (projectId: string) => call<{ items: StatusLine[]; flowOverview: string[]; whoDoesWhat: string }>('GET', `${p(projectId)}/requests`),
   getRequest: (projectId: string, requestId: string) => call<RequestView>('GET', `${p(projectId)}/requests/${id(requestId)}`),
   submit: (projectId: string, fields: IntakeFields) => call<RequestView>('POST', `${p(projectId)}/requests`, fields),
+  /** Developer: a simulation (dry run; the developer acts for every stage). */
+  simulate: (projectId: string, fields: IntakeFields) => call<RequestView>('POST', `${p(projectId)}/requests/simulate`, fields),
+  /** Developer: delete a request (a real one needs a reason). */
+  deleteRequest: (projectId: string, requestId: string, reason: string) =>
+    call<DeletedRequest>('POST', `${p(projectId)}/requests/${id(requestId)}/delete`, { reason: reason.trim() || null, confirm: true }),
   resubmit: (projectId: string, requestId: string, fields: IntakeFields, etag: string) =>
     call<RequestView>('PUT', `${p(projectId)}/requests/${id(requestId)}`, fields, etag),
   trail: (projectId: string, requestId: string) => call<{ text: string }>('GET', `${p(projectId)}/requests/${id(requestId)}/trail`),
@@ -166,7 +171,8 @@ export const api = {
     call<ResourceOptions>('GET', `resources/options?projectId=${id(projectId)}&environment=${id(environment)}`),
   resolve: (projectId: string, environment: string, resources: string[]) =>
     call<ResolveResult>('GET', `resources/resolve?projectId=${id(projectId)}&environment=${id(environment)}${resources.map((r) => `&resource=${id(r)}`).join('')}`),
-  submitBundle: (projectId: string, input: BundleInput) => call<BundleResult>('POST', `${p(projectId)}/requests/bundle`, input),
+  submitBundle: (projectId: string, input: BundleInput, simulate = false) =>
+    call<BundleResult>('POST', `${p(projectId)}/requests/bundle${simulate ? '?simulate=true' : ''}`, input),
   escalations: (projectId: string) => call<{ items: Item<Escalation>[] }>('GET', `${p(projectId)}/escalations`),
   uploads: (projectId: string) => call<UploadsOverview>('GET', `${p(projectId)}/uploads`),
   upload: (projectId: string, kind: UploadKind, file: File, o: { mode: 'validate' | 'apply'; retireMissing: boolean; sheet?: string; baseVersion?: number }) => {

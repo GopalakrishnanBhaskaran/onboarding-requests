@@ -1,11 +1,60 @@
 # Next session — handoff (updated 31 Oct 2026: API back on .NET 9, offboarding "Make a new plan", Databricks + Fabric merged — code only; v1.1 live, agent offboarding and account deletion switched on)
 
-## 4 Nov 2026 — "the site did not start the agent": fixed in code, needs `worker` + `app`
-Branch **`claude/sweet-euler-lpwcpx`** = PR 4's branch (`claude/nifty-bardeen-j0pqm3`, API on .NET 9) + these fixes. Deploy from this branch, not `main` (`main` has the .NET 10 API that did not start on 31 Oct).
-- **Cause (code):** the worker ran group resolution and offboarding before the agent with no isolation; one exception there stopped every 5-minute run before any request moved. A request submitted on the site waits at *AI Review* for that worker run, so it looked like the agent never started. Details and the other fixes: `DEPLOYMENT_LOG.md` row of 4 Nov.
-- **Not proven live yet:** no request id or worker output was seen. After the redeploy, `workflow_diag.sh` shows whether the worker runs (about 12 an hour) and any `worker-job:` / `agent-error:` issue under NEEDS DEVELOPER names the job and error type that was failing.
-- **Steps (fresh Cloud Shell, no approval needed):** session-start block (`docs/RUNBOOK.md`) with `BR=claude/sweet-euler-lpwcpx`, then `tools/deploy_free.sh worker $SUB --approved-by "Gokul <date>"`, `tools/deploy_free.sh app $SUB --approved-by "Gokul <date>"`, `bash tools/workflow_diag.sh $SUB`. Then on the site: submit a test request (PEST Dev Support Reader creates the reader group Databricks still needs) and expect *Awaiting Owner* within about 5 minutes, plus the confirmation mail (redirected to the test mailbox).
-- **Open (not fixed here):** a document no code version can read (e.g. written by a newer `app` than the `worker`) still stops that project's request list (now reported, not silent) — always deploy `worker` and `app` from the same commit; a **project** document that cannot be read still stops every job. Mapping-sheet edits still re-review only in the worker. A bundle with two rows of the same resource, level and environment is returned at review (hand-added rows).
+## 4 Nov 2026 — handoff (session on branch `claude/sweet-euler-lpwcpx`; code only, nothing deployed from here)
+**Start the next session with:**
+> Continue the PMO Access Portal on branch `claude/sweet-euler-lpwcpx`. Read `CLAUDE.md`, `docs/NEXT_SESSION.md` (4 Nov section first) and the last 6 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through the 4 Nov *Next steps*, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
+
+**Branch:** `claude/sweet-euler-lpwcpx` = PR 4's branch (`claude/nifty-bardeen-j0pqm3`: API on .NET 9, the live app) + this session. Deploy from it, **not `main`** (`main` has the .NET 10 API that did not start on 31 Oct). No PR opened. Commits: `ba33898`, `ef9817c` (agent start), `192b16a` (fields, environments, TAP wording), then the Developer commit and this handoff.
+
+### What changed (details: `DEPLOYMENT_LOG.md`, 4 Nov rows)
+1. **"The site did not start the agent" (cause found in code, not yet proven live).** A request waits at *AI Review* for the worker's Entra check; the worker ran group resolution and offboarding before the agent with no isolation, so one error stopped every 5-minute run. Each job now runs on its own (failures on the Issues list as `worker-job:` / `agent-error:`). Plus: confirmation mail after an auto-fixed intake, a Queued review run re-dispatched, an approval whose follow-up fails is kept (200) and Security asked again, mail queue and bad mail settings no longer block, bundles within a 15 s budget, a refused group name skipped, soft-delete lag, `restore_worker_settings` never writes empty values. `workflow_diag.sh` shows worker runs per hour (F126).
+2. **Offboarding (delete) requests:** Reason dropdown (required) + Ticket/reference (optional) on the panel, run, audit and PMO mail.
+3. **Environments:** every project that uses environments offers Dev, Test, PreProd, Prod (+ its own) in all dropdowns.
+4. **TAP "not one-time use":** the check was right (the pass was multi-use). Messages now say how: Entra → user → Authentication methods → Add → Temporary Access Pass → **One-time use: Yes** (a new pass replaces the old), or enforce **One-time use** in the tenant TAP policy (F127). **Automatic TAP** (the agent mails the pass) still needs option 2: `tap … on --sender <mailbox>` (approval), an Exchange Online mailbox + RBAC for Applications scope (F81), and a people-inventory EnterpriseEmail per joiner equal to the account's mail/UPN (F2). In the pilot tenant a new joiner's UPN has no mailbox, so a pass mailed to it could not be read: decide the recipient model first.
+5. **Developer role** (Gokul's choices): simulations where the developer acts for every stage (nothing written to Entra/Azure, mails kept in the app, not in the response document, ADO or counts) and deleting any request (reason for real ones, audited; access already granted stays). Recorded in `CLAUDE.md` rule 5 and the API permissions line.
+
+### Next steps (order matters)
+1. **Deploy worker, then app** (code only, no approval). The worker must be first: an older worker ignores the simulation flag and would provision a simulation.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/sweet-euler-lpwcpx
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+df -h ~
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-04"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-04"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+   Expect `Worker deployed: … (commit …)` and `Deployed commit … to https://icy-smoke-04dcd4300.6.azurestaticapps.net`.
+2. **Register the Gmail tester as Developer** (after step 1: an older API cannot read the role). Registering **replaces** a person's roles, so list first and keep every role shown, adding `Developer`:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/sweet-euler-lpwcpx
+az account set --subscription $SUB
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+PY=$(tools/cosmos_python.sh)
+export COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g rg-pmo-review-pilot -n cosmos-pmo-pilot-pkt2ofpqmlf3e --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+$PY tools/register_user.py --project PEST --list
+$PY tools/register_user.py --project VESTACY --list
+# Keep every role --list showed for the tester and add Developer (expected: Requester,Owner,IdTeam,RoleTeam,PMO,Operator):
+$PY tools/register_user.py --project PEST --user gopalakrishnan.baskaran@gmail.com --roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,Developer
+$PY tools/register_user.py --project VESTACY --user gopalakrishnan.baskaran@gmail.com --roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,Developer
+unset COSMOS_CONNECTION_STRING
+```
+3. **Check (read-only):** `bash tools/workflow_diag.sh $SUB` (same block start). Expect about 12 worker runs an hour and no `worker-job:` / `agent-error:` under NEEDS DEVELOPER. If one is listed, it names the job and error that was stopping the agent: send it.
+4. **Live tests on the site:**
+   - a real request (e.g. PEST Dev Support Reader) reaches *Awaiting Owner* within about 5 minutes, with the confirmation mail;
+   - a simulation (form switch *Simulation*): approve as Owner and Security yourself, do both team steps, *Completed*, nothing new in Entra; then *Delete simulation*;
+   - the environment dropdown lists Dev, Test, PreProd, Prod;
+   - *Offboard user* asks for a Reason first.
+5. **rashmi.prakash request (live, With ID Team):** in Entra add a new TAP for the user with **One-time use: Yes** and a lifetime of at most 60 minutes (it replaces the multi-use one), then record its metadata on the request again.
+
+### Open
+- Automatic TAP: recipient model + option 2 approval (above).
+- A document no code version can read (e.g. written by a newer app than the worker) still stops that project's request list (reported, not silent): deploy worker and app from the same commit. A suggested follow-up task covers skipping unreadable documents.
+- .NET 9 support ends **10 Nov 2026**: retry the SWA API on .NET 10 (F21) with a way to see the start-up error first.
+- Earlier open items below (31 Oct sections) still apply.
 
 ## 31 Oct 2026 — Databricks + Fabric
 **Live (31 Oct, approved by Gokul):** serverless workspace `dbw-pmo-pkt2ofpqmlf3e`; Databricks account admin: the pilot admin and Gokul; the Dev data engineers group on the workspace as USER (automatic identity management) with WRITE on `dbw_pmo_pkt2ofpqmlf3e.default` (Unity Catalog grants, PASS). Open: member test on the SAMPLE table `sample_access_test`, then drop it and stop the SQL warehouse; `cost_check.sh`; the Dev Support Reader group does not exist in the pilot tenant yet (create it through the onboarding flow, then re-run `aim_setup.sh apply` + `grants` with `=READ`).

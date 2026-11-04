@@ -210,6 +210,7 @@ public sealed class FaultyStore<T>(IDocumentStore<T> inner) : IDocumentStore<T> 
         return FailWrites ? throw new InvalidOperationException("SAMPLE fault: write") : inner.CreateAsync(document, ct);
     }
     public Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default) { Check("Replace", document.Id); return inner.ReplaceAsync(document, ifMatchETag, ct); }
+    public Task<bool> DeleteAsync(string partitionKey, string id, CancellationToken ct = default) { Check("Delete", id); return inner.DeleteAsync(partitionKey, id, ct); }
 }
 
 /// <summary>Agent provisioning stand-in: writes into the fake directory and records every call.</summary>

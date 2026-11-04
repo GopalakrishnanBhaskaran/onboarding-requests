@@ -147,7 +147,12 @@ public class PermissionTests
     [Fact]
     public void No_route_creates_users_groups_or_role_assignments_or_handles_a_pass()
     {
-        var routes = TestApp.Create().Host.Routes;
+        // The one exception (4 Nov 2026, Gokul): a Developer deletes an app request record (WorkflowService.DeleteAsync: Cosmos
+        // documents of that request only). The API holds no Graph or ARM writer, so it never deletes anything in Entra or Azure.
+        const string deleteRequestRecord = "POST projects/{projectId}/requests/{requestId}/delete";
+        var all = TestApp.Create().Host.Routes;
+        Assert.Single(all, r => r == deleteRequestRecord);
+        var routes = all.Where(r => r != deleteRequestRecord).ToList();
         foreach (var forbidden in new[] { "grant", "assign", "provision", "users", "groups", "pass", "secret", "delete", "revoke" })
             Assert.DoesNotContain(routes, r => r.Contains(forbidden, StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(routes, r => r.StartsWith("DELETE", StringComparison.Ordinal) || r.StartsWith("PATCH", StringComparison.Ordinal));

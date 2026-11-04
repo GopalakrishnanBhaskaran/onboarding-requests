@@ -14,7 +14,8 @@ export function RequestsPage({ project }: { project: ProjectSummary }) {
   const s = useStyles();
   const [items, setItems] = useState<StatusLine[] | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const canSubmit = project.roles.includes('Requester');
+  // Developers submit simulations (4 Nov 2026).
+  const canSubmit = project.roles.includes('Requester') || project.roles.includes('Developer');
 
   const load = useCallback(async () => {
     setError(null);
@@ -77,7 +78,10 @@ export function RequestsPage({ project }: { project: ProjectSummary }) {
                     </Caption1>
                   </TableCell>
                   <TableCell className={s.wrap}><Breakable text={r.requester} /></TableCell>
-                  <TableCell><Badge appearance="filled" color={statusColor[r.status]}>{r.currentStage}</Badge></TableCell>
+                  <TableCell>
+                    <Badge appearance="filled" color={statusColor[r.status]}>{r.currentStage}</Badge>
+                    {r.simulated && <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }}>SIMULATION</Badge>}
+                  </TableCell>
                   <TableCell className={s.wrap}>{r.waitingOnLabel}</TableCell>
                   <TableCell className={s.wrap}><Caption1>{r.done.join(' · ') || '—'}</Caption1></TableCell>
                   <TableCell className={s.wrap}><Caption1>{r.next}</Caption1></TableCell>

@@ -8,6 +8,7 @@ namespace PmoReview.Core.Workflow;
 public static class VerifyCodes
 {
     public const string UserId = "ID_USER_NAME";
+    public const string Simulated = "SIMULATED";
     public const string GroupName = "ID_GROUP_NAME";
     public const string GroupConvention = "ID_GROUP_CONVENTION";
     public const string MembershipReported = "ID_MEMBERSHIP_REPORTED";
@@ -30,6 +31,10 @@ public static class VerifyCodes
 /// <summary>Verification outcome. <see cref="Pending"/>: something cannot be checked yet (no Entra reader here: the worker checks it).</summary>
 public sealed record Verification(IReadOnlyList<CheckResult> Checks)
 {
+    /// <summary>A developer's simulation: nothing was created or assigned, so nothing is read in Entra or Azure (4 Nov 2026).</summary>
+    public static Verification Simulated(string group, string what) =>
+        new([new CheckResult(VerifyCodes.Simulated, group, CheckStatus.Pass, $"SIMULATION: {what} not checked in Entra or Azure (nothing was created or assigned).")]);
+
     public bool Failed => Checks.Any(c => c.Status == CheckStatus.Fail);
     public bool Pending => !Failed && Checks.Any(c => c.Status == CheckStatus.Pending);
     public bool Passed => !Failed && !Pending;

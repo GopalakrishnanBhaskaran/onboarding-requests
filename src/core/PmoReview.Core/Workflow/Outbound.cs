@@ -159,6 +159,10 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
             all.AddRange(await stores.Notifications.ListAsync(project.Value.ProjectId, ct));
         }
         var pending = all.Where(n => n.Value.Status == NotificationStatus.Pending).ToList();
+        // A developer's simulation is never mailed (no real Owner, team or joiner is told; the ACS limit is kept for real mail).
+        var simulated = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var p in pending.Select(n => (n.Value.ProjectId, n.Value.RequestId)).Where(x => x.RequestId is not null).Distinct())
+            if ((await stores.Requests.GetAsync(p.ProjectId, p.RequestId!, ct))?.Value.Simulated == true) simulated.Add(p.RequestId!);
         var room = sender.Delivers ? MailBudget.Room(all.Select(n => n.Value), clock.UtcNow, limits ?? MailLimits.None, reserve) : 0;
         var throttled = false;
         var waiting = new List<Notification>();
@@ -169,6 +173,10 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
             if (!sender.Delivers || n.To.Count == 0)
             {
                 next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow };
+            }
+            else if (n.RequestId is not null && simulated.Contains(n.RequestId))
+            {
+                next = n with { Status = NotificationStatus.Recorded, SentAt = clock.UtcNow, LastError = "Simulation: kept in the app, not mailed" };
             }
             else if (throttled || room < MailLimits.Mails(Outgoing(n).To.Count))
             {
@@ -268,7 +276,7 @@ public sealed class AdoSync(DataStores stores, IWorkItemTracker tracker, IssueLo
             {
                 var r = v.Value;
                 var flow = r.Flow;
-                if (flow is null) continue;
+                if (flow is null || r.Simulated) continue; // a simulation is not tracked in Azure DevOps
                 var ado = flow.Ado ?? new AdoLink();
                 var close = flow.IsFinal;
                 if (ado.SyncedEvents >= flow.Events.Count && (!close || ado.Closed)) continue;

@@ -70,6 +70,9 @@ def run() -> None:
     # earlier name DataMaintainer (until 31 Oct 2026) is refused with the new name.
     ru.register(db, "PEST", "jane.doe@sample.invalid", ["ProdApprover", "DataSteward"], False, False)
     assert db.c["userAccess"].docs["signin:jane.doe@sample.invalid:PEST"]["roles"] == ["ProdApprover", "DataSteward"]
+    # 4 Nov 2026: the Developer role (simulations, deleting requests) can be registered next to the others.
+    ru.register(db, "PEST", "dev.one@sample.invalid", ["Requester", "Developer"], False, False)
+    assert db.c["userAccess"].docs["signin:dev.one@sample.invalid:PEST"]["roles"] == ["Requester", "Developer"]
     try:
         ru.register(db, "PEST", "jane.doe@sample.invalid", ["DataMaintainer"], False, False)
         raise AssertionError("DataMaintainer was registered")

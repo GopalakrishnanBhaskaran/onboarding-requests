@@ -140,6 +140,8 @@ public sealed record Escalation : IDocument
     public required EscalationKind Kind { get; init; }
     public string? RequestId { get; init; }
     public int? RequestRevision { get; init; }
+    /// <summary>Raised for a developer's simulation: the developer decides it (4 Nov 2026).</summary>
+    public bool Simulated { get; init; }
     /// <summary>What the approvers saw (group, level, Azure roles, environment); the decision counts only for this.</summary>
     public string? ScopeFingerprint { get; init; }
     /// <summary>The person the access is for (Enterprise ID or domain-specific ID).</summary>

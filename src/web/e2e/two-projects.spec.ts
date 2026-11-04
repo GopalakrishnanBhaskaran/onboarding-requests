@@ -408,3 +408,58 @@ test('Offboard user: PMO asks for a plan on the request page; the requester does
   await expect(panel.getByRole('button', { name: 'Offboard user' })).toHaveCount(0); // a second click cannot start another run
   await paul.ctx.close();
 });
+
+test('Developer: a simulation runs every stage with the developer acting for each, then the developer deletes it', async ({ browser }) => {
+  const dev = await as(browser, 'sample-user-dev'); // Developer role only (SAMPLE-ALPHA)
+  const page = dev.page;
+  await page.goto('/#/requests/new');
+  await expect(page.getByRole('heading', { name: 'New onboarding request' })).toBeVisible();
+  // Developer only: every request is a simulation (the switch is on and fixed).
+  const sw = page.getByRole('switch', { name: 'Simulation (developer dry run)' });
+  await expect(sw).toBeChecked();
+  await expect(sw).toBeDisabled();
+  await page.getByLabel('Enterprise ID').fill(enterpriseId('sim'));
+  await page.getByLabel('First name').fill('Sample');
+  await page.getByLabel('Last name').fill('Simulation');
+  await page.getByRole('combobox', { name: /^Resource/ }).selectOption('Engineering');
+  await page.getByRole('table', { name: 'Resolved access' }).getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await page.getByRole('textbox', { name: 'Justification' }).fill('SAMPLE: developer dry run of the onboarding flow for the data engineering workspace.');
+  await page.getByLabel('Owner (sign-in name)').fill('sample-user-olivia@sample.invalid');
+  await page.getByRole('button', { name: 'Submit simulation' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: /^Request [0-9a-f]{8}/ })).toBeVisible();
+  const id = page.url().split('/requests/')[1];
+  await expect(page.getByText('SIMULATION', { exact: true })).toBeVisible();
+  await expectStage(page, 'Awaiting Owner');
+
+  // The developer acts for the Owner (not the named Owner) and for Security.
+  await decide(page, 'Approve business need');
+  await expectStage(page, 'Awaiting Security');
+  await decide(page, 'Approve risk and access level');
+  await expectStage(page, 'With ID Team');
+  await page.getByRole('button', { name: 'Pick up task' }).click();
+  await page.getByLabel('The user is a member of the group').check();
+  await page.getByRole('button', { name: 'Record completion' }).click();
+  await expectStage(page, 'With Role Team');
+  await page.getByRole('button', { name: 'Pick up task' }).click();
+  await page.getByRole('button', { name: 'Record completion' }).click();
+  await expectStage(page, 'Completed');
+
+  // The list marks it; then it is deleted (a simulation needs no reason) and is gone.
+  await page.goto('/#/requests');
+  const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: id.slice(0, 8) }) });
+  await expect(row.getByText('SIMULATION')).toBeVisible();
+  await open(page, id);
+  await page.getByRole('button', { name: 'Delete simulation' }).click();
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
+  await page.getByLabel('I understand this cannot be undone').check();
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Requests' })).toBeVisible();
+  expect((await page.request.get(`/api/projects/SAMPLE-ALPHA/requests/${id}`)).status()).toBe(404);
+
+  // A requester sees no Delete and no Simulation switch.
+  const alice = await as(browser, 'sample-user-alice');
+  await alice.page.goto('/#/requests/new');
+  await expect(alice.page.getByRole('heading', { name: 'New onboarding request' })).toBeVisible();
+  await expect(alice.page.getByRole('switch', { name: 'Simulation (developer dry run)' })).toHaveCount(0);
+  for (const u of [dev, alice]) await u.ctx.close();
+});

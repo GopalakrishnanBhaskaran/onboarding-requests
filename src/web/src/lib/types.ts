@@ -1,7 +1,7 @@
 // Mirrors the API contracts in src/core. Server is the authority for every value here.
 
 export type AppRole = 'Requester' | 'Owner' | 'Security' | 'IdTeam' | 'RoleTeam' | 'PMO' | 'Operator' | 'Reviewer' | 'Maintainer'
-  | 'ProdApprover' | 'DataSteward';
+  | 'ProdApprover' | 'DataSteward' | 'Developer';
 export type RequestStatus =
   | 'Submitted' | 'AiReview' | 'Returned' | 'AwaitingOwner' | 'AwaitingSecurity' | 'AwaitingProdApproval' | 'Rejected'
   | 'WithIdTeam' | 'WithRoleTeam' | 'Verifying' | 'Completed' | 'FailedNeedsDev' | 'Closed';
@@ -11,7 +11,8 @@ export type ReviewOutcome = 'Pass' | 'Fail' | 'Pending';
 export type CheckStatus = 'Pass' | 'Fail' | 'Pending' | 'NotApplicable' | 'Flagged';
 export type GroupState = 'Exists' | 'ToBeCreated';
 export type TeamTaskState = 'Open' | 'Reported' | 'Returned' | 'Verified' | 'Cancelled';
-export type ActionName = 'ApproveOwner' | 'ApproveSecurity' | 'IdTeamTask' | 'RoleTeamTask' | 'Resubmit';
+/** Delete: Developer only, on the request page (never in My actions). */
+export type ActionName = 'ApproveOwner' | 'ApproveSecurity' | 'IdTeamTask' | 'RoleTeamTask' | 'Resubmit' | 'Delete';
 
 export interface Item<T> {
   value: T;
@@ -195,6 +196,8 @@ export interface AccessRequest extends IntakeFields {
   updatedAt: string;
   revision: number;
   flow: WorkflowState | null;
+  /** A developer's simulation: nothing is created in Entra or Azure, mails stay in the app (4 Nov 2026). */
+  simulated?: boolean;
 }
 
 export interface StatusLine {
@@ -214,6 +217,8 @@ export interface StatusLine {
   resource: string | null;
   accessLevel: string | null;
   updatedAt: string;
+  /** A developer's simulation (4 Nov 2026). */
+  simulated?: boolean;
 }
 
 export interface DurationItem {
@@ -496,6 +501,8 @@ export interface Escalation {
   projectId: string;
   kind: EscalationKind;
   requestId?: string | null;
+  /** Raised for a developer's simulation: the developer decides it. */
+  simulated?: boolean;
   requestRevision?: number | null;
   user?: string | null;
   group?: string | null;
@@ -625,4 +632,17 @@ export type OffboardingReason = 'Leaver' | 'ContractEnd' | 'Transfer' | 'Securit
 export interface OffboardingPlanInput {
   reason: OffboardingReason;
   ticket?: string;
+}
+
+/** Result of deleting a request (Developer, 4 Nov 2026). */
+export interface DeletedRequest {
+  requestId: string;
+  simulated: boolean;
+  statusAtDeletion: string;
+  reviewRunsRemoved: number;
+  notificationsRemoved: number;
+  issuesRemoved: number;
+  escalationsRemoved: number;
+  responseRecordKept: boolean;
+  note: string;
 }

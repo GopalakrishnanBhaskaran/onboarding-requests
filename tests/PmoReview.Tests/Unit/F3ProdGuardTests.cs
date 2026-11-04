@@ -87,6 +87,39 @@ public class F3ProdGuardTests
         else await app.Stores.UserAccess.ReplaceAsync(existing.Value with { Roles = [.. existing.Value.Roles, role] }, existing.ETag);
     }
 
+    /// <summary>
+    /// 4 Nov 2026: a developer's simulation in Prod above Read also waits for the Prod stage; the developer decides that
+    /// escalation (marked simulated) and nothing is provisioned. A real Prod escalation stays the ProdApprover's.
+    /// </summary>
+    [Fact]
+    public async Task F3_a_simulation_in_prod_is_decided_by_the_developer_and_a_real_one_is_not()
+    {
+        const string dev = "sample-user-dev";
+        var app = await App();
+        await Grant(app, dev, AppRole.Developer);
+        var sim = await app.Call(dev, "POST", $"projects/{TestApp.Pest}/requests/simulate", Prod());
+        Assert.True(sim.Status == 201, sim.Body);
+        var id = sim.Request.GetProperty("id").GetString()!;
+        await app.RunWorker();
+        Assert.Equal(200, (await app.Approve(id, dev, project: TestApp.Pest)).Status);
+        Assert.Equal(200, (await app.Approve(id, dev, project: TestApp.Pest)).Status);
+        Assert.Equal(RequestStatus.AwaitingProdApproval, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+        var e = await TheEscalation(app, id);
+        Assert.True(e.Simulated);
+        var decided = await Decide(app, dev, e.Id);
+        Assert.True(decided.Status == 200, decided.Body);
+        var r = await app.Request(id, TestApp.Pest);
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Flow!.Status, r.Flow.WaitingOn)); // the developer does the ID team step
+        await app.RunWorker();
+        Assert.Empty(app.Writer.Calls);
+
+        var real = await BothApproved(app, TestApp.Intake(enterpriseId: "jane.real@sample-corp.invalid", resource: Platform, accessLevel: "Support Writer",
+            environment: "Prod", justification: Reason, first: "Jane", last: "Real"));
+        var refused = await Decide(app, dev, (await TheEscalation(app, real)).Id);
+        Assert.Equal(403, refused.Status); // a real Prod escalation: ProdApprover only
+        Assert.Equal(RequestStatus.AwaitingProdApproval, (await app.Request(real, TestApp.Pest)).Flow!.Status);
+    }
+
     [Fact]
     public async Task F3_prod_write_via_the_api_waits_after_both_approvals_and_nothing_is_granted()
     {

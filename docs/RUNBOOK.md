@@ -67,6 +67,7 @@ rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
 | `RoleTeam` | role assignment team tasks: pick up, hand back, report |
 | `PMO` | edit the mapping sheet and the Contact inventory; reports |
 | `Operator` | issues, reports, recover runs, resume after a fix; the Contact inventory |
+| `Developer` | (4 Nov 2026) **simulations**: a request marked SIMULATION where the developer acts for the Owner, Security, ProdApprover and both teams; the AI agent creates nothing in Entra or Azure for it, its checks are simulated, its mails stay in the app and it is not in the response document. **Delete any request** (a real one needs a reason; audited; access already granted stays: Offboard user removes it). No right on a real request otherwise. |
 
 ```bash
 # after "Pilot session start"

@@ -51,6 +51,10 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const [copied, setCopied] = useState(false);
   // v1.1 F1 (new requests): Resource* options of this tenant, dropdown or checkboxes, the resolved list and the ticked groups.
   const isNew = !requestId;
+  // Developer (4 Nov 2026): a simulation runs every stage with nothing created in Entra or Azure; only Developers see it.
+  const developer = project.roles.includes('Developer');
+  const requester = project.roles.includes('Requester');
+  const [simulate, setSimulate] = useState(developer && !requester);
   const [mode, setMode] = useState<SelectionMode>('dropdown');
   const [options, setOptions] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -155,7 +159,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
         const result = await api.submitBundle(project.projectId, {
           enterpriseId: body.enterpriseId ?? null, firstName: body.firstName ?? null, lastName: body.lastName ?? null, environment: body.environment ?? null,
           justification: body.justification ?? null, owner: body.owner ?? null, guest: fields.guest, selectedResources: chosen, groups: ticked,
-        });
+        }, simulate);
         navigate(result.requests.length === 1 ? { page: 'request', requestId: result.requests[0].requestId } : { page: 'requests' });
         return;
       }
@@ -364,9 +368,16 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
           <Input type="email" value={fields.owner} onChange={(_, d) => set('owner')(d.value)} maxLength={200} autoComplete="off" />
         </Field>
         <Checkbox checked={fields.guest} onChange={(_, d) => setFields((f) => ({ ...f, guest: d.checked === true }))} label="Guest (external) user" />
+        {isNew && developer && (
+          <Field hint={requester
+            ? 'Developer: a simulation runs every stage with you acting for the Owner, Security and the teams. Nothing is created in Entra or Azure and its mails stay in the app.'
+            : 'You have the Developer role only, so your requests are simulations: every stage runs with you acting for each, nothing is created in Entra or Azure and mails stay in the app.'}>
+            <Switch label="Simulation (developer dry run)" checked={simulate} disabled={!requester} onChange={(_, d) => setSimulate(d.checked)} />
+          </Field>
+        )}
         <div className={s.row}>
           <Button appearance="primary" type="submit" disabled={saving || invalid || stale}>
-            {saving ? 'Submitting…' : requestId ? 'Resubmit request' : 'Submit request'}
+            {saving ? 'Submitting…' : requestId ? 'Resubmit request' : simulate && isNew ? 'Submit simulation' : 'Submit request'}
           </Button>
           <Button onClick={() => navigate(requestId ? { page: 'request', requestId } : { page: 'requests' })}>Cancel</Button>
         </div>

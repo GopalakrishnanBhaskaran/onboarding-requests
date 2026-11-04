@@ -198,7 +198,8 @@ public sealed partial class OffboardingService(DataStores stores, IClock clock, 
 
     private static async Task<List<AccessRequest>> RequestsForAsync(DataStores stores, string projectId, string upn, CancellationToken ct) =>
         (await stores.Requests.ListAsync(projectId, ct)).Select(r => r.Value)
-            .Where(r => r.ProjectId == projectId && string.Equals(r.DomainId, upn, StringComparison.OrdinalIgnoreCase)).ToList();
+            // A developer's simulation grants nothing, so it never makes a person the project's own (offboardable).
+            .Where(r => r.ProjectId == projectId && !r.Simulated && string.Equals(r.DomainId, upn, StringComparison.OrdinalIgnoreCase)).ToList();
 
     /// <summary>The project's Owner and Security both approved this request (its access was, or is being, granted).</summary>
     private static bool Granted(AccessRequest r) =>

@@ -30,4 +30,7 @@ public interface IDocumentStore<T> where T : class, IDocument
 
     /// <exception cref="ConcurrencyException">ETag mismatch or document missing.</exception>
     Task<Versioned<T>> ReplaceAsync(T document, string ifMatchETag, CancellationToken ct = default);
+
+    /// <summary>Removes one document (4 Nov 2026: deleting a request). False when it was not there.</summary>
+    Task<bool> DeleteAsync(string partitionKey, string id, CancellationToken ct = default);
 }

@@ -1129,6 +1129,16 @@
       ],
       "isSample": true,
       "schemaVersion": 1
+    },
+    {
+      "id": "sample-user-dev:SAMPLE-ALPHA",
+      "userId": "sample-user-dev",
+      "projectId": "SAMPLE-ALPHA",
+      "roles": [
+        "Developer"
+      ],
+      "isSample": true,
+      "schemaVersion": 1
     }
   ],
   "peopleInventory": [

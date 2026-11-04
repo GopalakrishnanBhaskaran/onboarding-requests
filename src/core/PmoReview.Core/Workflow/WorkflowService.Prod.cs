@@ -34,8 +34,11 @@ public sealed partial class WorkflowService
     public async Task<EscalationDecisionResult> DecideProdEscalationAsync(CallerContext caller, string projectId, string escalationId, EscalationDecisionInput input,
         string cid, CancellationToken ct)
     {
-        caller.Require(projectId, Permission.DecideProdEscalation);
-        var stored = await stores.Escalations.GetAsync(projectId, escalationId, ct) ?? throw AppException.NotFound("Escalation");
+        if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
+        var stored = await stores.Escalations.GetAsync(projectId, escalationId, ct);
+        // A developer decides the Prod stage of a simulation only (Simulate); everyone else needs the ProdApprover role.
+        if (stored is null || !caller.Has(projectId, Permission.Simulate)) caller.Require(projectId, Permission.DecideProdEscalation);
+        if (stored is null) throw AppException.NotFound("Escalation");
         var e = stored.Value;
         if (e.Kind != EscalationKind.ProdWrite || e.RequestId is null)
             throw AppException.Conflict("not_prod_escalation", "Only production (ProdWrite) escalations are decided here.");
@@ -49,6 +52,7 @@ public sealed partial class WorkflowService
 
         var current = await requests.LoadAsync(projectId, e.RequestId, ct);
         var r = current.Value;
+        RequireFor(caller, r, Permission.DecideProdEscalation); // Simulate counts on a simulation only
         var flow = r.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request.");
         if (flow.Status != RequestStatus.AwaitingProdApproval || flow.Scope is not { } scope)
             throw AppException.Conflict("not_awaiting_prod", $"The request is {StatusText.Label(flow.Status)}; no Prod decision is pending.");
@@ -58,11 +62,12 @@ public sealed partial class WorkflowService
                 $"The request changed after this escalation was raised (now revision {r.Revision}). Nothing was approved; read the current request and its escalation.");
         // Four eyes: whoever submitted or resubmitted any revision, the person who gets the access, and the people who
         // approved the earlier stages never decide the Prod stage.
-        if (SubmittedBy(r, caller))
+        // (A simulation grants nothing, so the developer acts for every stage of it.)
+        if (!r.Simulated && SubmittedBy(r, caller))
             throw new AppException(ErrorKind.Forbidden, "requester_cannot_approve", "You submitted or changed this request; another ProdApprover must decide it.");
-        if (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId))
+        if (!r.Simulated && (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId)))
             throw new AppException(ErrorKind.Forbidden, "beneficiary_cannot_approve", "This request gives you access; another ProdApprover must decide it.");
-        if (flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId || flow.CurrentApproval(ApprovalStage.Security)?.By == caller.UserId)
+        if (!r.Simulated && (flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId || flow.CurrentApproval(ApprovalStage.Security)?.By == caller.UserId))
             throw AppException.Conflict("same_approver", "You approved an earlier stage of this request; another ProdApprover must decide the Prod stage.");
         var sheet = await sources.ReadMappingSheetAsync(projectId, ct);
         if (!MappingSheet.AsReviewed(sheet, r.Resource, scope.SheetFingerprint, scope.MappingRowId, clock.UtcNow))

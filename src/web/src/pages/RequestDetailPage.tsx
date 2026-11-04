@@ -13,6 +13,7 @@ import { ApprovalPanel } from '../components/ApprovalPanel';
 import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPanel';
 import { Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 import { OffboardingPanel } from '../components/OffboardingPanel';
+import { DeleteRequestPanel } from '../components/DeleteRequestPanel';
 
 const POLL_MS = 15000;
 const POLL_LIMIT_MS = 12 * 60000;
@@ -83,6 +84,15 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
     <div className={s.stack}>
       <PageTitle>{`Request ${r.id.slice(0, 8)}`}</PageTitle>
       <ErrorBar error={error} />
+      {r.simulated && (
+        <MessageBar intent="warning" layout="multiline">
+          <MessageBarBody>
+            <MessageBarTitle>SIMULATION</MessageBarTitle>
+            A developer&apos;s dry run: the developer acts for the Owner, Security and the teams; the AI agent creates nothing in Entra or Azure,
+            the checks are simulated and mails stay in the app.
+          </MessageBarBody>
+        </MessageBar>
+      )}
 
       <section className={s.section} aria-labelledby="status-h">
         <div className={s.row}>
@@ -130,9 +140,10 @@ export function RequestDetailPage({ project, requestId }: { project: ProjectSumm
 
       {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} onDone={done} onStale={() => void load()} />}
       {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} onDone={done} onStale={() => void load()} />}
-      {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && (
+      {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && !r.simulated && (
         <OffboardingPanel project={project} enterpriseId={r.domainId} />
       )}
+      {view.actions.includes('Delete') && <DeleteRequestPanel request={r} />}
       {view.approvalHint && (
         <MessageBar intent="info" layout="multiline">
           <MessageBarBody><MessageBarTitle>Waiting for a decision</MessageBarTitle>{view.approvalHint}</MessageBarBody>
