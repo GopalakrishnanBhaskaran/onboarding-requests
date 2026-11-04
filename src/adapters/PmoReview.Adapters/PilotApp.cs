@@ -205,7 +205,7 @@ public static class PilotApp
         ISigningKeys? signingKeys = null)
     {
         var parts = BuildWorkflow(stores, settings, clock, loggers, model, queue, directory, roles);
-        var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>());
+        var host = new ApiHost(new AccessService(stores), settings.AllowedIdentityProviders, loggers.CreateLogger<ApiHost>(), new ApiFailureLog(stores, parts.Issues));
         host.MapCore(stores, parts.Service, parts.MappingSheet, parts.Contacts);
         host.MapRuns(parts.Runs);
         host.MapV11(parts.Service, parts.Resources, parts.Bundles);

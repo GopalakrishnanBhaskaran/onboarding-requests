@@ -29,6 +29,7 @@ Branch **`claude/serene-ramanujan-jqgfo3`**, pushed. It starts from `main` at `5
   - **TAP wording (30):** the website now says "the agent mails the pass" only when the worker can (`TAP_MAIL_SENDER` set). With the live settings (AGENT_TAP on, no sender) it will say the ID team issues the pass, which matches what happens. `app` now copies `TAP_MAIL_SENDER` to the website.
   - **Start-up refusals (31):** worker *and* website refuse to start on an `AGENT_TENANT_ID` that is not a GUID, a bad id in `OFFBOARD_SUBSCRIPTIONS`, or a misspelt `NOTIFY_SENDER`. Check the live values before deploying (step 1).
   - **Offboarding:** a delete switched off after the plan is "left to people" (32). Verify also reads the people inventory (27 closed).
+  - **"Something went wrong" is traceable (34).** Gokul saw it on the live site on 4 Nov, without a reference. Before this change nothing kept it: managed Functions errors are visible only through Application Insights, which is not allowed (F114). After the `app` deploy, each such error is an issue in Issues and reports: route, error type, code location and the last 5 references. The 4 Nov error itself cannot be traced: repeat what was done after the deploy, then read the issue.
 - **Code not yet deployed** (unless Gokul ran `worker` + `app` after `7922922`; `verify_features` line 1 tells):
   - worker: a run that sees no subscription is never Completed; verify looks again before a removal of its own counts as a leftover; a 403 names the token delay;
   - app: the switched-off message is information, not an error; the website follows the worker's `AGENT_OFFBOARDING` on every `app` deploy.
@@ -42,6 +43,7 @@ Branch **`claude/serene-ramanujan-jqgfo3`**, pushed. It starts from `main` at `5
    `az staticwebapp appsettings list -n swa-pmo-pilot-pkt2ofpqmlf3e -g rg-pmo-review-pilot --query "properties.{AGENT_TENANT_ID:AGENT_TENANT_ID, NOTIFY_SENDER:NOTIFY_SENDER}" -o table`
    Then `tools/deploy_free.sh worker $SUB` and `tools/deploy_free.sh app $SUB` (no approval), in that order. The `app` deploy now ships the **.NET 10 API**: it must end "Deployed commit …"; then sign in and open a request. If it fails with "Function language info isn't provided", roll back (`git checkout a88e69a && tools/deploy_free.sh app $SUB`) and log it under F21. Check the offboarding settings (read-only):
    `az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?name=='AGENT_OFFBOARDING' || name=='OFFBOARD_SUBSCRIPTIONS' || name=='OFFBOARD_DELETE_USER']" -o table`
+   Then repeat the action that showed "Something went wrong" on 4 Nov (ask Gokul which page). If it shows again, open **Issues and reports** → "The website's API failed on …", or run `bash tools/workflow_diag.sh $SUB` (NEEDS DEVELOPER lines). Bring back the route, error type and code location (`REVIEW.md` 34).
    Then `bash tools/verify_features.sh $SUB`. Expected: lines 1, 16, 17 PASS; 5b and 15 WAIT (5b now reads "website says the ID team issues the pass"). Log it as live check U. If the worker or the website fails to start, its log names the setting (re-check 6, 31): fix the value with `environment` or `az … appsettings set` and deploy again.
 2. **Graph permissions held** (read-only): `tools/deploy_free.sh grant-graph $SUB` prints them. `User.RevokeSessions.All` and `User.EnableDisableAccount.All` must be listed. If they are missing, the switch-on did not run: dry run again, wait for "approved", then `--approved-by`.
 3. **Entra check:** the test account should no longer be in `azr-pes-rg-data-dev-ph-weu-dataengineers`. That confirms F104 (index lag).
@@ -78,10 +80,10 @@ Branch **`claude/serene-ramanujan-jqgfo3`**, pushed. It starts from `main` at `5
 - **Dates:** deploy the .NET 10 API (`app`, step 1) before **10 Nov** (.NET 9 end of support, F21); P2 trial ends ~15 Nov (F48).
 
 ## Tests at hand-off (4 Nov, re-check 6)
-- .NET 530 (529 pass, 1 opt-in Cosmos emulator skip; 28 new in `AgentInitializationTests` and `F5OffboardingTests`); all projects net10.0; `dotnet build PmoReview.slnx` with no warnings.
+- .NET 535 (534 pass, 1 opt-in Cosmos emulator skip; 33 new in `AgentInitializationTests`, `F5OffboardingTests` and `ApiFailureLogTests`); all projects net10.0; `dotnet build PmoReview.slnx` with no warnings.
 - SPA 24/24; web build OK.
 - Python tool self-tests pass (verify_features with 4 new 5b cases, import, register, seed); Databricks AIM / SCIM self-tests pass.
-- Mutation checks: each re-check 6 fix undone in turn → its new test fails (9 of 9).
+- Mutation checks: each re-check 6 fix undone in turn → its new test fails (11 of 11).
   - When re-running mutations, `touch` the restored file. A restored older timestamp lets the incremental build keep the mutant: build with `--no-incremental` after.
 - Playwright 11/11 last on `163a9ed` (31 Oct; not re-run, no SPA change).
 - Local: the container used Ubuntu's `dotnet-sdk-10.0` (10.0.114); Cloud Shell installs .NET 10 itself (`ensure_dotnet10`).

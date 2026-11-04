@@ -126,7 +126,7 @@ Full detail: `docs/GO_LIVE.md`. No Azure resource or permission change, so no ap
 | Approval waiting too long | Agent reminds at SLA, escalates to the manager at 2× SLA (`OWNER_SLA_HOURS`, `SECURITY_SLA_HOURS`). Never auto-approves. |
 | Team task not picked up | Same SLA handling (`ID_TEAM_SLA_HOURS`, `ROLE_TEAM_SLA_HOURS`); issue `TaskSlaBreached`. |
 | Unauthorized approval issue | Someone other than the named Owner / a Security member tried to decide. Ignored; Security reviews. |
-| User reports an error | Ask for the "Reference" (correlation id) shown in the error bar; search logs for it. |
+| User reports an error ("Something went wrong") | Ask for the "Reference" under the message, the page and the time. Then open **Issues and reports** in that project (Operator or Security): the issue "The website's API failed on <route> (<error type>)" lists the last 5 references, how often it happened and where in the code. Or run `bash tools/workflow_diag.sh <sub>` (NEEDS DEVELOPER lines, also for a person with no project). There are no other logs: managed Functions errors are visible only through Application Insights, which the pilot does not create (F114). Nothing from the request is kept, so ask the person what they did. |
 | New person needs access | Register them by sign-in name (section *Register people*). They don't need to sign in first. Unregistered people see no data. |
 | Change the mapping sheet | PMO edits it in the app (Mapping sheet page). In-flight requests for that resource are re-reviewed automatically. |
 | Rotate Cosmos key | `az cosmosdb keys regenerate --key-kind primary`; re-run the app-setting step from `deploy_free.sh`. |
