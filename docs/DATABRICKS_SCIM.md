@@ -43,7 +43,7 @@ Databricks recommends **automatic identity management (AIM)** over SCIM. AIM is 
 ```bash
 az account show -o table                     # the Entra tenant of the Databricks account
 cd ~ && { [ -d onboarding-requests ] || git clone -q https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git; }
-cd ~/onboarding-requests && git fetch -q origin && git checkout -q claude/elegant-darwin-nfot4p && git pull -q
+cd ~/onboarding-requests && git fetch -q origin && git checkout -q claude/serene-ramanujan-jqgfo3 && git pull -q
 S=tools/databricks/entra_scim_setup.sh
 bash $S self-test                            # offline check of the script itself: "self-test passed"
 

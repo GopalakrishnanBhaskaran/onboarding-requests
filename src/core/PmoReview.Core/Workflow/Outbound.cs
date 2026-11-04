@@ -335,20 +335,46 @@ public sealed class DailySummaryJob(DataStores stores, Notifier notifier, IClock
 
 public sealed record WorkerSummary(int Advanced, int Notifications, int WorkItems, bool DailySummary);
 
-/// <summary>One worker cycle: agent steps for open requests, notifications, Azure DevOps, daily summary.</summary>
+/// <summary>
+/// One worker cycle: group names, offboarding, agent steps for open requests, notifications, Azure DevOps, daily summary.
+/// Each job runs even when an earlier one failed (re-check 6: an unexpected error in one offboarding run stopped every
+/// review, approval mail and team task of the cycle, and of every later cycle while it lasted). A failure is logged with
+/// its job and type and, after the other jobs ran, the cycle still fails, so it is never silent. Cancellation stops at once.
+/// </summary>
 public sealed class WorkflowWorker(WorkflowAgent agent, NotificationDispatcher notifications, AdoSync ado, DailySummaryJob daily, GroupResolutionJob? groups = null,
-    Offboarding.OffboardingJob? offboarding = null)
+    Offboarding.OffboardingJob? offboarding = null, ILogger<WorkflowWorker>? logger = null)
 {
     public async Task<WorkerSummary> RunOnceAsync(string correlationId, CancellationToken ct)
     {
+        var failed = new List<Exception>();
+        async Task<T> Job<T>(string name, Func<Task<T>> run, T fallback)
+        {
+            try
+            {
+                return await run();
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                logger?.LogError("worker job {Job} failed {ExceptionType} cid={Cid}; the other jobs still run", name, e.GetType().Name, correlationId);
+                failed.Add(new WorkerJobException(name, e));
+                return fallback;
+            }
+        }
         // v1.1 (F1): group names resolved in Entra first, so the selector and the escalations are fresh.
-        if (groups is not null) await groups.RunOnceAsync(ct);
+        if (groups is not null) await Job("group-resolution", () => groups.RunOnceAsync(ct), 0);
         // v1.1 (F5): offboarding plans and confirmed runs, before the requests (it closes the person's open ones).
-        if (offboarding is not null) await offboarding.RunOnceAsync(ct);
-        var advanced = await agent.RunOnceAsync(correlationId, ct);
-        var sent = await notifications.RunOnceAsync(ct);
-        var items = await ado.RunOnceAsync(ct);
-        var summary = await daily.RunOnceAsync(ct);
+        if (offboarding is not null) await Job("offboarding", () => offboarding.RunOnceAsync(ct), 0);
+        var advanced = await Job("agent", () => agent.RunOnceAsync(correlationId, ct), 0);
+        var sent = await Job("notifications", () => notifications.RunOnceAsync(ct), 0);
+        var items = await Job("ado", () => ado.RunOnceAsync(ct), 0);
+        var summary = await Job("daily-summary", () => daily.RunOnceAsync(ct), false);
+        if (failed.Count > 0) throw new AggregateException($"{failed.Count} worker job(s) failed; the others ran.", failed);
         return new WorkerSummary(advanced, sent, items, summary);
     }
+}
+
+/// <summary>A worker job that failed; the other jobs of the cycle ran. Carries the job name and the original error.</summary>
+public sealed class WorkerJobException(string job, Exception inner) : Exception($"worker job {job} failed ({inner.GetType().Name})", inner)
+{
+    public string Job { get; } = job;
 }

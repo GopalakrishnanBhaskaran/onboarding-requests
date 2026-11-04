@@ -77,6 +77,15 @@ public sealed partial class WorkflowAgent
         settings.AgentRoleAssignment && task.State == TeamTaskState.Open && (task.Agent is not ({ Completed: true } or { Manual: not null }) || ResumeReason(task, scope) is not null);
 
     private const string PrivilegedLeft = " is privileged access (agent privileged provisioning is off)";
+    private const string ProvisioningSwitchedOff = "AI agent provisioning was switched off (AGENT_PROVISIONING=false) while the task waited for the agent";
+    private const string RoleAssignmentSwitchedOff = "AI agent role assignment was switched off (AGENT_ROLE_ASSIGNMENT=false) while the task waited for the agent";
+
+    /// <summary>
+    /// Re-check 6: the task was created for the agent (no team mail, the team cannot act on it), then the switch went off
+    /// (always allowed). The team gets the whole task now instead of a reminder it cannot act on a day later.
+    /// </summary>
+    private static bool SwitchedOffWhileWaiting(TeamTask task, WorkflowState flow, bool switchOn) =>
+        !switchOn && task.State == TeamTaskState.Open && flow.WaitingOn == WaitingOn.Agent && task.Agent is not ({ Completed: true } or { Manual: not null });
     private const string NotAllowListed = "are not on the agent's allow-list (role or scope)";
 
     /// <summary>
@@ -89,6 +98,8 @@ public sealed partial class WorkflowAgent
         if (task.PickedUpAt is not null || task.Agent is not { Completed: false, Manual: { } m }) return null;
         if (settings.AgentPrivileged && (m.EndsWith(PrivilegedLeft, StringComparison.Ordinal) || m.EndsWith(" is privileged access", StringComparison.Ordinal)))
             return "privileged rows are now done by the AI agent";
+        if (m == (task.Team == AppRole.IdTeam ? ProvisioningSwitchedOff : RoleAssignmentSwitchedOff))
+            return task.Team == AppRole.IdTeam ? "AI agent provisioning is switched on again" : "AI agent role assignment is switched on again";
         if (task.Team == AppRole.RoleTeam && m.Contains(NotAllowListed, StringComparison.Ordinal) && scope?.Grants() is { Count: > 0 } grants
             && grants.All(g => g.RoleId is not null && g.Scope is not null && AllowListed(g)))
             return "every approved Azure role is now on the agent's allow-list";

@@ -50,7 +50,7 @@ public sealed class TestApp
     public static string SignIn(string user) => $"{user}@sample.invalid";
 
     public DataStores Stores { get; }
-    public FixedClock Clock { get; } = new(new DateTimeOffset(2026, 10, 17, 9, 0, 0, TimeSpan.Zero));
+    public FixedClock Clock { get; }
     public ApiHost Host { get; }
     /// <summary>The API's own parts (no directory reader, like the SWA-managed API).</summary>
     public WorkflowParts Api { get; }
@@ -69,25 +69,37 @@ public sealed class TestApp
     public PilotSettings Settings { get; }
 
     private TestApp(PilotSettings settings, IReviewModel? model, IQueueClient? queue, IDirectoryReader? apiDirectory, DataStores? stores = null,
-        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null)
+        ILoggerFactory? loggers = null, PmoReview.Core.Uploads.ISigningKeys? signingKeys = null, TestApp? before = null)
     {
         loggers ??= NullLoggerFactory.Instance;
-        Stores = stores ?? InMemoryDataStores.Create();
-        SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
+        Stores = before?.Stores ?? stores ?? InMemoryDataStores.Create();
+        // A restart keeps the data: only a new world is seeded (re-check 6: re-seeding put every SAMPLE row back).
+        if (before is null)
+            SampleDataLoader.SeedAsync(Stores, SampleDataLoader.Read(Path.Combine(AppContext.BaseDirectory, "sample-data.json"), SampleAccessScope)).GetAwaiter().GetResult();
+        Clock = before?.Clock ?? new FixedClock(new DateTimeOffset(2026, 10, 17, 9, 0, 0, TimeSpan.Zero));
         Settings = settings;
-        Directory = FakeDirectory.SeededFromSample();
-        Roles = new FakeRoles();
+        Directory = before?.Directory ?? FakeDirectory.SeededFromSample();
+        Roles = before?.Roles ?? new FakeRoles();
         Api = PilotApp.BuildWorkflow(Stores, settings, Clock, loggers, model, queue, apiDirectory);
         Host = PilotApp.Build(Stores, settings, Clock, loggers, model, queue, apiDirectory, signingKeys: signingKeys);
         Writer = new FakeDirectoryWriter(Directory, () => Clock.UtcNow);
         RoleWriter = new FakeRoleWriter(Roles);
         Mail = new FakeDirectMail();
-        Offboarding = new FakeOffboarding(Directory);
+        Offboarding = before?.Offboarding ?? new FakeOffboarding(Directory);
         Loggers = loggers;
+        // The production worker's rule (WorkerStartup.Capabilities): e.g. the agent TAP mail only with a TAP sender mailbox.
+        // The role reader is always there in the tests (production: ROLE_READER=Arm).
+        var can = WorkerStartup.Capabilities(settings, _ => "Arm");
         Worker = PilotApp.BuildWorkflow(Stores, settings with { Dispatcher = "Inline" }, Clock, loggers, model, directory: Directory, roles: Roles,
-            writer: settings.Workflow.AgentProvisioning ? Writer : null, roleWriter: settings.Workflow.AgentRoleAssignment ? RoleWriter : null,
-            directMail: settings.Workflow.AgentTap ? Mail : null);
+            writer: can.DirectoryWriter ? Writer : null, roleWriter: can.RoleWriter ? RoleWriter : null,
+            directMail: can.TapMail ? Mail : null);
     }
+
+    /// <summary>
+    /// The website and the worker restart with new settings (a switch turned on or off): same data, same clock, same Entra and
+    /// Azure. Nothing is seeded again. Writers and the TAP mail are new, like in a new process.
+    /// </summary>
+    public TestApp Restart(PilotSettings settings) => new(settings, null, null, null, before: this);
 
     /// <summary>The approved access resource group of the tests (fills the SAMPLE PEST rows' Azure role scopes).</summary>
     public const string SampleAccessScope = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-access";
@@ -120,7 +132,8 @@ public sealed class TestApp
             ResolveGroups ? new GroupResolutionJob(Stores, Directory, Clock, Loggers.CreateLogger<GroupResolutionJob>(), Settings.Workflow.AgentTenantId) : null,
             new PmoReview.Core.Offboarding.OffboardingJob(Stores, Directory, Offboarding, Offboarding,
                 Settings.Workflow.AgentOffboarding ? Offboarding : null, Settings.Workflow.AgentOffboarding ? Offboarding : null,
-                Worker.Notifier, Worker.Issues, Clock, Settings.Workflow, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()));
+                Worker.Notifier, Worker.Issues, Clock, Settings.Workflow, Loggers.CreateLogger<PmoReview.Core.Offboarding.OffboardingJob>()),
+            Loggers.CreateLogger<WorkflowWorker>());
         return await worker.RunOnceAsync("test-cycle", CancellationToken.None);
     }
 

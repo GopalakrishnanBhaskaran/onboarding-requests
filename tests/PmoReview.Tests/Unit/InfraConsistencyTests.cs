@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PmoReview.Adapters;
 using PmoReview.Adapters.Storage;
 using PmoReview.Core.Domain;
 using Xunit;
@@ -114,7 +115,9 @@ public partial class InfraConsistencyTests
             Assert.Contains($"{{ name: '{s}', value: 'false' }}", bicep);
         Assert.Contains("{ name: 'WORKFLOW_SCHEDULE', value: '0 */5 * * * *' }", bicep);
         var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
-        Assert.Contains("is retired (Phase 2 access packages)", worker);
+        // The refusal itself is tested by behaviour (AgentInitializationTests); the worker must run it before anything is built.
+        Assert.Contains("var (settings, cosmosEndpoint) = WorkerStartup.Check(Env);", worker);
+        Assert.Equal(["ENTRA_AUTO_ASSIGN", "ENTRA_PROVISION_JOINERS", "ENTRA_AUTO_CREATE_PACKAGES"], WorkerStartup.RetiredSettings);
         Assert.DoesNotContain("GraphEntraAssignmentWriter", worker);
         Assert.DoesNotContain("JoinerProvisioning", worker);
         var src = Directory.GetFiles(Path.Combine(Repo(), "src"), "*.cs", SearchOption.AllDirectories);
@@ -195,10 +198,12 @@ public partial class InfraConsistencyTests
         // The website's API never gets a writer: only the worker composes them, and only when switched on.
         Assert.DoesNotContain("Writer", Read("src", "api", "PmoReview.Api", "Program.cs"));
         var worker = Read("src", "worker", "PmoReview.Worker", "Program.cs");
-        Assert.Contains("settings.Workflow.AgentProvisioning ? new GraphDirectoryWriter", worker);
-        Assert.Contains("settings.Workflow.AgentRoleAssignment", worker);
-        Assert.Contains("settings.Workflow.AgentOffboarding ? new GraphOffboardingWriter", worker);
-        Assert.Contains("settings.Workflow.AgentOffboarding ? new ArmRoleAssignmentRemover", worker);
+        // Each writer only behind its capability; WorkerStartup.Capabilities maps them to the switches (AgentInitializationTests).
+        Assert.Contains("can.DirectoryWriter ? new GraphDirectoryWriter", worker);
+        Assert.Contains("can.RoleWriter", worker);
+        Assert.Contains("IDirectMail? directMail = can.TapMail", worker);
+        Assert.Contains("can.OffboardingWriters ? new GraphOffboardingWriter", worker);
+        Assert.Contains("can.OffboardingWriters ? new ArmRoleAssignmentRemover", worker);
         var bicep = MainBicep() + Worker();
         Assert.Contains("param agentOffboarding bool = false", bicep);
         Assert.Contains("{ name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }", bicep);

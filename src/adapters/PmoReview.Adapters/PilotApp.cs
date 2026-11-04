@@ -23,7 +23,12 @@ public sealed record PilotSettings
     /// <summary>APP_ENVIRONMENT values. Only non-production environments may redirect mail to a test address.</summary>
     public static readonly IReadOnlyList<string> AppEnvironments = ["pilot", "dev", "test", "prod"];
 
+    /// <summary>NOTIFY_SENDER values. Anything else refuses to start (re-check 6: a typo used to switch mail off silently).</summary>
+    public static readonly IReadOnlyList<string> NotifySenders = ["Outbox", "AcsEmail", "GraphMail"];
+
     public bool AllowPaidServices { get; init; }
+    /// <summary>Outbox (pilot: nothing is mailed) | AcsEmail | GraphMail. The worker builds its sender from this.</summary>
+    public string NotifySender { get; init; } = "Outbox";
     public IReadOnlyCollection<string> AllowedIdentityProviders { get; init; } = ["aad"];
     /// <summary>RuleOnly (pilot) | AzureOpenAI (paid).</summary>
     public string ReviewModelProvider { get; init; } = "RuleOnly";
@@ -43,7 +48,9 @@ public sealed record PilotSettings
     public static PilotSettings FromEnvironment(Func<string, string?> get)
     {
         bool On(string name) => string.Equals(get(name), "true", StringComparison.OrdinalIgnoreCase);
-        TimeSpan Hours(string name, double fallback) => TimeSpan.FromHours(Math.Clamp(double.TryParse(get(name), System.Globalization.CultureInfo.InvariantCulture, out var h) ? h : fallback, 0.1, 24 * 30));
+        // double.TryParse accepts "NaN", which TimeSpan refuses with an unclear error at start-up: a non-finite value is the default.
+        TimeSpan Hours(string name, double fallback) => TimeSpan.FromHours(Math.Clamp(
+            double.TryParse(get(name), System.Globalization.CultureInfo.InvariantCulture, out var h) && double.IsFinite(h) ? h : fallback, 0.1, 24 * 30));
         IReadOnlyList<string> List(string name) =>
             (get(name) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var unverified = On("ALLOW_UNVERIFIED_ENTRA");
@@ -58,7 +65,19 @@ public sealed record PilotSettings
             throw new InvalidOperationException("NOTIFY_REDIRECT_TO is for test environments only; production mails the real recipients.");
         if (redirect is not null && !System.Text.RegularExpressions.Regex.IsMatch(redirect, "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))
             throw new InvalidOperationException("NOTIFY_REDIRECT_TO must be one mail address.");
+        // Re-check 6: settings that decide what the agent may read or change are refused when they cannot be read, instead of
+        // being dropped. A tenant that is not a GUID made the agent leave every real project alone without saying why; a
+        // subscription list with a typo became empty, which means "every subscription the worker can list" (wider).
         var tenant = get("AGENT_TENANT_ID")?.Trim();
+        if (!string.IsNullOrEmpty(tenant) && !Guid.TryParse(tenant, out _))
+            throw new InvalidOperationException("AGENT_TENANT_ID must be the tenant id (a GUID), not a domain name.");
+        var offboardSubscriptions = List("OFFBOARD_SUBSCRIPTIONS");
+        if (offboardSubscriptions.FirstOrDefault(x => !Guid.TryParse(x, out _)) is { } badSubscription)
+            throw new InvalidOperationException($"OFFBOARD_SUBSCRIPTIONS takes subscription ids (GUIDs), comma-separated; '{badSubscription}' is not one.");
+        var sender = get("NOTIFY_SENDER")?.Trim();
+        if (string.IsNullOrEmpty(sender)) sender = "Outbox";
+        if (!NotifySenders.Contains(sender, StringComparer.Ordinal))
+            throw new InvalidOperationException($"NOTIFY_SENDER must be one of {string.Join(", ", NotifySenders)} (exact spelling).");
         static string? Mailbox(string? value, string name)
         {
             var v = value?.Trim().ToLowerInvariant();
@@ -69,6 +88,7 @@ public sealed record PilotSettings
         return new PilotSettings
         {
             AllowPaidServices = On("ALLOW_PAID_SERVICES"),
+            NotifySender = sender,
             AllowedIdentityProviders = (get("ALLOWED_IDENTITY_PROVIDERS") ?? "aad")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             ReviewModelProvider = get("REVIEW_MODEL_PROVIDER") ?? "RuleOnly",
@@ -100,7 +120,7 @@ public sealed record PilotSettings
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
                 AgentTenantId = Guid.TryParse(tenant, out var tid) ? tid.ToString("D") : null,
                 AppEnvironment = environment,
-                MailEnabled = get("NOTIFY_SENDER") is "GraphMail" or "AcsEmail",
+                MailEnabled = sender is "GraphMail" or "AcsEmail",
                 MailRedirectTo = redirect,
                 // ACS Azure-managed domain by default (5 a minute, 10 an hour, F70); a custom domain: e.g. 30 / 100.
                 MailLimits = new MailLimits(
@@ -109,7 +129,7 @@ public sealed record PilotSettings
                 // v1.1 (30 Oct 2026): every switch off by default.
                 AgentOffboarding = On("AGENT_OFFBOARDING"),
                 OffboardDeleteUser = On("OFFBOARD_DELETE_USER"),
-                OffboardSubscriptions = List("OFFBOARD_SUBSCRIPTIONS").Where(x => Guid.TryParse(x, out _)).Select(x => Guid.Parse(x).ToString("D")).Distinct().ToList(),
+                OffboardSubscriptions = offboardSubscriptions.Select(x => Guid.Parse(x).ToString("D")).Distinct().ToList(),
                 TapMailSender = Mailbox(get("TAP_MAIL_SENDER"), "TAP_MAIL_SENDER"),
                 MaxUploadBytes = Math.Clamp(int.TryParse(get("MAX_UPLOAD_BYTES"), out var mub) ? mub : 5 * 1024 * 1024, 1024, 25 * 1024 * 1024),
                 ExternalUploadApiEnabled = On("EXTERNAL_UPLOAD_API_ENABLED"),
@@ -117,6 +137,42 @@ public sealed record PilotSettings
             },
         };
     }
+}
+
+/// <summary>
+/// The AI agent worker's start-up rules, in one place the tests call (re-check 6: they lived only in the worker's top-level
+/// <c>Program.cs</c>, checked by reading its text). <see cref="Check"/> refuses to start on a setting the worker must not run
+/// with; <see cref="Capabilities"/> says which writers and mail the worker builds, so the tests' worker is wired by the same rule.
+/// </summary>
+public static class WorkerStartup
+{
+    /// <summary>Phase 2 access-package switches: refused when true (v2.1 provisioning is AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT).</summary>
+    public static readonly IReadOnlyList<string> RetiredSettings = ["ENTRA_AUTO_ASSIGN", "ENTRA_PROVISION_JOINERS", "ENTRA_AUTO_CREATE_PACKAGES"];
+
+    /// <summary>The checks before anything is built. Returns the settings and the Cosmos endpoint (managed identity; no keys).</summary>
+    public static (PilotSettings Settings, Uri CosmosEndpoint) Check(Func<string, string?> get)
+    {
+        bool On(string name) => string.Equals(get(name), "true", StringComparison.OrdinalIgnoreCase);
+        if (!On("ALLOW_PAID_SERVICES"))
+            throw new InvalidOperationException("The workflow worker is a paid component. Set ALLOW_PAID_SERVICES=true only in the approved environment.");
+        if (!Uri.TryCreate(get("COSMOS_ENDPOINT"), UriKind.Absolute, out var cosmos) || cosmos.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException("COSMOS_ENDPOINT is required (https; managed identity; no keys).");
+        foreach (var retired in RetiredSettings)
+            if (On(retired))
+                throw new InvalidOperationException($"{retired}=true is retired (Phase 2 access packages). v2.1 provisioning is AGENT_PROVISIONING / AGENT_ROLE_ASSIGNMENT, after both approvals.");
+        return (PilotSettings.FromEnvironment(get), cosmos);
+    }
+
+    /// <summary>What the worker holds for these settings. Every write capability exists only with its switch.</summary>
+    public sealed record WorkerCapabilities(bool DirectoryWriter, bool RoleWriter, bool TapMail, bool OffboardingWriters, bool RoleReader);
+
+    public static WorkerCapabilities Capabilities(PilotSettings s, Func<string, string?> get) => new(
+        DirectoryWriter: s.Workflow.AgentProvisioning,
+        RoleWriter: s.Workflow.AgentRoleAssignment,
+        // F2: the sign-in details go only through Graph sendMail from TAP_MAIL_SENDER, and only for accounts the agent creates.
+        TapMail: s.Workflow.TapMailByAgent,
+        OffboardingWriters: s.Workflow.AgentOffboarding,
+        RoleReader: get("ROLE_READER") == "Arm");
 }
 
 /// <summary>Everything the API, the worker and the tests share. Built once by <see cref="PilotApp.BuildWorkflow"/>.</summary>

@@ -688,6 +688,60 @@ public class F5OffboardingTests
         Assert.Empty(await OffboardingMails(app));
         Assert.False(app.Directory.User(upn)!.AccountEnabled); // disabled; only the delete is left
     }
+
+    [Fact]
+    public async Task F5_Deletion_switched_off_after_the_plan_leaves_the_delete_to_people_as_a_leftover()
+    {
+        // Planned and confirmed with deletion on, then `offboarding … delete-off` (always allowed) before the worker ran.
+        var app = TestApp.With(settings: Settings(delete: true));
+        await OwnTenant(app);
+        const string upn = "sample.deleted@sample.invalid";
+        app.Directory.AddUser(upn);
+        app.Offboarding.Assignments[SubA] = [];
+        await AddPerson(app, upn);
+        var planned = await Planned(app, upn);
+        Assert.Contains(Steps(planned), s => s.Name == OffboardingJob.Delete && s.Result == "Planned");
+        Assert.Equal(202, (await Execute(app, IdOf(planned), upn)).Status);
+
+        var off = app.Restart(Settings(delete: false));
+        await off.RunWorker();
+        var done = await Get(off, upn);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(Steps(done), s => s.Name == OffboardingJob.Delete && s.Result == "Skipped" && s.Detail.Contains("switched off after the plan"));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.StartsWith(OffboardingJob.Delete, StringComparison.Ordinal));
+        Assert.DoesNotContain(app.Offboarding.Calls, c => c.StartsWith("delete-user", StringComparison.Ordinal)); // the worker never asked
+        Assert.False(app.Directory.User(upn)!.AccountEnabled); // the rest of the plan ran
+        Assert.Empty(await OffboardingMails(off));
+    }
+
+    [Fact]
+    public async Task F5_A_leaver_step_left_undone_by_a_switch_off_after_a_crash_is_a_leftover_never_completed()
+    {
+        // Finding 27: the worker stopped after the last Entra write (progress is saved per step) and AGENT_OFFBOARDING was
+        // switched off before the next run, so the inventory step was skipped. Verify reads the people inventory too.
+        var app = TestApp.With(settings: Settings());
+        await OwnTenant(app);
+        const string upn = "sample.crashed@sample.invalid";
+        app.Directory.AddUser(upn);
+        app.Offboarding.Assignments[SubA] = [];
+        await AddPerson(app, upn);
+        var planned = await Planned(app, upn);
+        Assert.Equal(202, (await Execute(app, IdOf(planned), upn)).Status);
+        var v = Assert.Single(await app.Stores.OffboardingRuns.ListAsync(TestApp.Alpha));
+        await app.Stores.OffboardingRuns.ReplaceAsync(v.Value with
+        {
+            Steps = v.Value.Steps.Select(s => s.Name is OffboardingJob.Revoke or OffboardingJob.Disable ? s with { Result = OffboardingStepResult.Done, Detail = "done" } : s).ToList(),
+        }, v.ETag);
+        app.Directory.SetEnabled(upn, false);
+
+        var off = app.Restart(Settings(on: false));
+        await off.RunWorker();
+        var done = await Get(off, upn);
+        Assert.Equal(("PartiallyCompleted", false), (Status(done), done.Json.GetProperty("pmoNotified").GetBoolean()));
+        Assert.Contains(done.Json.GetProperty("leftovers").EnumerateArray(), l => l.GetString()!.Contains("people inventory still lists", StringComparison.Ordinal));
+        Assert.Equal(PersonStatus.Active, (await off.Stores.PeopleInventory.GetAsync(TestApp.Alpha, Person.MakeId(upn)))!.Value.Status);
+        Assert.Empty(await OffboardingMails(off));
+    }
 }
 
 internal static class PipeExtensions

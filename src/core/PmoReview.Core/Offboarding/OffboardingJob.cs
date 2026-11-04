@@ -34,6 +34,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
     private const string VerifyLag = "verify-lag";
     private const string ByPeople = "left to people: the account holds an Entra directory role, so the AI agent changes nothing in Entra or Azure for it";
     private const string DeleteOff = "off (OFFBOARD_DELETE_USER=false): the account stays, disabled";
+    private const string DeleteSwitchedOff = "left to people: account deletion was switched off after the plan (OFFBOARD_DELETE_USER=false)";
 
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
@@ -63,6 +64,14 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 catch (ConcurrencyException)
                 {
                     // Another worker instance moved this run on; the next run looks again.
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    // Re-check 6: an error nobody expected stays with this run. The other runs, projects and worker jobs go on;
+                    // the next worker run tries again (every step reads before it writes, and progress is saved per step).
+                    logger.LogError("offboarding run={RunId} failed {ExceptionType}; retried on the next run", v.Value.Id, e.GetType().Name);
+                    await issues.RecordAsync(project.ProjectId, null, $"offboarding-error:{v.Value.Id}", IssueKind.NeedsDeveloper, IssueSeverity.Warning,
+                        $"Offboarding run {v.Value.Id} of {v.Value.EnterpriseId} stopped on an unexpected {e.GetType().Name}; the AI agent tries again on its next run (about 5 minutes).", null, ct);
                 }
             }
         }
@@ -239,6 +248,16 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 run = v.Value;
                 continue;
             }
+            if (s.Name == Delete && !settings.OffboardDeleteUser)
+            {
+                // Planned with deletion on, confirmed, then delete-off: the worker no longer deletes. Not a refusal to retry: a
+                // step left to people, which verify lists (re-check 6; before, the writer's refusal read "refused (WriteRefused)").
+                steps[i] = s with { Result = OffboardingStepResult.Skipped, Detail = $"{s.Detail}: {DeleteSwitchedOff}" };
+                await AuditAsync(project, "offboarding-step", s.Target, $"run {run.Id}: {s.Name} → Skipped (deletion switched off after the plan)", run.CorrelationId, ct);
+                v = await stores.OffboardingRuns.ReplaceAsync(run with { Steps = steps, Attempts = attempts, UpdatedAt = clock.UtcNow }, v.ETag, ct);
+                run = v.Value;
+                continue;
+            }
             string detail;
             try
             {
@@ -373,6 +392,12 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
             await TransientAsync(project, v, "verify", e.Category, ct);
             return;
         }
+        // Read like the rest (re-check 6, finding 27): the people inventory must list the person as a leaver. A Leaver step skipped
+        // because the switch went off after a crash, or the person set Active again meanwhile, is a leftover, never Completed.
+        var listed = await stores.PeopleInventory.GetAsync(project.ProjectId, Person.MakeId(run.EnterpriseId), ct);
+        var stillListed = listed?.Value is { Retired: false } person && person.Status != PersonStatus.Leaver;
+        if (stillListed)
+            leftovers.Add($"the people inventory still lists {run.EnterpriseId} as {listed!.Value.Status}: mark the person Leaver");
         // A request for the person opened after the plan (or anything else still open) would grant access again: a leftover.
         var planned = run.Steps.Where(s => s.Name == Close).Select(s => s.Target).ToHashSet(StringComparer.Ordinal);
         foreach (var r in (await stores.Requests.ListAsync(project.ProjectId, ct)).Select(x => x.Value)
@@ -382,7 +407,7 @@ public sealed class OffboardingJob(DataStores stores, IDirectoryReader directory
                 : $"request {r.Id} was opened after the plan ({StatusText.Label(r.Flow!.Status)}): reject it, or offboard again");
         // Steps that failed and nothing above shows (sessions, inventory, requests, the delete) are leftovers too, and so are
         // sessions of a directory-role holder (left to people) and a planned delete that was left to people.
-        foreach (var s in run.Steps.Where(s => (s.Result == OffboardingStepResult.Failed && s.Name is Revoke or Leaver or Delete)
+        foreach (var s in run.Steps.Where(s => (s.Result == OffboardingStepResult.Failed && (s.Name is Revoke or Delete || (s.Name == Leaver && !stillListed)))
                                                || (s.Result == OffboardingStepResult.Skipped && s.Name == Revoke && s.Detail.EndsWith(ByPeople, StringComparison.Ordinal))
                                                || (s.Result == OffboardingStepResult.Skipped && s.Name == Delete && s.Detail != DeleteOff)))
             leftovers.Add($"{s.Name} {s.Target}: {s.Detail}");

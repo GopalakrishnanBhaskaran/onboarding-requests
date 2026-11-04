@@ -43,7 +43,7 @@ Run in Cloud Shell, or on a Mac after `bash tools/mac_setup.sh <subscriptionId>`
 ## Fresh Cloud Shell (it is reset after inactivity)
 Azure keeps every resource, setting and permission. A reset loses only the clone, `.local/` (params, workbooks, deploy stamps) and `~/.dotnet`.
 1. `az account show -o table` (the pilot subscription), then `SUB=$(az account show --query id -o tsv); RG=rg-pmo-review-pilot`.
-2. Clone or update the branch: `git clone -b claude/elegant-darwin-nfot4p https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests` (or `git pull` in an existing clone), `cd ~/onboarding-requests`.
+2. Clone or update the branch: `git clone -b claude/serene-ramanujan-jqgfo3 https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests` (or `git fetch && git checkout claude/serene-ramanujan-jqgfo3 && git pull` in an existing clone; `main` once it is merged), `cd ~/onboarding-requests`.
 3. Code (no approval): `tools/deploy_free.sh worker $SUB`, then `tools/deploy_free.sh app $SUB`. The first one installs .NET 10 (1–2 minutes).
 4. Check: `bash tools/verify_features.sh $SUB | tee .local/verify.txt`. Line 1 passes only after step 3 in the same Cloud Shell (the deploy stamps live in `.local/`).
 Only when needed: `tools/deploy_free.sh params $SUB` before a what-if; upload the workbooks again before an import; `PY=$(tools/cosmos_python.sh)` and the connection string from `az cosmosdb keys list` for `register_user.py` / `import_workbook.py` (never pasted anywhere; `unset` it after).

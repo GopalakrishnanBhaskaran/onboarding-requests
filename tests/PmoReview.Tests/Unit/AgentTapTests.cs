@@ -27,6 +27,8 @@ public class AgentTapTests
         Workflow = new WorkflowSettings
         {
             AgentProvisioning = true, AgentRoleAssignment = true, AgentTap = tap, AgentTapLifetimeMinutes = 480, MailEnabled = true,
+            // The production rule (WorkflowSettings.TapMailByAgent): the agent mails the pass only from a TAP sender mailbox.
+            TapMailSender = tap ? "sample.tap.sender@sample.invalid" : null,
             RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader], RoleAssignScopes = [Scope], MailRedirectTo = redirect, AppEnvironment = redirect is null ? "pilot" : "test",
         },
     };
