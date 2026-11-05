@@ -70,6 +70,8 @@ def dirty_state():
         ],
         "table_privs": [
             {"grantee": SP, "schema_name": "bronze", "table_name": "raw_orders", "privilege_type": "SELECT", "inherited_from": "NONE"},
+            # Databricks grants account users SELECT on every information_schema view: never a finding
+            {"grantee": "account users", "schema_name": "information_schema", "table_name": "tables", "privilege_type": "SELECT", "inherited_from": "NONE"},
         ],
         "tables": [
             {"schema_name": "gold", "table_name": "dim_customer", "table_type": "MANAGED", "data_source_format": "DELTA", "table_owner": "data-eng"},
@@ -83,6 +85,7 @@ def dirty_state():
         "scim": [{"displayName": "sp-fabric-mirror-prod", "applicationId": SP, "active": True, "groups": [{"display": "data-readers"}]}],
         "external_access": True,
         "fail_sql": None,
+        "fail_views": set(),  # e.g. {"system.information_schema.row_filters"}: that source raises
     }
 
 
@@ -137,7 +140,9 @@ class Spark:
             return Result([{"me": self.s["me"]}])
         if "is_account_group_member" in query:
             return Result([{"m": args["g"] in self.s["my_groups"]}])
-        table = re.search(r"system\.information_schema\.(\w+)", query).group(1)
+        if any(v in query for v in self.s["fail_views"]):
+            raise Exception("TABLE_OR_VIEW_NOT_FOUND (SAMPLE)")
+        table = re.search(r"information_schema\.(\w+)", query).group(1)
         data = {
             "catalogs": [c for c in self.s["catalogs"] if c["catalog_name"] == args.get("c")],
             "schemata": self.s["schemata"],
@@ -337,7 +342,21 @@ def check() -> None:
     assert ("FAIL", "Metastore external data access") in f and ("FAIL", "Service principal in this workspace") in f
     assert ("FAIL", "Service principal owns the catalog") in f and ("WARN", "Runner is not the catalog owner") in f
 
-    # 10. names with a backtick are quoted, never break out of the identifier
+    # 10. row filters: falls back to the catalog's own information_schema; both missing = WARN, PASS says "not checked"
+    s = dirty_state()
+    s["fail_views"] = {"system.information_schema.row_filters", "system.information_schema.column_masks"}
+    res, _, _, g = run(base, s)
+    f = findings(g)
+    assert "fact_secure (row filter)" in f[("WARN", "Gold objects Fabric will not show")]["detail"]
+    assert not any(c.startswith("Gold row_filters") or c.startswith("Gold column_masks") for _, c in f), f.keys()
+    s = clean_state()
+    s["fail_views"] = {"information_schema.row_filters"}
+    res, _, _, g = run(base, s)
+    f = findings(g)
+    assert "could not be read" in f[("WARN", "Gold row_filters")]["detail"] and "Check by hand" in f[("WARN", "Gold row_filters")]["fix"]
+    assert "row_filters not checked" in f[("PASS", "Gold objects Fabric will not show")]["detail"], f[("PASS", "Gold objects Fabric will not show")]
+
+    # 11. names with a backtick are quoted, never break out of the identifier
     s = clean_state()
     s["catalogs"] = [{"catalog_name": "pr`od", "catalog_owner": "catalog-admins"}]
     res, _, _, g = run({**base, "catalog": "pr`od"}, s)

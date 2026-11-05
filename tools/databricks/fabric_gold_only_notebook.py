@@ -242,8 +242,10 @@ def audit():
     if sp["found"] is True:
         add("PASS", "Service principal in this workspace", f"{sp['name'] or SP}, direct groups: {', '.join(sp['groups']) or 'none'}")
     elif sp["found"] is False:
-        add("FAIL", "Service principal in this workspace", f"{SP} not found",
-            "Add it to this workspace (Settings > Identity and access > Service principals), then run again.")
+        add("FAIL", "Service principal in this workspace", f"{SP} not found in this workspace",
+            "The Fabric connection signs in to this workspace, so add it: Settings > Identity and access > "
+            "Service principals > Add service principal (pick the existing one, or Microsoft Entra ID managed + this application ID). "
+            "The grants work without it, but Fabric cannot connect.")
     else:
         add("WARN", "Service principal in this workspace", f"could not be read ({sp['error']})", "Check it in Settings > Identity and access.")
 
@@ -323,7 +325,7 @@ def audit():
             revoke(r["privilege_type"], f"SCHEMA {q(CATALOG)}.{q(s)}", "not gold")
     for r in sp_table:
         s = low(r["schema_name"])
-        if s == GOLD or not is_direct(r):
+        if s in (GOLD, ALWAYS_THERE) or not is_direct(r):
             continue
         leaks.append(f"{norm(r['privilege_type'])} on {s}.{low(r['table_name'])}")
         if REVOKE_EXTRA:
@@ -339,7 +341,7 @@ def audit():
     owned = [f"schema {low(s['schema_name'])}" for s in schemata
              if low(s["schema_owner"]) == SP and low(s["schema_name"]) not in (GOLD, ALWAYS_THERE)]
     owned += [f"table {low(t['schema_name'])}.{low(t['table_name'])}" for t in tables
-              if low(t["table_owner"]) == SP and low(t["schema_name"]) != GOLD]
+              if low(t["table_owner"]) == SP and low(t["schema_name"]) not in (GOLD, ALWAYS_THERE)]
     if owned:
         add("FAIL", "SP owns objects outside gold", "; ".join(owned),
             "ALTER SCHEMA/TABLE ... OWNER TO `<team group>`. If the SP runs the pipelines, use a separate SP for Fabric.")
@@ -374,7 +376,7 @@ def audit():
             items.append((s, f"{g}: {p} on {s}", exposes(p, s)))
     for r in table_privs:
         g, s, p = low(r["grantee"]), low(r["schema_name"]), norm(r["privilege_type"])
-        if g in principals and s != GOLD and is_direct(r) and p in READ_LIKE:
+        if g in principals and s not in (GOLD, ALWAYS_THERE) and is_direct(r) and p in READ_LIKE:
             items.append((s, f"{g}: {p} on {s}.{low(r['table_name'])}", exposes(p, s)))
     exposed = {s for s, _, e in items if e}
     via = [t for s, t, e in items if e or (s is not None and s in exposed)]
@@ -404,36 +406,49 @@ def audit():
             others.append(f"{g}: {s}")
     if others:
         add("WARN", "Other principals with EXTERNAL USE SCHEMA outside gold", "; ".join(others),
-            "Confirm each one is intended (another Fabric connection or external engine).")
+            "Look each application ID up in Settings > Identity and access > Service principals. An older Fabric connection or "
+            "external engine with this right can read bronze and silver from outside Databricks; if it isn't intended, its owner "
+            f"runs REVOKE EXTERNAL USE SCHEMA ON CATALOG {CATALOG_SQL} FROM `<id>` (this notebook never changes other principals).")
     else:
         add("PASS", "Other principals with EXTERNAL USE SCHEMA outside gold", "none")
 
     # Other catalogs this SP can reach: Fabric could mirror them too.
     elsewhere = sorted({low(r["catalog_name"]) for r in cat_privs if low(r["grantee"]) == SP and low(r["catalog_name"]) != CATALOG})
     if elsewhere:
-        add("WARN", "SP rights in other catalogs", ", ".join(elsewhere), "Revoke them if Fabric must not mirror those catalogs (this notebook manages one catalog).")
+        add("WARN", "SP rights in other catalogs", ", ".join(elsewhere),
+            "A Fabric connection with this SP can mirror those catalogs too. Prefer one SP per environment (pre-prod vs prod); "
+            "otherwise run this notebook for each of those catalogs as well.")
 
     # Gold objects Fabric will not mirror (F118).
     gold_objs = [t for t in tables if low(t["schema_name"]) == GOLD]
     skipped = [f"{low(t['table_name'])} ({t['table_type']})" for t in gold_objs if (t["table_type"] or "").upper() in NOT_MIRRORED]
     skipped += [f"{low(t['table_name'])} (external {t['data_source_format']})" for t in gold_objs
                 if (t["table_type"] or "").upper() == "EXTERNAL" and (t["data_source_format"] or "").upper() != "DELTA"]
+    unchecked = []
     for view in ("row_filters", "column_masks"):
-        try:
-            hits = rows(
-                f"SELECT DISTINCT table_name FROM system.information_schema.{view} "
-                "WHERE lower(catalog_name) = :c AND lower(schema_name) = :s",
-                c=CATALOG, s=GOLD,
-            )
-            skipped += [f"{low(h['table_name'])} ({view.replace('_', ' ')[:-1]})" for h in hits]
-        except Exception:
-            add("WARN", f"Gold {view}", "could not be read on this runtime", "")
+        errors = []
+        for source in ("system.information_schema", f"{CATALOG_SQL}.information_schema"):  # system first, then the catalog's own
+            try:
+                hits = rows(
+                    f"SELECT DISTINCT table_name FROM {source}.{view} "
+                    "WHERE lower(catalog_name) = :c AND lower(schema_name) = :s",
+                    c=CATALOG, s=GOLD,
+                )
+                skipped += [f"{low(h['table_name'])} ({view.replace('_', ' ')[:-1]})" for h in hits]
+                break
+            except Exception as e:
+                errors.append(f"{source}: {type(e).__name__}")
+        else:
+            unchecked.append(view)
+            add("WARN", f"Gold {view}", "could not be read (" + "; ".join(errors) + ")",
+                f"Check by hand: SELECT table_name FROM {CATALOG_SQL}.information_schema.{view} WHERE schema_name = '{GOLD}'")
     pipelines = [low(t["table_name"]) for t in gold_objs if (t["table_type"] or "").upper() in ("MATERIALIZED_VIEW", "STREAMING_TABLE")]
     if skipped:
         add("WARN", "Gold objects Fabric will not show", "; ".join(sorted(set(skipped))),
             "Views, metric views, federated, non-Delta external and row-filter/column-mask tables are not mirrored; publish a Delta table instead.")
     else:
-        add("PASS", "Gold objects Fabric will not show", f"none ({len(gold_objs)} objects in gold)")
+        note = f"; {' and '.join(unchecked)} not checked" if unchecked else ""
+        add("PASS", "Gold objects Fabric will not show", f"none ({len(gold_objs)} objects in gold{note})")
     if pipelines:
         add("INFO", "Gold materialized views / streaming tables", ", ".join(sorted(pipelines)),
             "They need TBLPROPERTIES ('pipelines.externalMetadata.enabled' = 'true') or the pipeline setting, then a pipeline run.")
