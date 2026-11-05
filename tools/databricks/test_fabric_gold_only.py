@@ -45,8 +45,9 @@ class Row(dict):
 
 
 class Result:
-    def __init__(self, data):
+    def __init__(self, data, columns=None):
         self.data = [Row(d) for d in data]
+        self.columns = columns if columns is not None else (list(data[0]) if data else [])
 
     def collect(self):
         return self.data
@@ -100,6 +101,8 @@ def dirty_state():
         "external_access": True,
         "fail_sql": None,
         "fail_views": set(),  # e.g. {"system.information_schema.row_filters"}: that source raises
+        # the real columns of row_filters / column_masks (Learn's spelling; a live workspace differed, F120)
+        "mask_columns": ["catalog_name", "schema_name", "table_name", "filter_name"],
     }
 
 
@@ -164,6 +167,13 @@ class Spark:
         if any(v in query for v in self.s["fail_views"]):
             raise Exception("TABLE_OR_VIEW_NOT_FOUND (SAMPLE)")
         table = re.search(r"information_schema\.(\w+)", query).group(1)
+        if table in ("row_filters", "column_masks"):
+            cols = self.s["mask_columns"]
+            if query.endswith("LIMIT 0"):
+                return Result([], columns=cols)
+            used = re.findall(r"lower\((\w+)\)", query) + re.findall(r"DISTINCT (\w+)", query)
+            if any(c not in cols for c in used):
+                raise Exception("UNRESOLVED_COLUMN.WITH_SUGGESTION (SAMPLE)")
         if table == "tables":  # the notebook filters by gold or by owner in SQL: check the owner list is passed
             assert SP in args.values() and "account users" in args.values(), args
         data = {
@@ -456,6 +466,16 @@ def check() -> None:
     f = findings(run(base, s)[3])
     assert "could not be read" in f[("WARN", "Gold row_filters")]["detail"] and "Check by hand" in f[("WARN", "Gold row_filters")]["fix"]
     assert "row_filters not checked" in f[("PASS", "Gold objects Fabric will not show")]["detail"]
+
+    # 16b. the live spelling: table_catalog / table_schema instead of catalog_name / schema_name; unknown columns = WARN naming them
+    s = dirty_state()
+    s["mask_columns"] = ["table_catalog", "table_schema", "table_name", "filter_name"]
+    f = findings(run(base, s)[3])
+    assert "fact_secure (row filter)" in f[("WARN", "Gold objects Fabric will not show")]["detail"], f.keys()
+    s = clean_state()
+    s["mask_columns"] = ["cat", "sch", "tab"]
+    f = findings(run(base, s)[3])
+    assert "columns are cat, sch, tab" in f[("WARN", "Gold row_filters")]["detail"], f[("WARN", "Gold row_filters")]
 
     # 17. names with a backtick are quoted, never break out of the identifier
     s = clean_state()

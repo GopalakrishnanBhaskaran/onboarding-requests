@@ -532,14 +532,22 @@ def audit():
     skipped = [f"{low(t['table_name'])} ({t['table_type']})" for t in gold_objs if (t["table_type"] or "").upper() in NOT_MIRRORED]
     skipped += [f"{low(t['table_name'])} (external {t['data_source_format']})" for t in gold_objs
                 if (t["table_type"] or "").upper() == "EXTERNAL" and (t["data_source_format"] or "").upper() != "DELTA"]
+    # Learn names these columns catalog_name / schema_name, but a live workspace answered UNRESOLVED_COLUMN (F120):
+    # read the view's real columns first and use whichever of the known spellings it has.
     unchecked = []
     for view in ("row_filters", "column_masks"):
         errors = []
         for source in ("system.information_schema", f"{CATALOG_SQL}.information_schema"):  # system first, then the catalog's own
             try:
+                cols = [c.lower() for c in spark.sql(f"SELECT * FROM {source}.{view} LIMIT 0").columns]
+                pick = lambda *names: next((n for n in names if n in cols), None)
+                cat_col, schema_col, table_col = pick("catalog_name", "table_catalog"), pick("schema_name", "table_schema"), pick("table_name")
+                if not (cat_col and schema_col and table_col):
+                    errors.append(f"{source}: columns are {', '.join(cols) or 'none'}")
+                    continue
                 hits = rows(
-                    f"SELECT DISTINCT table_name FROM {source}.{view} "
-                    "WHERE lower(catalog_name) = :c AND lower(schema_name) = :s",
+                    f"SELECT DISTINCT {table_col} AS table_name FROM {source}.{view} "
+                    f"WHERE lower({cat_col}) = :c AND lower({schema_col}) = :s",
                     c=CATALOG, s=GOLD,
                 )
                 skipped += [f"{low(h['table_name'])} ({view.replace('_', ' ')[:-1]})" for h in hits]
@@ -549,7 +557,7 @@ def audit():
         else:
             unchecked.append(view)
             add("WARN", f"Gold {view}", "could not be read (" + "; ".join(errors) + ")",
-                f"Check by hand: SELECT table_name FROM {CATALOG_SQL}.information_schema.{view} WHERE schema_name = '{GOLD}'")
+                f"Check by hand: SELECT * FROM {CATALOG_SQL}.information_schema.{view} LIMIT 20")
     pipelines = [low(t["table_name"]) for t in gold_objs if (t["table_type"] or "").upper() in ("MATERIALIZED_VIEW", "STREAMING_TABLE")]
     if skipped:
         add("WARN", "Gold objects Fabric will not show", "; ".join(sorted(set(skipped))),
