@@ -130,7 +130,7 @@ No data moves either way.
   - Parameter markers, `is_account_group_member` and the information schema queries worked.
   - The system `row_filters` / `column_masks` views could not be read; the notebook now falls back to the catalog's own views.
   - The run found the Fabric service principal holding `USE SCHEMA`, `SELECT` and `EXTERNAL USE SCHEMA` on the whole catalog. The audit log showed only Fabric uses it.
-  - Apply not yet run at the time of writing.
+  - **Apply, 5 Nov 2026:** the platform owner approved and applied a 7-statement plan (grant `USE SCHEMA`, `SELECT`, `EXTERNAL USE SCHEMA` on gold, `USE CATALOG` already held; then revoke those three on the catalog). 0 statements failed; the re-audit showed 0 FAIL, 3 WARN, 11 PASS. The Fabric-side check (gold only in the SQL analytics endpoint) is the remaining proof.
 - **Independent review, 5 Nov 2026:** 3 high, 6 medium and 9 low findings.
   - Fixed: ownership through groups and the metastore, `ALL PRIVILEGES` ordering, plan-bound apply, default `revoke_extra = no`, workspace-assignment WARN, non-owner FAIL, `READ METADATA` and metastore grants, a failed apply always failing, storage scope, error classes, duplicate REVOKEs, wording.
   - Not changed: `lower()` on identifier columns. The queries are proven live; on a very large catalog the `table_privileges` read may be slow.
