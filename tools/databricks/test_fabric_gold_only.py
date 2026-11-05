@@ -231,8 +231,8 @@ class Api:
         raise AssertionError(path)
 
 
-def run(widgets: dict, state: dict):
-    """Run the notebook; return (summary or exception, executed statements, printed text, notebook globals)."""
+def make_globals(widgets: dict, state: dict):
+    """Notebook globals with stand-ins; `widgets` is read live, so a test can change it between cells."""
     spark = Spark(state)
     shown = []
     sdk = types.ModuleType("databricks.sdk")
@@ -259,6 +259,26 @@ def run(widgets: dict, state: dict):
         notebook=types.SimpleNamespace(exit=exit_),
     )
     g = {"__name__": "__notebook__", "spark": spark, "dbutils": dbutils, "display": shown.append}
+    return g, spark, shown
+
+
+def cells():
+    return NOTEBOOK.read_text().split("\n# COMMAND ----------\n")
+
+
+def run_cell(g, index):
+    """Run one notebook cell like Databricks does; return the exception it raised, if any."""
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(compile(cells()[index], str(NOTEBOOK), "exec"), g)
+    except Exception as e:  # noqa: BLE001 - the test inspects it
+        return e
+    return None
+
+
+def run(widgets: dict, state: dict):
+    """Run the notebook; return (summary or exception, executed statements, printed text, notebook globals)."""
+    g, spark, shown = make_globals(widgets, state)
     out = io.StringIO()
     result = None
     with contextlib.redirect_stdout(out):
@@ -476,6 +496,34 @@ def check() -> None:
     s["mask_columns"] = ["cat", "sch", "tab"]
     f = findings(run(base, s)[3])
     assert "columns are cat, sch, tab" in f[("WARN", "Gold row_filters")]["detail"], f[("WARN", "Gold row_filters")]
+
+    # 16c. run order, as in Databricks: a first Run all stops at the empty widgets; running a later cell alone then
+    # gives a clear "Run all" message, never NameError (live, 5 Nov 2026)
+    src = cells()
+    i_inputs = next(i for i, c in enumerate(src) if "INPUTS_OK = False" in c)
+    i_audit = next(i for i, c in enumerate(src) if "before = audit()" in c)
+    i_apply = next(i for i, c in enumerate(src) if "refusals = []" in c)
+    widgets = {}
+    g, spark, _ = make_globals(widgets, clean_state())
+    assert run_cell(g, 1) is None                                  # widgets created
+    e = run_cell(g, i_inputs)
+    assert isinstance(e, ValueError) and "Fix the widgets" in str(e), e
+    assert callable(g.get("rows")), "helpers must load even when the widget check fails"
+    widgets.update(base)
+    e = run_cell(g, i_audit)                                       # the cell run on its own, without Run all
+    assert isinstance(e, RuntimeError) and "Run all" in str(e) and not isinstance(e, NameError), e
+
+    # 16d. the apply cell run on its own after the widgets changed: refused, nothing changed
+    widgets = dict(fix)
+    g, spark, _ = make_globals(widgets, appliable_state())
+    for i in range(1, i_apply):
+        assert run_cell(g, i) is None, i
+    plan_id = g["before"]["plan_id"]
+    widgets.update(sp_application_id=OTHER_SP, mode="apply", approved_by="SAMPLE", confirm_plan=plan_id)
+    e = run_cell(g, i_apply)
+    assert isinstance(e, RuntimeError) and "widgets changed" in str(e) and spark.executed == [], (e, spark.executed)
+    widgets.update(sp_application_id=SP)                           # same widgets as the audit: apply runs its plan
+    assert run_cell(g, i_apply) is None and spark.executed == [p["sql"] for p in g["before"]["plan"]], spark.executed
 
     # 17. names with a backtick are quoted, never break out of the identifier
     s = clean_state()

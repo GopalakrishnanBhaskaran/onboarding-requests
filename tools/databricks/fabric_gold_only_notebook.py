@@ -67,39 +67,6 @@ def widget(name):
     return dbutils.widgets.get(name).strip()
 
 
-SP = widget("sp_application_id").lower()
-CATALOG = widget("catalog").lower()
-GOLD = widget("gold_schema").lower()
-MODE = widget("mode")
-REVOKE_EXTRA = widget("revoke_extra") == "yes"
-APPROVED_BY = widget("approved_by")
-CONFIRM_PLAN = widget("confirm_plan").lower()
-SECRET_SCOPE = widget("sp_secret_scope")
-SECRET_KEY = widget("sp_secret_key")
-TENANT_ID = widget("sp_tenant_id")
-FAIL_ON_FINDINGS = widget("fail_on_findings") == "yes"
-
-problems = []
-if not GUID.match(SP):
-    problems.append("sp_application_id must be the service principal's application (client) ID, a GUID.")
-if not CATALOG:
-    problems.append("catalog is empty.")
-if not GOLD:
-    problems.append("gold_schema is empty.")
-if GOLD == ALWAYS_THERE:
-    problems.append("gold_schema cannot be information_schema.")
-if MODE == "apply" and not APPROVED_BY:
-    problems.append("mode = apply needs approved_by, for example 'Gokul 05 Nov 2026'.")
-if MODE == "apply" and not CONFIRM_PLAN:
-    problems.append("mode = apply needs confirm_plan: the plan ID printed by the plan run.")
-if bool(SECRET_SCOPE) != bool(SECRET_KEY):
-    problems.append("Fill in both sp_secret_scope and sp_secret_key, or neither.")
-if TENANT_ID and not GUID.match(TENANT_ID.lower()):
-    problems.append("sp_tenant_id must be a GUID.")
-if problems:
-    raise ValueError("Fix the widgets:\n- " + "\n- ".join(problems))
-
-
 def q(name):
     """Quote one identifier part with backticks."""
     return "`" + name.replace("`", "``") + "`"
@@ -162,9 +129,51 @@ def workspace_host():
         return "https://" + spark.conf.get("spark.databricks.workspaceUrl")
 
 
+def current_inputs():
+    """The widget values the audit and its plan depend on."""
+    return [widget("sp_application_id").lower(), widget("catalog").lower(), widget("gold_schema").lower(), widget("revoke_extra")]
+
+
+# Inputs. Helpers above always load, so a failed check below leaves a clear message, never a NameError.
+INPUTS_OK = False
+SP = widget("sp_application_id").lower()
+CATALOG = widget("catalog").lower()
+GOLD = widget("gold_schema").lower()
+MODE = widget("mode")
+REVOKE_EXTRA = widget("revoke_extra") == "yes"
+APPROVED_BY = widget("approved_by")
+CONFIRM_PLAN = widget("confirm_plan").lower()
+SECRET_SCOPE = widget("sp_secret_scope")
+SECRET_KEY = widget("sp_secret_key")
+TENANT_ID = widget("sp_tenant_id")
+FAIL_ON_FINDINGS = widget("fail_on_findings") == "yes"
+
+problems = []
+if not GUID.match(SP):
+    problems.append("sp_application_id must be the service principal's application (client) ID, a GUID.")
+if not CATALOG:
+    problems.append("catalog is empty.")
+if not GOLD:
+    problems.append("gold_schema is empty.")
+if GOLD == ALWAYS_THERE:
+    problems.append("gold_schema cannot be information_schema.")
+if MODE == "apply" and not APPROVED_BY:
+    problems.append("mode = apply needs approved_by, for example 'Gokul 05 Nov 2026'.")
+if MODE == "apply" and not CONFIRM_PLAN:
+    problems.append("mode = apply needs confirm_plan: the plan ID printed by the plan run.")
+if bool(SECRET_SCOPE) != bool(SECRET_KEY):
+    problems.append("Fill in both sp_secret_scope and sp_secret_key, or neither.")
+if TENANT_ID and not GUID.match(TENANT_ID.lower()):
+    problems.append("sp_tenant_id must be a GUID.")
+if problems:
+    raise ValueError("Fix the widgets:\n- " + "\n- ".join(problems))
+
+
 SP_SQL = q(SP)
 CATALOG_SQL = q(CATALOG)
 GOLD_SQL = f"{q(CATALOG)}.{q(GOLD)}"
+INPUTS = current_inputs()
+INPUTS_OK = True
 print(f"Mode: {MODE} | catalog: {CATALOG} | gold schema: {GOLD} | service principal: {SP} | revoke_extra: {REVOKE_EXTRA}")
 
 # COMMAND ----------
@@ -173,6 +182,12 @@ print(f"Mode: {MODE} | catalog: {CATALOG} | gold schema: {GOLD} | service princi
 # MAGIC ## Audit and plan (read-only)
 
 # COMMAND ----------
+
+
+before = None
+if not globals().get("INPUTS_OK"):
+    raise RuntimeError("Choose Run all from the top: the widget check (third cell) has not passed yet. "
+                       "Scroll up for 'Fix the widgets', fill them in, then Run all again.")
 
 
 def lookup_sp():
@@ -577,7 +592,7 @@ def audit():
         step["step"] = i
     plan_id = hashlib.sha256(json.dumps([SP, CATALOG, GOLD, [p["sql"] for p in plan]]).encode()).hexdigest()[:8]
 
-    return {"findings": findings, "plan": plan, "plan_id": plan_id, "me": me, "owner": owner,
+    return {"findings": findings, "plan": plan, "plan_id": plan_id, "inputs": INPUTS, "me": me, "owner": owner,
             "runner_is_owner": runner_is_owner, "sp_name": sp["name"], "sp_owns": len(sp_owns)}
 
 
@@ -606,10 +621,17 @@ print(f"\nPlan ID: {before['plan_id']}  (to apply exactly this plan: mode = appl
 # COMMAND ----------
 
 applied, after, counts_after = [], None, None
+if not globals().get("before") or not globals().get("INPUTS_OK"):
+    raise RuntimeError("Choose Run all from the top: the audit above has not run with the current widgets. Nothing changed.")
+MODE, APPROVED_BY, CONFIRM_PLAN = widget("mode"), widget("approved_by"), widget("confirm_plan").lower()  # read again, never stale
 if MODE != "apply":
     print("mode = plan: nothing changed. Review the findings and the plan, then set mode = apply, approved_by and confirm_plan.")
 else:
     refusals = []
+    if current_inputs() != before["inputs"]:
+        refusals.append("the widgets changed since the audit above (service principal, catalog, gold schema or revoke_extra); choose Run all")
+    if not APPROVED_BY or not CONFIRM_PLAN:
+        refusals.append("apply needs approved_by and confirm_plan")
     if not before["runner_is_owner"]:
         refusals.append(f"only the catalog owner ({before['owner']}) can grant EXTERNAL USE SCHEMA; you are {before['me']}")
     if CONFIRM_PLAN != before["plan_id"]:
