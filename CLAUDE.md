@@ -75,7 +75,7 @@ Source of truth for scope: `SCOPE.md`. Platform facts: `docs/VERIFIED_FACTS.md`.
 | Mail limit after a custom mail domain (settings only) | `az functionapp config appsettings set -g rg-pmo-review-pilot -n <worker> --settings MAIL_MAX_PER_MINUTE=30 MAIL_MAX_PER_HOUR=100` |
 | Cost check | `tools/cost_check.sh rg-pmo-review-pilot` |
 | Databricks AIM (separate tool, preferred over SCIM) | `bash tools/databricks/aim_setup.sh plan --account-id <id>` → console toggle (no API, F110) → `… plan/apply --workspace <ws> --group <g> [--admin] --approved-by "<name> <date>"`; `status`; `self-test` (`docs/DATABRICKS_AIM.md`) |
-| Databricks: Fabric sees gold only (separate tool, no Azure resource) | import `tools/databricks/fabric_gold_only_notebook.py` into Databricks, run as the catalog owner: `mode=plan` → `mode=apply` + `approved_by` (`docs/FABRIC_GOLD_ONLY.md`, F114–F121); test `python3 tools/databricks/test_fabric_gold_only.py` |
+| Databricks: Fabric sees gold only (separate tool, no Azure resource) | import `tools/databricks/fabric_gold_only_notebook.py` into Databricks, run as a member of the catalog-owning group: `mode=plan` → `mode=apply` + `approved_by` + `confirm_plan` (plan ID) (`docs/FABRIC_GOLD_ONLY.md`, F114–F123); test `python3 tools/databricks/test_fabric_gold_only.py` |
 | Databricks SCIM from Entra (separate tool, no Azure resource) | `bash tools/databricks/entra_scim_setup.sh plan --scim-url <Account SCIM URL> --group <group>` → `… apply … --approved-by "<name> <date>"`; `status`; `pause`; `self-test` (`docs/DATABRICKS_SCIM.md`; AIM first, F106) |
 
 ## Security rules for API code

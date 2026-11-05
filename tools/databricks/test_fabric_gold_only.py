@@ -2,7 +2,9 @@
 """Offline tests for tools/databricks/fabric_gold_only_notebook.py.
 
 Runs the notebook source against stand-ins for spark, dbutils, display, pandas and the Databricks SDK.
-GRANT and REVOKE change the stand-in grants, so the re-audit after apply is tested too. All data is SAMPLE.
+GRANT and REVOKE change the stand-in grants (REVOKE ALL PRIVILEGES follows Learn's rule, F122), so the re-audit
+after apply is tested too. The stand-ins are a model of Databricks, not Databricks: the live plan run is the proof.
+All data is SAMPLE.
 
   python3 tools/databricks/test_fabric_gold_only.py
 """
@@ -22,11 +24,19 @@ SP = "00000000-0000-4000-8000-00000000f001"      # SAMPLE service principal appl
 OTHER_SP = "00000000-0000-4000-8000-00000000f002"  # SAMPLE second service principal
 SECRET = "SAMPLE-not-a-real-secret-123"
 SCHEMAS = ["bronze", "silver_cleansed", "silver_curated", "gold", "information_schema"]
+NOT_IN_ALL = {"MANAGE", "READ METADATA", "EXTERNAL USE LOCATION", "EXTERNAL USE SCHEMA"}  # Learn: REVOKE ALL leaves these
 
 
 class Exit(Exception):
     def __init__(self, value):
         self.value = value
+
+
+class SparkError(Exception):
+    """Like pyspark's AnalysisException: carries an error class."""
+
+    def getErrorClass(self):
+        return "PERMISSION_DENIED"
 
 
 class Row(dict):
@@ -70,6 +80,8 @@ def dirty_state():
         ],
         "table_privs": [
             {"grantee": SP, "schema_name": "bronze", "table_name": "raw_orders", "privilege_type": "SELECT", "inherited_from": "NONE"},
+            # the same grant from a second grantor: must give one REVOKE, not two
+            {"grantee": SP, "schema_name": "bronze", "table_name": "raw_orders", "privilege_type": "SELECT", "inherited_from": "NONE"},
             # Databricks grants account users SELECT on every information_schema view: never a finding
             {"grantee": "account users", "schema_name": "information_schema", "table_name": "tables", "privilege_type": "SELECT", "inherited_from": "NONE"},
         ],
@@ -82,11 +94,20 @@ def dirty_state():
         ],
         "row_filters": [{"table_name": "fact_secure"}],
         "column_masks": [],
+        "ms_privs": [],
+        "metastore_owner": "metastore-admins",
         "scim": [{"displayName": "sp-fabric-mirror-prod", "applicationId": SP, "active": True, "groups": [{"display": "data-readers"}]}],
         "external_access": True,
         "fail_sql": None,
         "fail_views": set(),  # e.g. {"system.information_schema.row_filters"}: that source raises
     }
+
+
+def appliable_state():
+    """The dirty catalog without the SP-owned table (an SP that owns objects is refused)."""
+    s = dirty_state()
+    s["tables"] = [t for t in s["tables"] if t["table_owner"] != SP]
+    return s
 
 
 def clean_state():
@@ -131,7 +152,7 @@ class Spark:
         if m:
             self.executed.append(query)
             if self.s["fail_sql"] and self.s["fail_sql"] in query:
-                raise Exception("PERMISSION_DENIED: SAMPLE failure\nmore detail")
+                raise SparkError("[PERMISSION_DENIED] SAMPLE failure\nmore detail")
             self.apply(m.group(1), m.group(2), m.group(3), parts(m.group(4)), parts(m.group(6))[0])
             return Result([])
         if query.startswith(("GRANT", "REVOKE")):
@@ -143,6 +164,8 @@ class Spark:
         if any(v in query for v in self.s["fail_views"]):
             raise Exception("TABLE_OR_VIEW_NOT_FOUND (SAMPLE)")
         table = re.search(r"information_schema\.(\w+)", query).group(1)
+        if table == "tables":  # the notebook filters by gold or by owner in SQL: check the owner list is passed
+            assert SP in args.values() and "account users" in args.values(), args
         data = {
             "catalogs": [c for c in self.s["catalogs"] if c["catalog_name"] == args.get("c")],
             "schemata": self.s["schemata"],
@@ -152,6 +175,7 @@ class Spark:
             "tables": self.s["tables"],
             "row_filters": self.s["row_filters"],
             "column_masks": self.s["column_masks"],
+            "metastore_privileges": self.s["ms_privs"],
         }[table]
         return Result(copy.deepcopy(data))
 
@@ -164,8 +188,12 @@ class Spark:
             row["schema_name"] = name[1]
         else:
             row.update(schema_name=name[1], table_name=name[2])
-        same = lambda r: all(norm(r.get(k)) == norm(v) for k, v in row.items() if k != "inherited_from")
-        self.s[key] = [r for r in self.s[key] if not same(r)]
+        where = {k: v for k, v in row.items() if k not in ("inherited_from", "privilege_type")}
+        on_it = lambda r: all(norm(r.get(k)) == norm(v) for k, v in where.items())
+        if verb == "REVOKE" and privilege == "ALL PRIVILEGES":  # Learn: also revokes every privilege it implies
+            self.s[key] = [r for r in self.s[key] if not on_it(r) or norm(r["privilege_type"]) in NOT_IN_ALL]
+            return
+        self.s[key] = [r for r in self.s[key] if not (on_it(r) and norm(r["privilege_type"]) == norm(privilege))]
         if verb == "GRANT":
             self.s[key].append(row)
 
@@ -179,20 +207,22 @@ class Api:
             assert query["filter"] == f'applicationId eq "{SP}"', query
             return {"Resources": self.s["scim"]}
         if path.endswith("/metastore_summary"):
-            return {"external_access_enabled": self.s["external_access"]}
+            return {"external_access_enabled": self.s["external_access"], "owner": self.s["metastore_owner"]}
         if path.endswith("/unity-catalog/schemas"):
             assert self.kwargs.get("azure_client_id") == SP and self.kwargs.get("azure_client_secret") == SECRET, "not signed in as the SP"
             assert self.kwargs.get("auth_type") == "azure-client-secret"
-            who = {SP, "account users"} | {g["display"] for g in self.s["scim"][0]["groups"]}
-            spark = Spark(self.s)
-            seen = {r["schema_name"] for r in spark.schema_rows()
+            who = {SP, "account users"} | {g["display"] for g in (self.s["scim"][0]["groups"] if self.s["scim"] else [])}
+            if self.s["catalogs"][0]["catalog_owner"] in who:
+                return {"schemas": [{"name": n} for n in SCHEMAS]}
+            seen = {r["schema_name"] for r in Spark(self.s).schema_rows()
                     if r["grantee"] in who and norm(r["privilege_type"]) in ("USE SCHEMA", "ALL PRIVILEGES", "BROWSE")}
+            seen |= {s["schema_name"] for s in self.s["schemata"] if s["schema_owner"] in who}
             return {"schemas": [{"name": n} for n in sorted(seen)]}
         raise AssertionError(path)
 
 
 def run(widgets: dict, state: dict):
-    """Run the notebook; return (summary or exception, executed statements, printed text)."""
+    """Run the notebook; return (summary or exception, executed statements, printed text, notebook globals)."""
     spark = Spark(state)
     shown = []
     sdk = types.ModuleType("databricks.sdk")
@@ -234,133 +264,204 @@ def run(widgets: dict, state: dict):
     return result, spark.executed, text, g
 
 
+def apply_run(widgets: dict, state: dict):
+    """Plan on a copy, then apply that plan ID on the real state (what an operator does)."""
+    _, executed, _, g = run({**widgets, "mode": "plan"}, copy.deepcopy(state))
+    assert executed == []
+    return run({**widgets, "mode": "apply", "approved_by": "SAMPLE approver 05 Nov 2026", "confirm_plan": g["before"]["plan_id"]}, state)
+
+
 def findings(g, which="before"):
-    res = g[which]
-    return {(f["level"], f["check"]): f for f in res["findings"]}
+    return {(f["level"], f["check"]): f for f in g[which]["findings"]}
 
 
 def check() -> None:
     base = {"sp_application_id": SP.upper(), "catalog": "PROD", "gold_schema": "gold"}
+    fix = {**base, "revoke_extra": "yes"}
+    qsp = f"`{SP}`"
 
     # 1. plan on a dirty catalog: nothing runs, every problem is named, the plan is in the right order
-    res, executed, text, g = run(base, dirty_state())
+    res, executed, text, g = run(fix, dirty_state())
     assert executed == [], executed
-    assert res["mode"] == "plan" and res["fail"] > 0 and res["statements_run"] == 0, res
+    assert res["mode"] == "plan" and res["fail"] > 0 and res["statements_run"] == 0 and len(res["plan_id"]) == 8, res
+    assert f"Plan ID: {res['plan_id']}" in text
     f = findings(g)
-    assert ("FAIL", "SP rights on the whole catalog") in f and "EXTERNAL USE SCHEMA" in f[("FAIL", "SP rights on the whole catalog")]["detail"]
+    assert "EXTERNAL USE SCHEMA" in f[("FAIL", "SP rights on the whole catalog")]["detail"]
     assert ("FAIL", "SP rights on gold") in f
-    assert "silver_cleansed" in f[("FAIL", "SP rights outside gold")]["detail"]
-    assert "bronze.raw_orders" in f[("FAIL", "SP rights outside gold")]["detail"]
-    assert "silver_cleansed.orders" in f[("FAIL", "SP owns objects outside gold")]["detail"]
+    leaks = f[("FAIL", "SP schema and table rights outside gold")]["detail"]
+    assert leaks == "SELECT on bronze.raw_orders; USE SCHEMA on silver_cleansed", leaks
+    assert "silver_cleansed.orders" in f[("FAIL", "Ownership by the SP or its groups")]["detail"]
+    assert ("FAIL", "SP owns objects in this catalog") in f
     via = f[("FAIL", "Rights the SP gets through a group")]["detail"]
     assert "data-readers: SELECT on silver_curated" in via and "data-readers: USE SCHEMA on silver_curated" in via, via
     assert f[("WARN", "Minor rights the SP gets through a group")]["detail"] == "account users: USE SCHEMA on bronze"
     assert OTHER_SP in f[("WARN", "Other principals with EXTERNAL USE SCHEMA outside gold")]["detail"]
-    assert "dev" in f[("WARN", "SP rights in other catalogs")]["detail"]
+    assert "dev" in f[("WARN", "SP rights in other catalogs (at least)")]["detail"]
+    assert "MODIFY" in f[("WARN", "SP holds write or admin rights here")]["detail"]
+    assert ("WARN", "Nested groups not checked") in f
     skipped = f[("WARN", "Gold objects Fabric will not show")]["detail"]
     assert all(x in skipped for x in ("v_sales (VIEW)", "ext_csv (external CSV)", "fact_secure (row filter)")), skipped
     assert "mv_kpi" in f[("INFO", "Gold materialized views / streaming tables")]["detail"]
-    assert ("WARN", "Extra SP right on gold") in f
     sql = [p["sql"] for p in g["before"]["plan"]]
-    q = f"`{SP}`"
     assert sql[:4] == [
-        f"GRANT USE CATALOG ON CATALOG `prod` TO {q}",
-        f"GRANT USE SCHEMA ON SCHEMA `prod`.`gold` TO {q}",
-        f"GRANT SELECT ON SCHEMA `prod`.`gold` TO {q}",
-        f"GRANT EXTERNAL USE SCHEMA ON SCHEMA `prod`.`gold` TO {q}",
+        f"GRANT USE CATALOG ON CATALOG `prod` TO {qsp}",
+        f"GRANT USE SCHEMA ON SCHEMA `prod`.`gold` TO {qsp}",
+        f"GRANT SELECT ON SCHEMA `prod`.`gold` TO {qsp}",
+        f"GRANT EXTERNAL USE SCHEMA ON SCHEMA `prod`.`gold` TO {qsp}",
     ], sql
-    assert sql[-2:] == [f"REVOKE EXTERNAL USE SCHEMA ON CATALOG `prod` FROM {q}", f"REVOKE SELECT ON CATALOG `prod` FROM {q}"], sql
-    assert f"REVOKE MODIFY ON SCHEMA `prod`.`gold` FROM {q}" in sql
-    assert f"REVOKE USE SCHEMA ON SCHEMA `prod`.`silver_cleansed` FROM {q}" in sql
-    assert f"REVOKE SELECT ON TABLE `prod`.`bronze`.`raw_orders` FROM {q}" in sql
+    assert sql[-2:] == [f"REVOKE EXTERNAL USE SCHEMA ON CATALOG `prod` FROM {qsp}", f"REVOKE SELECT ON CATALOG `prod` FROM {qsp}"], sql
+    assert sql.count(f"REVOKE SELECT ON TABLE `prod`.`bronze`.`raw_orders` FROM {qsp}") == 1, "duplicate grant rows must give one REVOKE"
+    assert f"REVOKE MODIFY ON SCHEMA `prod`.`gold` FROM {qsp}" in sql
+    assert f"REVOKE USE SCHEMA ON SCHEMA `prod`.`silver_cleansed` FROM {qsp}" in sql
     assert not any("data-readers" in s or "account users" in s for s in sql), "group grants must never be changed"
     assert g["before"]["plan"][0]["status"] == "already held" and g["before"]["plan"][2]["status"] == "new"
 
+    # 1b. default revoke_extra = no: only GRANTs, the leaks stay FAIL
+    _, _, _, g = run(base, dirty_state())
+    assert all(p["action"] == "GRANT" for p in g["before"]["plan"]), g["before"]["plan"]
+    assert "revoke_extra" in findings(g)[("FAIL", "SP schema and table rights outside gold")]["fix"]
+
     # 2. apply: same statements in the same order, then the re-audit shows only what needs a person
-    res, executed, text, g = run({**base, "mode": "apply", "approved_by": "SAMPLE approver 05 Nov 2026"}, dirty_state())
-    assert executed == sql, executed
-    assert res["statements_run"] == len(sql) and res["statements_failed"] == 0, res
+    _, _, _, gp = run(fix, appliable_state())
+    res, executed, text, g = apply_run(fix, appliable_state())
+    assert executed == [p["sql"] for p in gp["before"]["plan"]], executed
+    assert res["statements_run"] == len(executed) and res["statements_failed"] == 0, res
     after = findings(g, "after")
-    for ok in ("SP rights on the catalog", "SP rights on gold", "SP rights outside gold"):
+    for ok in ("SP rights on the catalog", "SP rights on gold", "SP schema and table rights outside gold"):
         assert ("PASS", ok) in after, (ok, after.keys())
     left = {c for (lvl, c) in after if lvl == "FAIL"}
-    assert left == {"SP owns objects outside gold", "Rights the SP gets through a group"}, left
-    assert "approved by: SAMPLE approver 05 Nov 2026" in text
+    assert left == {"Rights the SP gets through a group"}, left
+    assert "approved by: SAMPLE approver 05 Nov 2026" in text and "SP: sp-fabric-mirror-prod" in text
 
-    # 3. apply without approved_by, a bad id, half-filled secret widgets: refused before anything runs
+    # 3. widget errors: refused before anything runs
     for bad, msg in (
-        ({**base, "mode": "apply"}, "approved_by"),
-        ({**base, "sp_application_id": "sp-fabric"}, "GUID"),
-        ({**base, "sp_secret_scope": "kv"}, "both"),
+        ({**fix, "mode": "apply", "confirm_plan": "x"}, "approved_by"),
+        ({**fix, "mode": "apply", "approved_by": "SAMPLE"}, "confirm_plan"),
+        ({**fix, "sp_application_id": "sp-fabric"}, "GUID"),
+        ({**fix, "sp_secret_scope": "kv"}, "both"),
     ):
         res, executed, _, _ = run(bad, dirty_state())
         assert isinstance(res, ValueError) and msg in str(res) and executed == [], (bad, res)
 
-    # 4. apply by someone who is not the catalog owner: refused, nothing changed
-    s = dirty_state()
+    # 4. not the catalog owner: plan says FAIL, apply refused
+    s = appliable_state()
     s["my_groups"] = set()
-    res, executed, _, _ = run({**base, "mode": "apply", "approved_by": "SAMPLE"}, s)
+    res, executed, _, g = run(fix, copy.deepcopy(s))
+    assert ("FAIL", "Runner is not the catalog owner") in findings(g)
+    res, executed, _, _ = run({**fix, "mode": "apply", "approved_by": "SAMPLE", "confirm_plan": g["before"]["plan_id"]}, s)
     assert isinstance(res, RuntimeError) and "only the catalog owner" in str(res) and executed == [], res
 
-    # 5. a failing statement stops the run and is reported
-    s = dirty_state()
-    s["fail_sql"] = "GRANT SELECT ON SCHEMA"
-    res, executed, _, g = run({**base, "mode": "apply", "approved_by": "SAMPLE"}, s)
-    assert len(executed) == 3 and res["statements_failed"] == 1, (executed, res)
-    assert g["applied"][-1]["result"] == "FAILED: PERMISSION_DENIED: SAMPLE failure"
+    # 5. the approved plan ID must match the current plan: drift after the plan run is refused
+    s = appliable_state()
+    _, _, _, g = run(fix, copy.deepcopy(s))
+    s["schema_privs"].append({"grantee": SP, "schema_name": "bronze", "privilege_type": "SELECT", "inherited_from": None})
+    res, executed, _, _ = run({**fix, "mode": "apply", "approved_by": "SAMPLE", "confirm_plan": g["before"]["plan_id"]}, s)
+    assert isinstance(res, RuntimeError) and "confirm_plan" in str(res) and executed == [], res
 
-    # 6. clean catalog: no FAIL, nothing new to do; fail_on_findings does not trip
-    res, executed, _, g = run({**base, "fail_on_findings": "yes"}, clean_state())
+    # 6. an SP that owns objects is a pipeline identity: apply refused
+    res, executed, _, _ = apply_run(fix, dirty_state())
+    assert isinstance(res, RuntimeError) and "pipeline identity" in str(res) and executed == [], res
+
+    # 7. a failing statement stops the run and always fails it, even without fail_on_findings
+    s = appliable_state()
+    s["fail_sql"] = "GRANT SELECT ON SCHEMA"
+    res, executed, _, g = apply_run(fix, s)
+    assert isinstance(res, RuntimeError) and "failed during apply" in str(res) and len(executed) == 3, (res, executed)
+    assert g["applied"][-1]["result"] == "FAILED: PERMISSION_DENIED", g["applied"][-1]
+
+    # 8. clean catalog: no FAIL, nothing new to do; fail_on_findings does not trip
+    res, executed, _, g = run({**fix, "fail_on_findings": "yes"}, clean_state())
     assert not isinstance(res, Exception) and res["fail"] == 0, (res, [x for x in g["before"]["findings"] if x["level"] == "FAIL"])
     assert all(p["status"] == "already held" for p in g["before"]["plan"]), g["before"]["plan"]
 
-    # 7. drift in plan mode with fail_on_findings = yes: the job fails
-    res, executed, _, _ = run({**base, "fail_on_findings": "yes"}, dirty_state())
+    # 9. drift in plan mode with fail_on_findings = yes: the job fails
+    res, executed, _, _ = run({**fix, "fail_on_findings": "yes"}, dirty_state())
     assert isinstance(res, RuntimeError) and "FAIL line" in str(res) and executed == [], res
 
-    # 8. the check signed in as the SP: sees silver before, gold only after apply; the secret never printed
+    # 10. the check signed in as the SP: sees silver before, gold only after apply; the secret never printed
     secret_widgets = {"sp_secret_scope": "SAMPLE-scope", "sp_secret_key": "SAMPLE-key"}
-    s = dirty_state()
+    s = appliable_state()
     s["scim"][0]["groups"] = []
-    res, _, _, g = run({**base, **secret_widgets}, s)
+    res, _, _, g = run({**fix, **secret_widgets}, s)
     seen = findings(g)[("FAIL", "Schemas the SP can see (signed in as the SP)")]["detail"]
     assert "silver_cleansed" in seen and "bronze" in seen, seen
-    s = dirty_state()
+    s = appliable_state()
     s["scim"][0]["groups"] = []
     s["schema_privs"] = [r for r in s["schema_privs"] if r["grantee"] != "account users"]
-    res, _, _, g = run({**base, **secret_widgets, "mode": "apply", "approved_by": "SAMPLE"}, s)
-    assert ("PASS", "Schemas the SP can see (signed in as the SP)") in findings(g, "after"), findings(g, "after").keys()
+    res, _, _, g = apply_run({**fix, **secret_widgets}, s)
+    after = findings(g, "after")
+    assert ("PASS", "Schemas the SP can see (signed in as the SP)") in after, after.keys()
+    assert ("WARN", "Nested groups not checked") not in after
 
-    # 9. metastore external access off, SP missing from the workspace, SP owns the catalog
+    # 11. metastore access off; SP not directly in the workspace = WARN, groups unknown = WARN (not PASS); inactive SP = FAIL
     s = clean_state()
     s["external_access"] = False
     s["scim"] = []
-    s["catalogs"][0]["catalog_owner"] = SP
-    s["my_groups"] = set()
-    res, _, _, g = run(base, s)
+    _, _, _, g = run(base, s)
     f = findings(g)
-    assert ("FAIL", "Metastore external data access") in f and ("FAIL", "Service principal in this workspace") in f
-    assert ("FAIL", "Service principal owns the catalog") in f and ("WARN", "Runner is not the catalog owner") in f
+    assert ("FAIL", "Metastore external data access") in f
+    assert ("WARN", "Service principal in this workspace") in f and "through a group" in f[("WARN", "Service principal in this workspace")]["fix"]
+    assert ("WARN", "Rights the SP gets through a group") in f and ("PASS", "Rights the SP gets through a group") not in f
+    s = clean_state()
+    s["scim"][0]["active"] = False
+    assert ("FAIL", "Service principal in this workspace") in findings(run(base, s)[3])
 
-    # 10. row filters: falls back to the catalog's own information_schema; both missing = WARN, PASS says "not checked"
+    # 12. ALL PRIVILEGES on the catalog: revoked FIRST, then USE CATALOG granted again; the re-audit proves it
+    s = clean_state()
+    s["cat_privs"] = [r for r in s["cat_privs"] if r["grantee"] != SP and r["grantee"] != "account users"]
+    s["cat_privs"].append({"grantee": SP, "catalog_name": "prod", "privilege_type": "ALL PRIVILEGES", "inherited_from": None})
+    res, executed, _, g = apply_run(fix, s)
+    assert executed[0] == f"REVOKE ALL PRIVILEGES ON CATALOG `prod` FROM {qsp}", executed
+    assert executed[1] == f"GRANT USE CATALOG ON CATALOG `prod` TO {qsp}", executed
+    after = findings(g, "after")
+    assert ("PASS", "SP rights on the catalog") in after and ("FAIL", "SP USE CATALOG") not in after, after.keys()
+    assert res["fail"] == 0, [x for x in g["after"]["findings"] if x["level"] == "FAIL"]
+
+    # 13. ALL PRIVILEGES on gold: revoked first, the three gold rights granted after it
+    s = clean_state()
+    s["schema_privs"] = [{"grantee": SP, "schema_name": "gold", "privilege_type": "ALL PRIVILEGES", "inherited_from": None}]
+    res, executed, _, g = apply_run(fix, s)
+    assert executed[0] == f"REVOKE ALL PRIVILEGES ON SCHEMA `prod`.`gold` FROM {qsp}", executed
+    assert ("PASS", "SP rights on gold") in findings(g, "after") and res["fail"] == 0, findings(g, "after").keys()
+
+    # 14. ownership through a group, of the catalog, a schema or the metastore: FAIL
+    s = clean_state()
+    s["scim"][0]["groups"] = [{"display": "data-eng"}]  # data-eng owns every schema in the sample
+    own = findings(run(base, s)[3])[("FAIL", "Ownership by the SP or its groups")]["detail"]
+    assert "schema silver_curated (owner data-eng)" in own and "schema gold" not in own, own
+    s = clean_state()
+    s["scim"][0]["groups"] = [{"display": "catalog-admins"}]
+    s["metastore_owner"] = "catalog-admins"
+    own = findings(run(base, s)[3])[("FAIL", "Ownership by the SP or its groups")]["detail"]
+    assert "catalog prod" in own and "the metastore" in own, own
+
+    # 15. READ METADATA through a group, or on the metastore: FAIL
+    s = clean_state()
+    s["scim"][0]["groups"] = [{"display": "auditors"}]
+    s["cat_privs"].append({"grantee": "auditors", "catalog_name": "prod", "privilege_type": "READ_METADATA", "inherited_from": None})
+    s["ms_privs"] = [{"grantee": "account users", "privilege_type": "READ METADATA"}, {"grantee": "auditors", "privilege_type": "CREATE CATALOG"}]
+    f = findings(run(base, s)[3])
+    assert "auditors: READ METADATA on the whole catalog" in f[("FAIL", "Rights the SP gets through a group")]["detail"]
+    assert "account users: READ METADATA" in f[("FAIL", "Metastore-level rights of the SP or its groups")]["detail"]
+    assert "auditors: CREATE CATALOG" in f[("WARN", "Other metastore-level rights of the SP or its groups")]["detail"]
+
+    # 16. row filters: falls back to the catalog's own information_schema; both missing = WARN, PASS says "not checked"
     s = dirty_state()
     s["fail_views"] = {"system.information_schema.row_filters", "system.information_schema.column_masks"}
-    res, _, _, g = run(base, s)
-    f = findings(g)
+    f = findings(run(base, s)[3])
     assert "fact_secure (row filter)" in f[("WARN", "Gold objects Fabric will not show")]["detail"]
     assert not any(c.startswith("Gold row_filters") or c.startswith("Gold column_masks") for _, c in f), f.keys()
     s = clean_state()
     s["fail_views"] = {"information_schema.row_filters"}
-    res, _, _, g = run(base, s)
-    f = findings(g)
+    f = findings(run(base, s)[3])
     assert "could not be read" in f[("WARN", "Gold row_filters")]["detail"] and "Check by hand" in f[("WARN", "Gold row_filters")]["fix"]
-    assert "row_filters not checked" in f[("PASS", "Gold objects Fabric will not show")]["detail"], f[("PASS", "Gold objects Fabric will not show")]
+    assert "row_filters not checked" in f[("PASS", "Gold objects Fabric will not show")]["detail"]
 
-    # 11. names with a backtick are quoted, never break out of the identifier
+    # 17. names with a backtick are quoted, never break out of the identifier
     s = clean_state()
     s["catalogs"] = [{"catalog_name": "pr`od", "catalog_owner": "catalog-admins"}]
-    res, _, _, g = run({**base, "catalog": "pr`od"}, s)
-    assert g["before"]["plan"][0]["sql"] == f"GRANT USE CATALOG ON CATALOG `pr``od` TO {q}", g["before"]["plan"][0]
+    _, _, _, g = run({**base, "catalog": "pr`od"}, s)
+    assert g["before"]["plan"][0]["sql"] == f"GRANT USE CATALOG ON CATALOG `pr``od` TO {qsp}", g["before"]["plan"][0]
 
     print("fabric_gold_only_notebook: all checks passed")
 
