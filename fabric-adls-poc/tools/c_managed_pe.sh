@@ -6,7 +6,7 @@ need az; need python3
 az_preflight
 ST="$POC_DIR/tools/state.py"
 env_get() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["env"][sys.argv[2]])' "$STATE_FILE" "$1"; }
-SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; WS_ID="$(resolve_ws_id)"
+SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get storageAccount)"; STG="${STG%% *}"; WS_ID="$(resolve_ws_id)"
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
 SUBRES="dfs" ; APPLY=0
 while [ $# -gt 0 ]; do case "$1" in --subresources) SUBRES="$2"; shift 2;; --apply) APPLY=1; shift;; *) die "unknown $1";; esac; done
@@ -24,6 +24,14 @@ reg="$(az provider show -n Microsoft.Network --query registrationState -o tsv)"
 N=0
 for g in ${SUBRES//,/ }; do
   name="mpe-$STG-$g"
+  # any managed PE of this workspace to this account and sub-resource counts, whatever its name (one may have been made in the UI)
+  ex="$(fab "/workspaces/$WS_ID/managedPrivateEndpoints" | python3 -c '
+import json,sys
+stg,g=sys.argv[1].lower(),sys.argv[2].lower()
+for m in json.load(sys.stdin).get("value",[]):
+    if m.get("targetPrivateLinkResourceId","").lower().rstrip("/").endswith("/storageaccounts/"+stg) and (m.get("targetSubresourceType") or "").lower()==g:
+        print(m["name"]); break' "$STG" "$g")"
+  [ -n "$ex" ] && name="$ex"
   st="$(fab "/workspaces/$WS_ID/managedPrivateEndpoints" | j "[(m.get('provisioningState'),(m.get('connectionState') or {}).get('status')) for m in d.get('value',[]) if m['name']=='$name']")"
   if [ "$st" = "[]" ]; then
     echo "CHANGE  create managed PE $name ($g)"; N=$((N+1))

@@ -1,6 +1,6 @@
 # Architecture — Fabric (public) → ADLS Gen2 (private)
 
-**Status: DESIGN. Not yet proven in the POC.** Each path is marked PASS or FAIL in `TEST_RESULTS.md` after wave 3.
+**Status 2026-11-06:** path ② (managed private endpoint) **PASS** on `pesstddevatacadaolzweu01` (public access Disabled). Path ① needs a resource instance rule, which the account doesn't have (FB39). Path ③ not run. Details: `TEST_RESULTS.md`. The drawing below is the original tenant-1 design.
 
 ```
                  Microsoft Fabric (SaaS, public)                     Your Azure subscription

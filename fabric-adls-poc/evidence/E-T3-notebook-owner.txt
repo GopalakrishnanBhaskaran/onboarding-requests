@@ -1,0 +1,16 @@
+Notebook test poc_nb_mpe (workspace pes-fab-data-dev-local-weu-1), pasted by the owner from Cloud Shell, 2026-11-06. Masked.
+
+Run 1 (against pesstddevdaiweu01, wrong target; Fabric job instances API):
+Failed 2026-11-06T00:12:51.8441753 2026-11-06T00:16:11.8060167 System cancelled the Spark session due to statement execution failures
+  cause: state still pointed at pesstddevdaiweu01 (its MPE Pending) and the container value carried a note ("fabric-poc (created by ...)"),
+  so the abfss path was invalid. Not a test of the private path. Fixed: e_tests.sh keeps the container name only.
+
+Run 2 (against pesstddevatacadaolzweu01, container fabric-poc), evidence/E-notebook-job.txt and E-notebook-result.json:
+Completed
+{"read_rows": 3, "written": "abfss://***@pesstddevatacadaolzweu01.dfs.core.windows.net/input/from_fabric_notebook/run_20261106002151", "readback_rows": 3, "ok": true}
+
+What the notebook did (all over abfss:// through the Approved dfs managed private endpoint; no client outside Fabric can reach the account):
+ 1. mssparkutils.fs.put input/input.csv (3 rows)      -> write CSV
+ 2. spark.read.csv -> 3 rows                          -> read CSV
+ 3. df.write.parquet from_fabric_notebook/run_<ts>    -> write parquet
+ 4. spark.read.parquet -> 3 rows                      -> read parquet

@@ -1,4 +1,4 @@
-# Production setup runbook — DRAFT (not yet proven)
+# Production setup runbook — DRAFT (superseded 2026-11-06 by FINAL_SETUP_RUNBOOK.md for the managed private endpoint path)
 
 **Status: DRAFT.** After wave 3 this becomes `FINAL_SETUP_RUNBOOK.md`, with only the steps whose tests passed. Steps that fail are removed and listed in `TEST_RESULTS.md` (errors + fixes).
 

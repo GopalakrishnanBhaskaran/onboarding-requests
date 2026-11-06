@@ -24,7 +24,7 @@ Note: an anonymous **dfs** request returns `401 NoAuthenticationInformation` bef
 
 ---
 
-# Tenant 2: `pesstddevdaiweu01` (current POC target)
+# Tenant 2: `pesstddevdaiweu01` (POC target 2026-11-03; superseded 2026-11-06, FB40)
 
 Before = discovery 2026-11-03 01:22Z (FB34). The planned column shows the wave 1/2 plan. It isn't applied until approved, and its cells fill in from apply evidence.
 
@@ -41,3 +41,22 @@ Before = discovery 2026-11-03 01:22Z (FB34). The planned column shows the wave 1
 | VNet data gateway | exists on the dev VNet (`pes-snet-data-dev-vnetdgw-weu-001`) | reused (no subnet, provider or gateway change) | | discovery |
 | Containers | `adlspdp-dev` (real data) | **+ `fabric-poc`** (empty, POC only); `adlspdp-dev` untouched | `fabric-poc` created 01:39Z (wave 1) | T2-B-apply-owner |
 | Anonymous request from another public IP | blob **403 AuthorizationFailure** | same expected after | | PROBE-T2-01 |
+
+---
+
+# Tenant 2: `pesstddevatacadaolzweu01` (current POC target, 2026-11-06)
+
+Before = the owner's read-only check 2026-11-06 00:04–00:10Z (FB40). After = 2026-11-06 00:25Z.
+
+| Setting | Before POC | After | Evidence |
+|---|---|---|---|
+| Public network access | **Disabled** | Disabled (unchanged) | FB40 |
+| Default action / bypass | Deny / AzureServices | unchanged | FB40 |
+| IP / VNet rules | none | none | FB40 |
+| Resource instance rules | Defender for Storage data scanner only | unchanged (**no Fabric rule**, so no shortcut / TWA, FB39) | FB40 |
+| Customer private endpoints | 2 (`pes-pep-d-dev-atacadaolz-*`), Auto-Approved | unchanged | portal screenshot |
+| Fabric managed PEs from `pes-fab-data-dev-local-weu-1` | **blob + dfs, Approved** by the infra team (made before the POC tools ran) | used by the notebook test | portal screenshot, Fabric API list |
+| Containers | none listed | **+ `fabric-poc`** (empty at creation, private, POC only) | owner's paste 00:2xZ |
+| Request from another public IP (Cloud Shell) | n/a | blob **403 AuthorizationFailure** anonymous and signed in; dfs 403 signed in | `E-T3-results-owner.txt` |
+| Fabric notebook over the dfs MPE | n/a | **write + read CSV and parquet: PASS** | `E-T3-notebook-owner.txt` |
+

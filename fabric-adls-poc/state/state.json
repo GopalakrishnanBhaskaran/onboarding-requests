@@ -1,252 +1,261 @@
 {
-  "stateGeneration": 2,
-  "version": 1,
-  "profile": "pest",
-  "updated": "2026-11-03T01:48:33Z",
-  "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
-  "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
-  "env": {
-    "tenant": "af3a****-**** (masked; tenant 2)",
-    "subscription": "bde5****-**** (masked; scripts find it with stg_sub)",
-    "resourceGroup": "pes-rg-data-dev-dai-weu-001",
-    "storageAccount": "pesstddevdaiweu01",
-    "container": "fabric-poc (created by Agent B 2026-11-03 01:39Z, empty; adlspdp-dev untouched)",
-    "testFolder": "input",
-    "region": "westeurope",
-    "networkPrefix": "pes- (no pvdbx- VNet in tenant 2)",
-    "fabricWorkspace": "pes-fab-data-dev-local-weu-1 (owner choice: option 2; Admin; identity yes; 0 MPEs)",
-    "fabricWorkspaceId": "856a****-****",
-    "fabricCapacity": "pesfabdatadevweu001 (F16, West Europe, Active; owner is capacity admin or contributor)",
-    "deviceIp": "UNVERIFIED (recorded masked only)",
-    "decision": "owner 2026-11-03: Fabric workspace is in another tenant than the tenant-1 storage; use storage account pesstddevdaiweu01 in the Fabric tenant (TWA isn't compatible with cross-tenant requests, FB32)",
-    "vnet": "pes-vnet-data-dev-weu-001 (existing)",
-    "peSubnet": "pes-snet-data-dev-pep-weu-001 (existing blob+dfs PEs, Approved)",
-    "gateway": "existing VNet data gateway on pes-vnet-data-dev-weu-001 / pes-snet-data-dev-vnetdgw-weu-001"
+ "stateGeneration": 2,
+ "version": 1,
+ "profile": "pest",
+ "updated": "2026-11-06T00:30:00Z",
+ "goal": "Fabric (public) -> ADLS Gen2 (private endpoint, no open public access): prove read + write from Fabric (shortcut, notebook, pipeline), then a production runbook.",
+ "runMode": "Cloud Shell hand-off: owner runs the scripts in Azure Cloud Shell (already signed in) and pastes back masked output; device code blocked in the tenant (You don't have access to this, 2026-11-02)",
+ "env": {
+  "tenant": "af3a****-**** (masked; tenant 2)",
+  "subscription": "bde5****-**** (masked; scripts find it with stg_sub)",
+  "resourceGroup": "pes-rg-data-dev-atacadaolz-weu-001",
+  "storageAccount": "pesstddevatacadaolzweu01",
+  "container": "fabric-poc",
+  "testFolder": "input",
+  "region": "westeurope",
+  "networkPrefix": "pes- (no pvdbx- VNet in tenant 2)",
+  "fabricWorkspace": "pes-fab-data-dev-local-weu-1",
+  "fabricWorkspaceId": "856a****-****",
+  "fabricCapacity": "pesfabdatadevweu001 (F16, West Europe, Active; owner is capacity admin or contributor)",
+  "deviceIp": "UNVERIFIED (recorded masked only)",
+  "decision": "owner 2026-11-06: target pesstddevatacadaolzweu01 (the local workspace already had Approved blob+dfs managed PEs to it, FB40); 2026-11-03 target pesstddevdaiweu01 kept as history",
+  "vnet": "pes-vnet-data-dev-weu-001 (existing)",
+  "peSubnet": "UNVERIFIED for pesstddevatacadaolzweu01 (customer PEs pes-pep-d-dev-atacadaolz-*, Auto-Approved)",
+  "gateway": "existing VNet data gateway on pes-vnet-data-dev-weu-001 / pes-snet-data-dev-vnetdgw-weu-001; reach to pesstddevatacadaolzweu01 UNVERIFIED",
+  "previousStorageAccount": "pesstddevdaiweu01 (pes-rg-data-dev-dai-weu-001; container fabric-poc, empty; MPE from the local workspace Pending, not needed)"
+ },
+ "waves": {
+  "1": {
+   "agents": [
+    "A",
+    "B"
+   ],
+   "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule",
+   "approvedBy": "Gokul 2026-11-03 (state.py approve in Cloud Shell after the plan review in chat; tenant 2)",
+   "approvedAt": "2026-11-03T01:39:00Z"
   },
-  "waves": {
+  "2": {
+   "agents": [
+    "C",
+    "D"
+   ],
+   "scope": "Fabric managed PE (+ approval on storage) + VNet data gateway (subnet delegation, provider, gateway, connection)",
+   "approvedBy": null,
+   "approvedAt": null
+  },
+  "3": {
+   "agents": [
+    "E"
+   ],
+   "scope": "tests (shortcut, notebook, pipeline, other-IP block) + report",
+   "approvedBy": null,
+   "approvedAt": null
+  }
+ },
+ "agents": {
+  "A": {
+   "name": "storage network",
+   "status": "done",
+   "notes": [
+    "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+    "2026-11-03T01:30:27Z verify-only: blob+dfs PEs Approved (zone groups in the hub DNS RG), public Disabled kept; 0 changes"
+   ]
+  },
+  "B": {
+   "name": "Fabric identity",
+   "status": "blocked",
+   "notes": [
+    "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+    "2026-11-03T01:39:01Z applied: container fabric-poc. Open storage-admin requests: resource instance rule (required for the shortcut), 2 identity roles (optional)"
+   ]
+  },
+  "C": {
+   "name": "Fabric managed private endpoint",
+   "status": "done",
+   "notes": [
+    "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+    "2026-11-03T01:47:09Z plan: 1 managed PE (dfs) from dev-local; approval = storage-admin request",
+    "2026-11-06T00:20:00Z pesstddevatacadaolzweu01: blob+dfs MPEs from the local workspace Approved by the infra team (made in the UI); no tool change needed"
+   ]
+  },
+  "D": {
+   "name": "VNet data gateway",
+   "status": "done",
+   "notes": [
+    "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+    "2026-11-03T01:47:27Z reuse existing dev VNet gateway (1 member, 30 min sleep, on F16; owner Admin); ADLS connection by owner in the UI pending"
+   ]
+  },
+  "E": {
+   "name": "tests + report",
+   "status": "running",
+   "notes": [
+    "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
+    "2026-11-06T00:30:00Z notebook PASS (write/read CSV + parquet over the dfs MPE), probe BLOCKED anon + signed in; shortcut not possible without the resource instance rule (FB39)"
+   ]
+  }
+ },
+ "locks": {
+  "storage-account": null,
+  "storage-network-rules": null,
+  "fabric-workspace": null,
+  "vnet": null,
+  "fabric-capacity": null
+ },
+ "decisions": [],
+ "handoff": [
+  {
+   "at": "2026-11-02T22:42:11Z",
+   "from": "Claude",
+   "to": "Owner",
+   "text": "discovery ready: run discover.sh in Cloud Shell with --device-ip"
+  },
+  {
+   "at": "2026-11-02T23:32:46Z",
+   "from": "Claude",
+   "to": "Owner",
+   "text": "wave 1 approved; run fabric_check, w1_build_env --apply, then Agent A plan/apply with --device-ip"
+  },
+  {
+   "at": "2026-11-02T23:50:55Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "w1_build_env applied (5/5 done); A plan OK; apply retried after a missing-space typo"
+  },
+  {
+   "at": "2026-11-02T23:59:21Z",
+   "from": "A",
+   "to": "B",
+   "text": "storage network in place; next b_fabric_identity.sh (capacity fabpocf2, workspace ws-fabric-adls-poc)"
+  },
+  {
+   "at": "2026-11-03T00:39:01Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "list-admins: no native member user; owner creates fabricadmin (no roles) in the Entra portal, then runs Agent B with --capacity-admin"
+  },
+  {
+   "at": "2026-11-03T00:51:51Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "owner asked to use another Fabric account: fabricadmin (native, capacity admin) adds the owner as capacity contributor in the UI between B1 (--capacity-only) and the full B run; removes the Power BI admin API dependency"
+  },
+  {
+   "at": "2026-11-03T00:55:43Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "owner proposes an existing Fabric workspace (856a****-****); ws_check.sh decides: same tenant + F SKU -> use it (B with --workspace/--capacity), trial -> move to fabpocf2, other tenant -> not usable for TWA"
+  },
+  {
+   "at": "2026-11-03T01:05:22Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "ws_check on the proposed workspace: visible, owner Admin, workspace identity exists, capacity F16 West Europe Active; same-tenant-as-storage not yet proven (check added)"
+  },
+  {
+   "at": "2026-11-03T01:17:23Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "workspace is in a different tenant; use storage account pesstddevdaiweu01 there. Claude: approvals reset (new storage = new approval); next discover.sh --storage pesstddevdaiweu01 (read-only)"
+  },
+  {
+   "at": "2026-11-03T01:27:09Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "discovery + ws_check pasted: storage public Disabled, blob+dfs PEs Approved, 2 Fabric MPEs Approved (another workspace), VNet gateway exists; same tenant OK; F16"
+  },
+  {
+   "at": "2026-11-03T01:27:09Z",
+   "from": "Claude",
+   "to": "Owner",
+   "text": "other-IP probe from Claude's container: blob 403 AuthorizationFailure (PROBE-T2-01). Next: access_check.sh, A verify-only, B plan; wave 1 approval needed (container + identity RBAC + resource instance rule)"
+  },
+  {
+   "at": "2026-11-03T01:33:46Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "owner chose option 2 (pes-fab-data-dev-local-weu-1). access_check: owner can create containers and read/write data; can't assign roles, write the account (resource rule) or approve PEs; is admin of the 3 VNet gateways; existing MPEs belong to pes-fab-data-dev-dai-weu-1"
+  },
+  {
+   "at": "2026-11-03T01:40:51Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "wave 1 approved + applied (container fabric-poc); 3 admin requests printed"
+  },
+  {
+   "at": "2026-11-03T01:48:33Z",
+   "from": "Owner",
+   "to": "Claude",
+   "text": "wave 2 plans: B 0 changes (container exists), C 1 MPE dfs, D existing gateway verified"
+  },
+  {
+   "at": "2026-11-06T00:30:00Z",
+   "from": "Claude",
+   "to": "Owner",
+   "text": "target pesstddevatacadaolzweu01; notebook PASS; probe BLOCKED; shortcut needs the resource instance rule (FB39); delete the Pending MPE to pesstddevdaiweu01 if not needed"
+  }
+ ],
+ "history": [
+  {
+   "at": "2026-11-03T01:17:23Z",
+   "what": "tenant 1 (owner's own MSA tenant) POC set, superseded: owner chose another tenant's storage account",
+   "env": {
+    "tenant": "5240****-**** (masked)",
+    "subscription": "5b9f****-**** (masked)",
+    "resourceGroup": "rg-pvdbx-fabric-poc",
+    "storageAccount": "stpvdbxfabb5731f",
+    "container": "poc",
+    "testFolder": "input",
+    "region": "centralindia",
+    "networkPrefix": "pvdbx-",
+    "fabricWorkspace": "UNVERIFIED",
+    "fabricWorkspaceId": "UNVERIFIED",
+    "fabricCapacity": "UNVERIFIED (minimum F2)",
+    "deviceIp": "UNVERIFIED (recorded masked only)",
+    "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)",
+    "vnet": "pvdbx-vnet-fabricpoc",
+    "peSubnet": "snet-pe"
+   },
+   "waves": {
     "1": {
-      "agents": [
-        "A",
-        "B"
-      ],
-      "scope": "storage network (PEs, DNS, firewall, my IP) + Fabric capacity/workspace/identity, RBAC, resource instance rule",
-      "approvedBy": "Gokul 2026-11-03 (state.py approve in Cloud Shell after the plan review in chat; tenant 2)",
-      "approvedAt": "2026-11-03T01:39:00Z"
+     "approvedBy": "Gokul 2026-11-02 (chat: approved wave 1)",
+     "approvedAt": "2026-11-02T23:32:46Z"
     },
     "2": {
-      "agents": [
-        "C",
-        "D"
-      ],
-      "scope": "Fabric managed PE (+ approval on storage) + VNet data gateway (subnet delegation, provider, gateway, connection)",
-      "approvedBy": null,
-      "approvedAt": null
+     "approvedBy": null,
+     "approvedAt": null
     },
     "3": {
-      "agents": [
-        "E"
-      ],
-      "scope": "tests (shortcut, notebook, pipeline, other-IP block) + report",
-      "approvedBy": null,
-      "approvedAt": null
+     "approvedBy": null,
+     "approvedAt": null
     }
-  },
-  "agents": {
+   },
+   "agents": {
     "A": {
-      "name": "storage network",
-      "status": "done",
-      "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
-        "2026-11-03T01:30:27Z verify-only: blob+dfs PEs Approved (zone groups in the hub DNS RG), public Disabled kept; 0 changes"
-      ]
+     "status": "done",
+     "notes": [
+      "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending",
+      "2026-11-02T23:59:21Z applied 23:57Z: device IP rule, PEs blob+dfs Approved, privatelink.blob/dfs zones linked + A records; public DNS CNAME via privatelink; other-IP blob probe 403"
+     ]
     },
     "B": {
-      "name": "Fabric identity",
-      "status": "blocked",
-      "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
-        "2026-11-03T01:39:01Z applied: container fabric-poc. Open storage-admin requests: resource instance rule (required for the shortcut), 2 identity roles (optional)"
-      ]
+     "status": "pending",
+     "notes": []
     },
     "C": {
-      "name": "Fabric managed private endpoint",
-      "status": "pending",
-      "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
-        "2026-11-03T01:47:09Z plan: 1 managed PE (dfs) from dev-local; approval = storage-admin request"
-      ]
+     "status": "pending",
+     "notes": []
     },
     "D": {
-      "name": "VNet data gateway",
-      "status": "done",
-      "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)",
-        "2026-11-03T01:47:27Z reuse existing dev VNet gateway (1 member, 30 min sleep, on F16; owner Admin); ADLS connection by owner in the UI pending"
-      ]
+     "status": "pending",
+     "notes": []
     },
     "E": {
-      "name": "tests + report",
-      "status": "pending",
-      "notes": [
-        "2026-11-03T01:17:23Z reset for tenant 2 (tenant-1 result kept in history)"
-      ]
+     "status": "pending",
+     "notes": []
     }
-  },
-  "locks": {
-    "storage-account": null,
-    "storage-network-rules": null,
-    "fabric-workspace": null,
-    "vnet": null,
-    "fabric-capacity": null
-  },
-  "decisions": [],
-  "handoff": [
-    {
-      "at": "2026-11-02T22:42:11Z",
-      "from": "Claude",
-      "to": "Owner",
-      "text": "discovery ready: run discover.sh in Cloud Shell with --device-ip"
-    },
-    {
-      "at": "2026-11-02T23:32:46Z",
-      "from": "Claude",
-      "to": "Owner",
-      "text": "wave 1 approved; run fabric_check, w1_build_env --apply, then Agent A plan/apply with --device-ip"
-    },
-    {
-      "at": "2026-11-02T23:50:55Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "w1_build_env applied (5/5 done); A plan OK; apply retried after a missing-space typo"
-    },
-    {
-      "at": "2026-11-02T23:59:21Z",
-      "from": "A",
-      "to": "B",
-      "text": "storage network in place; next b_fabric_identity.sh (capacity fabpocf2, workspace ws-fabric-adls-poc)"
-    },
-    {
-      "at": "2026-11-03T00:39:01Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "list-admins: no native member user; owner creates fabricadmin (no roles) in the Entra portal, then runs Agent B with --capacity-admin"
-    },
-    {
-      "at": "2026-11-03T00:51:51Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "owner asked to use another Fabric account: fabricadmin (native, capacity admin) adds the owner as capacity contributor in the UI between B1 (--capacity-only) and the full B run; removes the Power BI admin API dependency"
-    },
-    {
-      "at": "2026-11-03T00:55:43Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "owner proposes an existing Fabric workspace (856a****-****); ws_check.sh decides: same tenant + F SKU -> use it (B with --workspace/--capacity), trial -> move to fabpocf2, other tenant -> not usable for TWA"
-    },
-    {
-      "at": "2026-11-03T01:05:22Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "ws_check on the proposed workspace: visible, owner Admin, workspace identity exists, capacity F16 West Europe Active; same-tenant-as-storage not yet proven (check added)"
-    },
-    {
-      "at": "2026-11-03T01:17:23Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "workspace is in a different tenant; use storage account pesstddevdaiweu01 there. Claude: approvals reset (new storage = new approval); next discover.sh --storage pesstddevdaiweu01 (read-only)"
-    },
-    {
-      "at": "2026-11-03T01:27:09Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "discovery + ws_check pasted: storage public Disabled, blob+dfs PEs Approved, 2 Fabric MPEs Approved (another workspace), VNet gateway exists; same tenant OK; F16"
-    },
-    {
-      "at": "2026-11-03T01:27:09Z",
-      "from": "Claude",
-      "to": "Owner",
-      "text": "other-IP probe from Claude's container: blob 403 AuthorizationFailure (PROBE-T2-01). Next: access_check.sh, A verify-only, B plan; wave 1 approval needed (container + identity RBAC + resource instance rule)"
-    },
-    {
-      "at": "2026-11-03T01:33:46Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "owner chose option 2 (pes-fab-data-dev-local-weu-1). access_check: owner can create containers and read/write data; can't assign roles, write the account (resource rule) or approve PEs; is admin of the 3 VNet gateways; existing MPEs belong to pes-fab-data-dev-dai-weu-1"
-    },
-    {
-      "at": "2026-11-03T01:40:51Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "wave 1 approved + applied (container fabric-poc); 3 admin requests printed"
-    },
-    {
-      "at": "2026-11-03T01:48:33Z",
-      "from": "Owner",
-      "to": "Claude",
-      "text": "wave 2 plans: B 0 changes (container exists), C 1 MPE dfs, D existing gateway verified"
-    }
-  ],
-  "history": [
-    {
-      "at": "2026-11-03T01:17:23Z",
-      "what": "tenant 1 (owner's own MSA tenant) POC set, superseded: owner chose another tenant's storage account",
-      "env": {
-        "tenant": "5240****-**** (masked)",
-        "subscription": "5b9f****-**** (masked)",
-        "resourceGroup": "rg-pvdbx-fabric-poc",
-        "storageAccount": "stpvdbxfabb5731f",
-        "container": "poc",
-        "testFolder": "input",
-        "region": "centralindia",
-        "networkPrefix": "pvdbx-",
-        "fabricWorkspace": "UNVERIFIED",
-        "fabricWorkspaceId": "UNVERIFIED",
-        "fabricCapacity": "UNVERIFIED (minimum F2)",
-        "deviceIp": "UNVERIFIED (recorded masked only)",
-        "decision": "build a new pvdbx- POC set in rg-pvdbx-fabric-poc (owner choice 2026-11-02: no pvdbx-/Purview resources in the visible subscription)",
-        "vnet": "pvdbx-vnet-fabricpoc",
-        "peSubnet": "snet-pe"
-      },
-      "waves": {
-        "1": {
-          "approvedBy": "Gokul 2026-11-02 (chat: approved wave 1)",
-          "approvedAt": "2026-11-02T23:32:46Z"
-        },
-        "2": {
-          "approvedBy": null,
-          "approvedAt": null
-        },
-        "3": {
-          "approvedBy": null,
-          "approvedAt": null
-        }
-      },
-      "agents": {
-        "A": {
-          "status": "done",
-          "notes": [
-            "2026-11-02T23:50:55Z base built 2026-11-02T23:49Z (RG, budget, VNet, locked storage, container); A plan 9 changes; apply pending",
-            "2026-11-02T23:59:21Z applied 23:57Z: device IP rule, PEs blob+dfs Approved, privatelink.blob/dfs zones linked + A records; public DNS CNAME via privatelink; other-IP blob probe 403"
-          ]
-        },
-        "B": {
-          "status": "pending",
-          "notes": []
-        },
-        "C": {
-          "status": "pending",
-          "notes": []
-        },
-        "D": {
-          "status": "pending",
-          "notes": []
-        },
-        "E": {
-          "status": "pending",
-          "notes": []
-        }
-      },
-      "stillRunning": "rg-pvdbx-fabric-poc: storage, 2 PEs, 2 private DNS zones, VNet, budget (PEs ~INR 1.90/h + zones ~INR 95/month) until the owner deletes the RG"
-    }
-  ]
+   },
+   "stillRunning": "rg-pvdbx-fabric-poc: storage, 2 PEs, 2 private DNS zones, VNet, budget (PEs ~INR 1.90/h + zones ~INR 95/month) until the owner deletes the RG"
+  }
+ ]
 }

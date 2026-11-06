@@ -2,7 +2,7 @@
 # Agent E — POC tests. Each test writes masked evidence and PASS/FAIL to evidence/E-results.txt.
 # Usage: bash e_tests.sh <prep|lakehouse|shortcut|notebook|pipeline-twa|pipeline-gw --connection <id>|probe|all> --container <c> --folder <f>
 #   tenant 2 (data plane reachable only from Fabric/private network):
-#   seed | pipeline-gw-write --connection <id> | pipeline-gw --connection <id> | shortcut-verify [--shortcut <name>] | gw-roundtrip --connection <id>
+#   seed | pipeline-gw-write --connection <id> | pipeline-gw --connection <id> | shortcut-check | shortcut-verify [--shortcut <name>] | gw-roundtrip --connection <id>
 # Creates only test objects (lakehouse poc_lh, notebook, pipelines, files under <folder>/); needs wave 3 approval.
 source "$(dirname "$0")/lib.sh"
 need az; need python3; need curl
@@ -13,11 +13,12 @@ SUB="$(env_get subscription)"; RG="$(env_get resourceGroup)"; STG="$(env_get sto
 case "$SUB" in *'*'*|*UNVERIFIED*|"") SUB="$(stg_sub "$(env_get storageAccount)" || az account show --query id -o tsv)";; esac   # template values are masked
 CMD="${1:-}"; shift || true
 CONTAINER="$(env_get container)" ; FOLDER="$(env_get testFolder)" ; GWCONN=""
+CONTAINER="${CONTAINER%% *}"   # the state may carry a note after the name ("fabric-poc (created by ...)"): keep the name only
 case "$CONTAINER" in UNVERIFIED) CONTAINER="";; esac; case "$FOLDER" in UNVERIFIED|"") FOLDER="input";; esac
 while [ $# -gt 0 ]; do case "$1" in --container) CONTAINER="$2"; shift 2;; --folder) FOLDER="$2"; shift 2;; --connection) GWCONN="$2"; shift 2;; --shortcut) SCNAME="$2"; shift 2;; *) die "unknown $1";; esac; done
 SCNAME="${SCNAME:-adls_poc}"
 [ -n "$CONTAINER" ] || die "--container required"
-[ "$CMD" = probe ] || require_approval 3
+case "$CMD" in probe|shortcut-check) ;; *) require_approval 3;; esac   # read-only commands need no approval
 WS_ID=""; [ "$CMD" = probe ] || WS_ID="$(resolve_ws_id)"   # the probe needs no Fabric call
 az account set --subscription "$SUB" 2>/dev/null || true
 DFS="https://$STG.dfs.core.windows.net"
@@ -94,6 +95,7 @@ do_lakehouse() {
 }
 do_shortcut() {
   local lh conn out
+  twa_ready || { result SHORTCUT "NOT RUN no resource instance rule (FB39)"; return 0; }
   lh="$(lh_id)"; conn="$(twa_connection)"
   fab "/workspaces/$WS_ID/items/$lh/shortcuts?shortcutConflictPolicy=CreateOrOverwrite" POST --body "{\"path\":\"Files\",\"name\":\"adls_poc\",\"target\":{\"adlsGen2\":{\"location\":\"$DFS\",\"subpath\":\"/$CONTAINER/$FOLDER\",\"connectionId\":\"$conn\"}}}" 2>&1 | save E-shortcut-create.json
   sleep 10
@@ -135,7 +137,8 @@ PY
   echo "$st" | save E-notebook-job.txt
   out="$(onelake_get "$WS_ID/$lh/Files/poc_results/notebook_$ts.json")"; echo "$out" | save E-notebook-result.json
   # expected from Cloud Shell: blocked by the firewall (Cloud Shell's IP is not allowed) -> extra "other IP" evidence
-  az storage fs file list -f "$CONTAINER" --path "$FOLDER" --account-name "$STG" --auth-mode login -o json 2>&1 | head -c 600 | save E-cloudshell-adls-listing.txt
+  # an error here is the expected result (Cloud Shell is not on the private network): never let it stop the script before the result line
+  { az storage fs file list -f "$CONTAINER" --path "$FOLDER" --account-name "$STG" --auth-mode login -o json 2>&1 || true; } | head -c 600 | save E-cloudshell-adls-listing.txt || true
   if echo "$out" | grep -q '"ok": true'; then result NOTEBOOK "PASS read 3 rows + wrote/read back parquet via abfss:// (managed PE); job: ${st%% *}"; else result NOTEBOOK "FAIL job: $st"; fi
 }
 pipeline_def() { # pipeline_def <connectionId> <lakehouseId> <sinkFolder>: Binary copy ADLS file -> Lakehouse Files
@@ -198,8 +201,20 @@ do_pipeline_write() { # Lakehouse -> ADLS through the gateway connection: proves
   case "$st" in Completed*) result PIPELINE_GW_WRITE "PASS wrote $CONTAINER/$FOLDER/input.csv to ADLS via the VNet gateway; job: ${st%% *}";;
     *) result PIPELINE_GW_WRITE "FAIL job: $st";; esac
 }
+twa_ready() { # read-only: does the storage firewall admit this workspace (resource instance rule, FB3/FB39)? prints one line, returns 0/1
+  local rules
+  rules="$(az storage account show -n "$STG" -g "$RG" --subscription "$SUB" --query "networkRuleSet.resourceAccessRules[].resourceId" -o tsv 2>/dev/null || true)"
+  if echo "$rules" | grep -qi "Microsoft.Fabric/workspaces/$WS_ID"; then echo "OK      resource instance rule for this workspace is on $STG"; return 0; fi
+  echo "BLOCKED no resource instance rule for workspace $(echo "$WS_ID" | mask) on $STG: a OneLake shortcut to this account cannot work."
+  echo "        Shortcuts reach a firewalled ADLS account only through trusted workspace access; they don't use managed private endpoints"
+  echo "        and the data gateway option is only for S3, S3-compatible and GCS shortcuts (FB39). Ask the storage admins for the rule:"
+  echo "        az storage account network-rule add -g $RG --account-name $STG --resource-id /subscriptions/00000000-0000-0000-0000-000000000000/resourcegroups/Fabric/providers/Microsoft.Fabric/workspaces/<workspace id> --tenant-id <tenant id>"
+  return 1
+}
+do_shortcut_check() { if twa_ready; then result SHORTCUT-CHECK "READY resource instance rule present"; else result SHORTCUT-CHECK "BLOCKED no resource instance rule (shortcut not possible, FB39)"; fi; }
 do_shortcut_verify() { # the shortcut you created in the UI (org account, TWA): read the file through OneLake
   local lh out; lh="$(lh_id)"
+  twa_ready || true
   out="$(onelake_get "$WS_ID/$lh/Files/$SCNAME/input.csv")"; echo "$out" | head -c 2000 | save E-shortcut-read.txt
   if echo "$out" | grep -q "gamma,30"; then result SHORTCUT "PASS read input.csv through OneLake shortcut $SCNAME (trusted workspace access)"; else result SHORTCUT "FAIL $(echo "$out" | head -c 300)"; fi
 }
@@ -222,6 +237,7 @@ do_probe() { # Read-only. Run it from a public IP that is on no allow-list (Clau
     case "$P_CODE/$P_ERR" in
       403/AuthorizationFailure) result "$1" "BLOCKED from $(echo "$ip" | mask) ($2 403 AuthorizationFailure = network)";;
       401/NoAuthenticationInformation) result "$1" "NOT DECISIVE ($2 401 before the network check)";;
+      /*) result "$1" "NO ANSWER from $(echo "$ip" | mask) ($2: no HTTP response, e.g. DNS, timeout or sign-out; not decisive)";;
       *) result "$1" "REACHABLE from $(echo "$ip" | mask) ($2 HTTP $P_CODE $P_ERR)";;
     esac
   }
@@ -244,7 +260,8 @@ case "$CMD" in
   seed) do_seed;;
   pipeline-gw-write) [ -n "$GWCONN" ] || die "--connection <gateway connection id>"; do_pipeline_write "$GWCONN";;
   shortcut-verify) do_shortcut_verify;;
+  shortcut-check) do_shortcut_check;;
   gw-roundtrip) [ -n "$GWCONN" ] || die "--connection <gateway connection id>"; do_lakehouse; do_seed; do_pipeline_write "$GWCONN"; do_pipeline PIPELINE_GW "$GWCONN" poc_pl_gw from_pipeline_gw; do_probe;;
   all) do_lakehouse; do_notebook; do_shortcut; do_pipeline PIPELINE_TWA "$(twa_connection)" poc_pl_twa from_pipeline_twa; do_probe;;
-  *) die "usage: e_tests.sh <prep|lakehouse|shortcut|notebook|pipeline-twa|pipeline-gw|probe|all> --container <c> [--folder <f>]";;
+  *) die "usage: e_tests.sh <prep|lakehouse|shortcut|shortcut-check|shortcut-verify|notebook|pipeline-twa|pipeline-gw|probe|seed|gw-roundtrip|all> [--container <c>] [--folder <f>]";;
 esac

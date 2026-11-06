@@ -1,0 +1,18 @@
+Agent E results, pasted by the owner from Cloud Shell (fabric-adls-poc/evidence/E-results.txt), 2026-11-06. Masked.
+Target from 00:2xZ: pesstddevatacadaolzweu01 (container fabric-poc). Lines before that ran against pesstddevdaiweu01 (see notes).
+
+2026-11-06T00:12:11Z  LAKEHOUSE      PASS poc_lh exists
+2026-11-06T00:17:23Z  PROBE-ANON     REACHABLE from 134.149.x.x (blob HTTP  )
+2026-11-06T00:17:23Z  PROBE-SIGNEDIN REACHABLE from 134.149.x.x (signed-in blob HTTP  )
+2026-11-06T00:17:23Z  PROBE-SIGNEDIN REACHABLE from 134.149.x.x (signed-in dfs HTTP  )
+2026-11-06T00:24:43Z  PROBE-ANON     BLOCKED from 134.149.x.x (blob 403 AuthorizationFailure = network)
+2026-11-06T00:24:44Z  PROBE-SIGNEDIN BLOCKED from 134.149.x.x (signed-in blob 403 AuthorizationFailure = network)
+2026-11-06T00:24:44Z  PROBE-SIGNEDIN BLOCKED from 134.149.x.x (signed-in dfs 403 AuthorizationFailure = network)
+
+Notes (Claude):
+- 00:17:23Z lines: INVALID. They ran against pesstddevdaiweu01 around a Cloud Shell sign-out; the HTTP code is empty (no response).
+  The tool then labelled "no answer" as REACHABLE. Fixed: an empty code now reads "NO ANSWER (not decisive)".
+- 00:24Z lines: pesstddevatacadaolzweu01, valid. Blocked both anonymously and with the owner's token, although the owner holds
+  blob read/write data actions: 403 AuthorizationFailure = the network block (FB38), not a missing role.
+- The NOTEBOOK result line is missing: the script stopped at the expected Cloud Shell listing error (line 138, set -e) before
+  writing it. The notebook job itself completed (E-T3-notebook-owner.txt). Fixed: that listing can no longer stop the script.
