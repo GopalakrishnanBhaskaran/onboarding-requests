@@ -38,13 +38,15 @@ async function submit(page: Page, fields: {
   await page.getByLabel('Enterprise ID').fill(fields.enterpriseId);
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
-  // v1.1 F1: environment and Resource* come from the mapping sheet of this tenant; the resolved groups are ticked.
-  if (fields.environment) await page.getByLabel('Environment').selectOption(fields.environment);
+  // v1.1 F1: environment and Resource* come from the mapping sheet of this tenant; 7 Nov 2026: then the access level
+  // (no Entra groups to tick: they follow from the mapping sheet and are shown for reference only).
+  if (fields.environment) await page.getByRole('combobox', { name: 'Environment' }).selectOption(fields.environment);
   await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no resource chosen yet
   await page.getByRole('combobox', { name: /^Resource/ }).selectOption(fields.resource);
-  const table = page.getByRole('table', { name: 'Resolved access' });
-  await expect(table).toBeVisible();
-  await table.getByRole('checkbox', { name: fields.group, exact: true }).check();
+  await page.getByRole('combobox', { name: 'Access level' }).selectOption(fields.accessLevel);
+  await expect(page.getByRole('checkbox', { name: fields.group })).toHaveCount(0);
+  await page.getByText('Show the Entra groups (reference only)').click();
+  await expect(page.getByRole('table', { name: 'Resolved access' }).getByText(fields.group, { exact: true })).toBeVisible();
   // A ready template, prefilled with the choices; submitting it unfilled is refused.
   await page.getByRole('button', { name: 'Insert into justification' }).click();
   await expect(page.getByRole('textbox', { name: 'Justification' })).toHaveValue(new RegExp(`Access needed: ${fields.accessLevel} on `));
@@ -227,10 +229,25 @@ test('tenant project: environment, the Azure roles and risk flags are on the dec
 
   // v1.1 F1: the only Prod row is flagged red (never acted on), so Prod offers nothing to request.
   await alice.page.goto('/#/requests/new');
-  await alice.page.getByLabel('Environment').selectOption('Prod');
+  await alice.page.getByRole('combobox', { name: 'Environment' }).selectOption('Prod');
   await expect(alice.page.getByText(/has no resources for Prod that can be requested/)).toBeVisible();
   await expect(alice.page.getByRole('button', { name: 'Submit request' })).toBeDisabled();
   for (const u of [alice, olivia]) await u.ctx.close();
+});
+
+test('All environments: one button selects every environment and the form says how many requests it makes', async ({ browser }) => {
+  const alice = await as(browser, 'sample-user-alice');
+  const page = alice.page;
+  await page.goto('/#/requests/new');
+  await page.getByRole('combobox', { name: 'Tenant', exact: true }).selectOption('SAMPLE-PEST');
+  const all = page.getByRole('button', { name: 'Select all environments' });
+  await all.click();
+  await expect(page.getByRole('button', { name: 'All environments selected' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('combobox', { name: 'Environment' })).toHaveValue('__all__');
+  await expect(page.getByText(/One submission per environment/)).toBeVisible();
+  await page.getByRole('button', { name: 'All environments selected' }).click(); // a second click clears it
+  await expect(page.getByRole('combobox', { name: 'Environment' })).toHaveValue('');
+  await alice.ctx.close();
 });
 
 test('Resource* checkboxes: All ticks every resource, unticking one clears All, two groups become two requests', async ({ browser }) => {
@@ -243,11 +260,14 @@ test('Resource* checkboxes: All ticks every resource, unticking one clears All, 
   for (const name of ['Engineering', 'Finance', 'Sales']) await expect(group.getByRole('checkbox', { name, exact: true })).toBeChecked();
   await group.getByRole('checkbox', { name: 'Sales', exact: true }).uncheck();
   await expect(group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' })).not.toBeChecked();
-  const table = page.getByRole('table', { name: 'Resolved access' });
-  await expect(table.getByText('SAMPLE-GRP-ALPHA-SALES-READ')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Submit request' })).toBeDisabled(); // no group ticked yet
-  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
-  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-FIN-VIEW', exact: true }).check();
+  // One access level per resource (each offers Admin and a lower level here): the requester chooses each.
+  await expect(page.getByRole('combobox', { name: 'Access level for Sales' })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Access level for Finance' })).toHaveValue('');
+  await page.getByRole('combobox', { name: 'Access level for Finance' }).selectOption('Viewer');
+  await expect(page.getByText(/requests? will be created/)).toHaveCount(0); // Engineering's level not chosen yet
+  await page.getByRole('combobox', { name: 'Access level for Engineering' }).selectOption('User');
+  // Collaboration (still ticked) has one level, Edit, so it is preselected: every chosen resource is requested.
+  await expect(page.getByText(/^\d+ requests will be created, each through the whole flow\.$/)).toBeVisible();
   await page.getByLabel('Enterprise ID').fill(enterpriseId('bundle'));
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
@@ -464,9 +484,8 @@ test('returned submission: a privileged job-role group asks for tasks, never "Ad
   await page.getByRole('switch', { name: 'Choose several resources' }).check();
   const group = page.getByRole('group', { name: 'Resources' });
   for (const name of ['Engineering', 'Sales']) await group.getByRole('checkbox', { name, exact: true }).check();
-  const table = page.getByRole('table', { name: 'Resolved access' });
-  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-SALES-WRITE', exact: true }).check();
-  await table.getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await page.getByRole('combobox', { name: 'Access level for Sales' }).selectOption('Write');
+  await page.getByRole('combobox', { name: 'Access level for Engineering' }).selectOption('User');
   await page.getByLabel('Enterprise ID').fill(tag);
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
@@ -514,7 +533,7 @@ test('Developer: a simulation runs every stage with the developer acting for eac
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Simulation');
   await page.getByRole('combobox', { name: /^Resource/ }).selectOption('Engineering');
-  await page.getByRole('table', { name: 'Resolved access' }).getByRole('checkbox', { name: 'SAMPLE-GRP-ALPHA-DBW-ENG-USER', exact: true }).check();
+  await page.getByRole('combobox', { name: 'Access level' }).selectOption('User');
   await page.getByRole('textbox', { name: 'Justification' }).fill('SAMPLE: developer dry run of the onboarding flow for the data engineering workspace.');
   await page.getByLabel('Owner (sign-in name)').fill('sample-user-olivia@sample.invalid');
   await page.getByRole('button', { name: 'Submit simulation' }).click();

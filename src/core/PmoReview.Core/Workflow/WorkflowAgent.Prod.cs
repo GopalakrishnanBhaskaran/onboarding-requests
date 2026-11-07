@@ -61,7 +61,7 @@ public sealed partial class WorkflowAgent
     {
         var now = clock.UtcNow;
         var task = NewIdTeamTask(r, next);
-        var byAgent = settings.AgentProvisioning && !r.Simulated; // a simulation: the developer does the ID team step
+        var byAgent = settings.AgentProvisioning && !r.DryRun; // a simulation: the developer does the ID team step
         next = (next with { IdTeamTask = task })
             .Log(now, Agent, "id-team-task", byAgent ? "ID team task created; the AI agent creates the user, group and membership first." : "ID team task created.")
             .To(RequestStatus.WithIdTeam, byAgent ? WaitingOn.Agent : WaitingOn.IdTeam, now, actor, step,

@@ -287,7 +287,7 @@ public sealed partial class WorkflowAgent(
         };
         var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();
-        if (!r.Simulated) await UpsertResponseRecordAsync(r, scope, ct); // a simulation never enters the response document
+        if (!r.DryRun) await UpsertResponseRecordAsync(r, scope, ct); // a simulation never enters the response document
         if (scope.GroupExistsInEntra == true && scope.GroupState == GroupState.ToBeCreated)
             effects.Add(c => issues.RecordAsync(r.ProjectId, r.Id, $"review:{run.Id}", IssueKind.AutoFixApplied, IssueSeverity.Info,
                 $"Group {scope.EntraGroup} already exists in Entra; the ID team task says to reuse it.", null, c, IssueStatus.AutoFixed));
@@ -296,7 +296,7 @@ public sealed partial class WorkflowAgent(
         if (flow.ResumeStatus is { } resume && flow.Scope is { } previous && previous.SameAccess(scope))
         {
             var resumed = (flow with { Scope = scope, ResumeStatus = null })
-                .To(resume, WaitingFor(resume, flow, r.Simulated), now, Agent, "review-pass", "Mapping sheet changed; the new review passed with the same group and role. Continuing.");
+                .To(resume, WaitingFor(resume, flow, r.DryRun), now, Agent, "review-pass", "Mapping sheet changed; the new review passed with the same group and role. Continuing.");
             effects.Add(c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.MappingChangedAfterReview], c));
             if (resume == RequestStatus.AwaitingSecurity) effects.Add(c => AskApprovalAsync(r, ApprovalStage.Security, scope, resumed, project, c));
             if (resume == RequestStatus.AwaitingOwner) effects.Add(c => AskApprovalAsync(r, ApprovalStage.Owner, scope, resumed, project, c));
@@ -524,7 +524,7 @@ public sealed partial class WorkflowAgent(
         if (task is null || task.State == TeamTaskState.Cancelled)
         {
             var created = NewIdTeamTask(r, flow);
-            if (settings.AgentProvisioning && !r.Simulated)
+            if (settings.AgentProvisioning && !r.DryRun)
             {
                 // The agent provisions first; the ID team is told what is left (the TAP, or the whole task on a fallback).
                 var waiting = (flow with { IdTeamTask = created }).Waiting(WaitingOn.Agent, clock.UtcNow)
@@ -537,7 +537,7 @@ public sealed partial class WorkflowAgent(
             return new Step(r with { Flow = next }, [c => notifier.EnqueueAsync(r.ProjectId, r.Id, created.Id, NotificationKind.TeamTask, Recipients.IdTeam(project), taskSubject, taskBody, c)]);
         }
         // A simulation is never provisioned: the developer does the ID team step (no Entra write ever happens for it).
-        if (!r.Simulated && ProvisioningPending(task, flow.Scope))
+        if (!r.DryRun && ProvisioningPending(task, flow.Scope))
             return writer is null || directory is null ? null : await ProvisionAsync(r, task, cid, ct); // only the worker holds the writer
         if (SwitchedOffWhileWaiting(task, flow, settings.AgentProvisioning))
             return ToIdTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = ProvisioningSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
@@ -547,7 +547,7 @@ public sealed partial class WorkflowAgent(
         var projectDoc = await ProjectAsync(r, ct);
         var sheet = await sources.ReadMappingSheetAsync(r.ProjectId, ct);
         var pattern = string.IsNullOrWhiteSpace(projectDoc?.GroupNamePattern) ? policy.DefaultGroupNamePattern : projectDoc!.GroupNamePattern!;
-        var v = r.Simulated ? Verification.Simulated(CheckGroups.IdTeam, "user, group, membership and TAP")
+        var v = r.DryRun ? Verification.Simulated(CheckGroups.IdTeam, "user, group, membership and TAP")
             : await verifier.IdTeamAsync(r, flow.Scope!, flow, task.IdReport, sheet, pattern, ct, NotConnected(projectDoc));
         if (v.Pending) return null; // the worker (with the Entra reader) finishes it
 
@@ -565,7 +565,7 @@ public sealed partial class WorkflowAgent(
         }
 
         // Passed: the role assignment team gets user, group and role from the response document (a simulation is never in it).
-        var record = r.Simulated ? SimulatedRecord(r, flow.Scope!)
+        var record = r.DryRun ? SimulatedRecord(r, flow.Scope!)
             : (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id);
         if (record is null) return null;
         var roleTask = new TeamTask
@@ -577,7 +577,7 @@ public sealed partial class WorkflowAgent(
             CreatedAt = now,
             SinceAt = now,
         };
-        var byAgent = settings.AgentRoleAssignment && !r.Simulated;
+        var byAgent = settings.AgentRoleAssignment && !r.DryRun;
         var advanced = (flow with { IdTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks }, RoleTeamTask = roleTask })
             .Log(now, Agent, "id-team-verified", "AI verified the ID team's work: user, group, membership, mapping sheet and TAP rules.")
             .To(RequestStatus.WithRoleTeam, byAgent ? WaitingOn.Agent : WaitingOn.RoleTeam, now, Agent, "role-team-task",
@@ -643,7 +643,7 @@ public sealed partial class WorkflowAgent(
         var flow = r.Flow!;
         var task = flow.RoleTeamTask;
         if (task is null) return null;
-        if (!r.Simulated && RoleAssignmentPending(task, flow.Scope))
+        if (!r.DryRun && RoleAssignmentPending(task, flow.Scope))
             return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
         if (SwitchedOffWhileWaiting(task, flow, settings.AgentRoleAssignment))
             return ToRoleTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = RoleAssignmentSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
@@ -651,7 +651,7 @@ public sealed partial class WorkflowAgent(
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
 
         var project = await ProjectAsync(r, ct);
-        var v = r.Simulated ? Verification.Simulated(CheckGroups.RoleTeam, "the role assignment")
+        var v = r.DryRun ? Verification.Simulated(CheckGroups.RoleTeam, "the role assignment")
             : await verifier.RoleTeamAsync(flow.Scope!, (await sources.ReadResponseDocumentAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RequestId == r.Id),
                 task.RoleReport, ct, NotConnected(project));
         if (v.Pending) return null;
@@ -677,7 +677,7 @@ public sealed partial class WorkflowAgent(
     {
         var flow = r.Flow!;
         var project = await ProjectAsync(r, ct);
-        var v = r.Simulated ? Verification.Simulated(CheckGroups.FinalVerification, "the account, the group membership and the roles")
+        var v = r.DryRun ? Verification.Simulated(CheckGroups.FinalVerification, "the account, the group membership and the roles")
             : await verifier.FinalAsync(r, flow.Scope!, ct, NotConnected(project));
         var now = clock.UtcNow;
         var effects = new List<Func<CancellationToken, Task>>();

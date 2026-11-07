@@ -147,12 +147,21 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
         <JourneyStepper steps={steps} seconds={stepSeconds(view.timings.perStage)} />
       </section>
       <ErrorBar error={error} />
-      {r.simulated && (
+      {r.simulated && !r.liveWrites && (
         <MessageBar intent="warning" layout="multiline">
           <MessageBarBody>
             <MessageBarTitle>SIMULATION</MessageBarTitle>
             A developer&apos;s dry run: the developer acts for the Owner, Security and the teams; the AI agent creates nothing in Entra or Azure,
             the checks are simulated and mails stay in the app.
+          </MessageBarBody>
+        </MessageBar>
+      )}
+      {r.simulated && r.liveWrites && (
+        <MessageBar intent="error" layout="multiline">
+          <MessageBarBody>
+            <MessageBarTitle>LIVE SIMULATION</MessageBarTitle>
+            The developer acts for the Owner, Security and the teams, and the AI agent creates the user, group and membership and assigns the
+            roles in Entra and Azure for real, then verifies them. Deleting it leaves that access: remove it with Offboard user.
           </MessageBarBody>
         </MessageBar>
       )}
@@ -233,7 +242,7 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
             </section>
           ) : null}
 
-          {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && !r.simulated && (
+          {(project.roles.includes('PMO') || project.roles.includes('Operator')) && r.domainId && (!r.simulated || r.liveWrites) && (
             <OffboardingPanel project={project} enterpriseId={r.domainId} />
           )}
           {view.actions.includes('Delete') && <DeleteRequestPanel request={r} />}

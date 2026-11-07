@@ -252,7 +252,7 @@ export function RequestsPage({ project, projects = [project], onOpenProject }: {
                         <TableCell className={s.wrap} style={{ verticalAlign: 'top', paddingTop: 10 }}><Caption1><Breakable text={r.requester} /></Caption1></TableCell>
                         <TableCell style={{ verticalAlign: 'top', paddingTop: 10 }}>
                           <Badge appearance="filled" color={statusColor[r.status]}>{r.currentStage}</Badge>
-                          {r.simulated && <Badge appearance="outline" color="warning" style={{ marginLeft: 4 }}>SIMULATION</Badge>}
+                          {r.simulated && <Badge appearance="outline" color={r.liveWrites ? 'danger' : 'warning'} style={{ marginLeft: 4 }}>{r.liveWrites ? 'LIVE SIMULATION' : 'SIMULATION'}</Badge>}
                           <JourneyDots steps={journey(r.status, r.done)} />
                         </TableCell>
                         <TableCell className={s.wrap} style={{ verticalAlign: 'top', paddingTop: 10 }}>

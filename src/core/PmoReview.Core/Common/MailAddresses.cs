@@ -61,6 +61,7 @@ public static partial class MailAddresses
         }
     }
 
-    [GeneratedRegex(@"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")]
+    // Dot-atom (RFC 5322): dots only between characters; at most 64 characters before '@' (7 Nov 2026, F136).
+    [GeneratedRegex(@"^(?=[^@]{1,64}@)[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")]
     private static partial Regex Address();
 }

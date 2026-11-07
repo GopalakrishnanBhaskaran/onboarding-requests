@@ -300,6 +300,16 @@ public sealed record AccessRequest : IDocument
     /// nothing to Entra or Azure for it, keeps it out of the response document, ADO and the daily counts, and its mails stay in the app.
     /// </summary>
     public bool Simulated { get; init; }
+    /// <summary>
+    /// A live simulation (Gokul, 7 Nov 2026): a <see cref="Simulated"/> request the developer still approves at every stage, but the
+    /// agent provisions, assigns and verifies it in Entra and Azure for real, like a real request. Set by the server at submit
+    /// only (<see cref="Workflow.LiveSimulation"/>, never from the body) and re-checked before every write. It enters the
+    /// response document so Offboard user can remove what it created.
+    /// </summary>
+    public bool LiveWrites { get; init; }
+    /// <summary>A simulation the agent writes nothing for (every simulation before 7 Nov 2026).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool DryRun => Simulated && !LiveWrites;
     public required string CreatedBy { get; init; }
     /// <summary>Requester's sign-in name (notifications).</summary>
     public string? CreatedByName { get; init; }

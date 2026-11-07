@@ -29,6 +29,8 @@ export interface ProjectSummary {
   /** Environments a request picks from; empty = the project has no environment field. */
   environments?: string[];
   domainIdSuffix?: string | null;
+  /** Why a simulation of this project is a dry run; null = live (real Entra and Azure writes), except Prod and guests (7 Nov 2026). */
+  liveSimulationRefused?: string | null;
 }
 
 export interface Me {
@@ -199,6 +201,8 @@ export interface AccessRequest extends IntakeFields {
   bundleId?: string | null;
   /** A developer's simulation: nothing is created in Entra or Azure, mails stay in the app (4 Nov 2026). */
   simulated?: boolean;
+  /** A live simulation: the developer approves, the agent writes to Entra and Azure for real (7 Nov 2026). */
+  liveWrites?: boolean;
 }
 
 export interface StatusLine {
@@ -222,6 +226,8 @@ export interface StatusLine {
   bundleId?: string | null;
   /** A developer's simulation (4 Nov 2026). */
   simulated?: boolean;
+  /** A live simulation (7 Nov 2026). */
+  liveWrites?: boolean;
 }
 
 export interface DurationItem {

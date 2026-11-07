@@ -222,6 +222,8 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_TAP', value: agentTap ? 'true' : 'false' }
         { name: 'AGENT_TAP_LIFETIME_MINUTES', value: string(agentTapLifetimeMinutes) }
         { name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }
+        // Live simulations (7 Nov 2026): off in the template; switched on only with deploy_free.sh simulation <sub> live on (approval).
+        { name: 'SIMULATION_LIVE_WRITES', value: 'false' }
         { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
         { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
         { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }

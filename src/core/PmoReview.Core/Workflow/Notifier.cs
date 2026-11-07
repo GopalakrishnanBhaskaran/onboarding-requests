@@ -49,6 +49,14 @@ public sealed record WorkflowSettings
     /// </summary>
     public bool AgentPrivileged { get; init; }
     /// <summary>
+    /// Live simulations (<c>SIMULATION_LIVE_WRITES</c>; Gokul, 7 Nov 2026; off until approved with
+    /// <c>deploy_free.sh simulation … live on</c>): a developer's simulation is provisioned, assigned and verified in Entra and
+    /// Azure for real, within the same agent switches, allow-lists and checks as a real request. Refused in production
+    /// (<c>APP_ENVIRONMENT=prod</c>); only for a project that names the agent's tenant and is marked not production, never
+    /// for a Prod environment or a guest (<see cref="LiveSimulation"/>).
+    /// </summary>
+    public bool SimulationLiveWrites { get; init; }
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>

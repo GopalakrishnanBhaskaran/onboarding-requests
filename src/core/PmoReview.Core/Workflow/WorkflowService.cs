@@ -146,7 +146,7 @@ public sealed partial class WorkflowService(
         }, ct);
         logger.LogInformation("request deleted request={RequestId} simulated={Simulated} by={UserId} cid={Cid}", requestId, r.Simulated, caller.UserId, cid);
         return new DeletedRequest(requestId, r.Simulated, status, runs, mails, issueCount, escalations, keep,
-            r.Simulated ? "Simulation deleted." : "Request deleted. Access already granted in Entra or Azure stays: use Offboard user to remove it.");
+            r.DryRun ? "Simulation deleted." : r.Simulated ? "Live simulation deleted. What the agent created or assigned in Entra or Azure stays: use Offboard user to remove it." : "Request deleted. Access already granted in Entra or Azure stays: use Offboard user to remove it.");
     }
 
     // ---- Stage 1 ------------------------------------------------------------------------------------------------

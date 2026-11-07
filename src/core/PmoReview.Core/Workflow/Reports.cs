@@ -27,6 +27,8 @@ public sealed record StatusLine(
 {
     /// <summary>A developer's simulation (badge in the lists).</summary>
     public bool Simulated { get; init; }
+    /// <summary>A live simulation: the agent writes to Entra and Azure for real (7 Nov 2026).</summary>
+    public bool LiveWrites { get; init; }
 }
 
 public sealed record DurationItem(string Name, long Seconds, string Text);
@@ -71,7 +73,7 @@ public static class Reports
         var inStage = flow.IsOpen || flow.Status == RequestStatus.Returned ? now - flow.StageSince : TimeSpan.Zero;
         return new StatusLine(r.Id, r.ProjectId, r.CreatedByName ?? r.CreatedBy, flow.Status, StatusText.Label(flow.Status), flow.WaitingOn,
             StatusText.Label(flow.WaitingOn), Done(flow), Next(flow), (long)inStage.TotalSeconds, Span(inStage), flow.Ado?.Url,
-            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId) { Simulated = r.Simulated };
+            r.DomainId, r.Resource, r.AccessLevel, r.UpdatedAt, r.BundleId) { Simulated = r.Simulated, LiveWrites = r.LiveWrites };
     }
 
     private static IReadOnlyList<string> Done(WorkflowState f)

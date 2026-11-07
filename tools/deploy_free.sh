@@ -56,6 +56,13 @@
 #       or Key Vault Data Access Administrator. Settings only (AGENT_PRIVILEGED); the roles still need the allow-list
 #       (provisioning ... on <scope> <roleIds>). "on" is a security change: dry run without --approved-by. "off" any time.
 #
+#   tools/deploy_free.sh simulation <subscriptionId> live on|off [--approved-by "<name> <date>"]
+#       Live simulations (Gokul, 7 Nov 2026): a Developer's simulation is provisioned, assigned and verified in Entra and
+#       Azure for real, while the Developer still approves every stage. Settings only (SIMULATION_LIVE_WRITES, worker + SWA);
+#       never with APP_ENVIRONMENT=prod; only for projects that name the agent's tenant and are marked not production;
+#       never a Prod environment or a guest. Same agent switches, allow-lists and checks as a real request.
+#       "on" is a security change (one person approves): dry run without --approved-by. "off" any time.
+#
 #   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--delete-user] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh offboarding <subscriptionId> off|delete-off     (always allowed)
 #   tools/deploy_free.sh databricks <subscriptionId> on --account-id <id> --workspace <name> --catalogs <c[,c]> [--approved-by "<name> <date>"]
@@ -86,7 +93,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$(dirname "$0")/tool_path.sh" # az on the PATH (Mac: Homebrew), else how to install it
-CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email|databricks}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
+CMD="${1:?whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|simulation|offboarding|environment|email|databricks}"; SUB="${2:?subscriptionId}"; PARAMS="${3:-}"
 DEPLOYMENT="pmo-review-pilot"
 if [[ "$CMD" == "whatif" || "$CMD" == "apply" ]]; then
   [[ -n "$PARAMS" ]] || { echo "params.json required for $CMD"; exit 1; }
@@ -481,6 +488,44 @@ agent_privileged() {
   echo "Agent privileged rows on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
 }
 
+# Live simulations (Gokul, 7 Nov 2026, approval-gated): a setting only. The agent's rights stay what provisioning / privileged
+# / the allow-list give it; this lets a Developer's simulation use them, in test environments and test tenants only.
+simulation_live() {
+  local mode="$1" name swa env prov roleassign tenant
+  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=false -o none
+    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=false -o none
+    echo "Live simulations switched off on $name and $swa: new simulations are dry runs again; an open live simulation is"
+    echo "not written to any more (its next agent step goes to the Developer as the ID team / role assignment team)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "simulation live on|off"; return 1; }
+  env=$(worker_setting "$name" APP_ENVIRONMENT); prov=$(worker_setting "$name" AGENT_PROVISIONING)
+  roleassign=$(worker_setting "$name" AGENT_ROLE_ASSIGNMENT); tenant=$(worker_setting "$name" AGENT_TENANT_ID)
+  echo "Checks:"
+  echo "  APP_ENVIRONMENT: ${env:-pilot} (must not be prod)"
+  echo "  Agent provisioning: ${prov:-false}; agent role assignment: ${roleassign:-false} (off: the Developer does that step by hand, verified for real)"
+  echo "  Agent tenant (AGENT_TENANT_ID): ${tenant:-not set} (a project must name this tenant and be marked not production)"
+  echo "Plan for $name and $swa, expected cost 0, no permission change:"
+  echo "  Settings: SIMULATION_LIVE_WRITES=true (worker + SWA)"
+  echo "  Effect: a Developer submits a simulation (form switch Simulation) and approves as Owner and Security; the AI agent"
+  echo "  then creates the user, group and membership and assigns the allow-listed roles in Entra and Azure FOR REAL, and"
+  echo "  verifies them. Only in projects that name tenant ${tenant:-?} and are marked not production; never a Prod"
+  echo "  environment or a guest; mails only when every mail goes to the test mailbox (NOTIFY_REDIRECT_TO)."
+  echo "  Separation of duties does not apply to these simulations (one person approves): keep it to test accounts."
+  echo "  Clean up what a live simulation created with Offboard user (deleting the simulation leaves the access)."
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  [[ "${env:-pilot}" != "prod" ]] || { echo "Refused: APP_ENVIRONMENT=prod. Live simulations are for test environments only."; return 1; }
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=true -o none
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=true -o none
+  echo "Live simulations on (approved by $APPROVED_BY). New simulations in a test tenant say LIVE SIMULATION on their trail."
+}
+
 # v1.2 (Gokul, 2 Nov 2026): the agent sets up a Databricks row's group after both approvals — account and workspace (A3),
 # the entitlements and Unity Catalog privileges its name stands for (A4, A5; config/databricks-access.json) — and tests it.
 # Security change: dry run unless --approved-by. The Databricks-side rights of the worker's identity are given by a
@@ -829,7 +874,7 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv offb dbx tapsender
+  local env sender redirect tenant tap priv offb dbx tapsender simlive
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   # The website says "the agent mails the pass" only when the worker can (AGENT_TAP, provisioning and this mailbox; re-check 6).
@@ -837,12 +882,13 @@ app_settings_v2() {
   priv=$([[ -n "$w" ]] && worker_setting "$w" AGENT_PRIVILEGED || true)
   offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
   dbx=$([[ -n "$w" ]] && worker_setting "$w" AGENT_DATABRICKS || true)
+  simlive=$([[ -n "$w" ]] && worker_setting "$w" SIMULATION_LIVE_WRITES || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" "SIMULATION_LIVE_WRITES=${simlive:-false}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -1066,6 +1112,14 @@ PY
       APPROVED_BY="$5"; echo "Approval recorded (privileged $MODE): $5" | tee -a "$ROOT/.local/approval.txt"
     fi
     agent_privileged "$MODE"
+    ;;
+  simulation)
+    [[ "${3:-}" == "live" ]] || { echo "usage: deploy_free.sh simulation <subscriptionId> live on|off [--approved-by \"<name> <date>\"]"; exit 1; }
+    MODE="${4:?on|off}"
+    if [[ "${5:-}" == "--approved-by" && -n "${6:-}" ]]; then
+      APPROVED_BY="$6"; echo "Approval recorded (simulation live $MODE): $6" | tee -a "$ROOT/.local/approval.txt"
+    fi
+    simulation_live "$MODE"
     ;;
   offboarding)
     MODE="${3:?on|off|delete-off}"; shift 3; OFF_SUBS=""; OFF_DELETE=no

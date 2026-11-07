@@ -19,6 +19,8 @@ public sealed record ProjectSummary(string ProjectId, string Name, IReadOnlyList
     /// <summary>Environments a request picks from (empty = no environment field).</summary>
     public IReadOnlyList<string> Environments { get; init; } = [];
     public string? DomainIdSuffix { get; init; }
+    /// <summary>Why a simulation of this project is a dry run (null: it writes to Entra and Azure for real, except in Prod or for a guest).</summary>
+    public string? LiveSimulationRefused { get; init; }
 }
 
 /// <param name="AgentProvisioning">v2.1: the AI agent creates user/group/membership after both approvals (wording in the app follows it).</param>
@@ -34,6 +36,8 @@ public sealed record MeResponse(string UserId, string DisplayName, IReadOnlyList
     public bool AgentTap { get; init; }
     /// <summary>Agent provisioning on for rows flagged privileged too (never privileged administrator roles).</summary>
     public bool AgentPrivileged { get; init; }
+    /// <summary>Live simulations are switched on (SIMULATION_LIVE_WRITES, not prod): a project's own rule decides per simulation.</summary>
+    public bool SimulationLiveWrites { get; init; }
 }
 
 public static class Endpoints
@@ -50,6 +54,7 @@ public static class Endpoints
                 {
                     // Every standard environment (plus the project's own), so one with no groups yet can still be chosen.
                     TenantName = p?.Value.TenantName, Environments = Domain.Environments.Of(p?.Value), DomainIdSuffix = p?.Value.DomainIdSuffix,
+                    LiveSimulationRefused = Workflow.LiveSimulation.Refused(workflow.Settings, p?.Value, null, false),
                 });
             }
             var s = workflow.Settings;
@@ -58,6 +63,7 @@ public static class Endpoints
                 AppEnvironment = s.AppEnvironment, MailEnabled = s.MailEnabled, MailRedirectTo = s.MailRedirectTo,
                 AgentTap = s.TapMailByAgent,
                 AgentPrivileged = s.AgentProvisioning && s.AgentPrivileged,
+                SimulationLiveWrites = s.SimulationLiveWrites && s.AppEnvironment != "prod",
             });
         });
         host.Map("GET", "queue", async c => Ok(new { items = await workflow.MyActionsAsync(c.Caller, c.Ct) }));

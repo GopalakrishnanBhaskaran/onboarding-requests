@@ -160,9 +160,11 @@ public sealed class NotificationDispatcher(DataStores stores, INotificationSende
         }
         var pending = all.Where(n => n.Value.Status == NotificationStatus.Pending).ToList();
         // A developer's simulation is never mailed (no real Owner, team or joiner is told; the ACS limit is kept for real mail).
+        // A live simulation (7 Nov 2026) is mailed only where every mail goes to the one test mailbox (NOTIFY_REDIRECT_TO).
         var simulated = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in pending.Select(n => (n.Value.ProjectId, n.Value.RequestId)).Where(x => x.RequestId is not null).Distinct())
-            if ((await stores.Requests.GetAsync(p.ProjectId, p.RequestId!, ct))?.Value.Simulated == true) simulated.Add(p.RequestId!);
+            if ((await stores.Requests.GetAsync(p.ProjectId, p.RequestId!, ct))?.Value is { Simulated: true } sim && (!sim.LiveWrites || redirectTo is null))
+                simulated.Add(p.RequestId!);
         var room = sender.Delivers ? MailBudget.Room(all.Select(n => n.Value), clock.UtcNow, limits ?? MailLimits.None, reserve) : 0;
         var throttled = false;
         var waiting = new List<Notification>();

@@ -7,6 +7,7 @@ import { Copy16Regular, Send20Regular, TextAdd20Regular } from '@fluentui/react-
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
 import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess, StatusLine } from '../lib/types';
+import { ALL_ENVIRONMENTS, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
 import { correctionFor, missingTasks, privilegedJobRows, returnedSiblings } from '../lib/resubmit';
 import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
 import { FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, justificationTemplate, whoDoesWhat } from '../lib/flow';
@@ -23,11 +24,12 @@ const STATUS: Record<ResolvedAccess['status'], { label: string; color: 'success'
   NeedsHumanApproval: { label: 'Needs human approval', color: 'warning' },
   Unresolved: { label: 'Unresolved — escalated', color: 'danger' },
 };
-/** A resolved line as the bundle submit names it: the object id, else the group name. */
-const groupKey = (a: ResolvedAccess) => a.groupObjectId || a.groupName;
+/** Same rule as the API (Environments.IsProduction): Prod and any name that starts with prod or prd. */
+const isProduction = (e: string) => /^(prod|prd)/.test(e.replace(/[^A-Za-z0-9]/g, '').toLowerCase()) || /^(production|live)$/.test(e.replace(/[^A-Za-z0-9]/g, '').toLowerCase());
 const SIGN_IN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 /** Same rule as the API: the Enterprise ID is the joiner's enterprise mail address. */
-const ENTERPRISE_MAIL = /^[A-Za-z0-9][A-Za-z0-9._'+-]{0,63}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+// Dots only between characters, at most 64 characters before '@' (Entra refuses a dot right before '@', F136).
+const ENTERPRISE_MAIL = /^(?=[^@]{1,64}@)[A-Za-z0-9][A-Za-z0-9_'+-]*(\.[A-Za-z0-9_'+-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 
 /** Stage 1: intake. The flow is stated upfront. A returned request is corrected here and submitted again. */
 export function RequestFormPage({ project, projects = [project], onProject, requestId, agent = false, tap = false, privileged = false }: {
@@ -62,14 +64,20 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const [mode, setMode] = useState<SelectionMode>('dropdown');
   const [options, setOptions] = useState<string[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
-  const [resolved, setResolved] = useState<ResolveResult | null>(null);
-  const [ticked, setTicked] = useState<string[]>([]);
+  // 7 Nov 2026: the requester picks the access level; the groups of that level come from the mapping sheet (one request each).
+  const [resolvedList, setResolvedList] = useState<ResolveResult[]>([]);
+  const [optionsByEnv, setOptionsByEnv] = useState<Record<string, string[]>>({});
+  const [levelChoice, setLevelChoice] = useState<LevelChoice>({});
   const [resolveError, setResolveError] = useState<unknown>(null);
   // A returned request of a bundle ("All" or several resources): the other returned requests of the same submission.
   const [siblings, setSiblings] = useState<StatusLine[]>([]);
   const [include, setInclude] = useState<string[]>([]);
   const [partial, setPartial] = useState<{ done: number; failed: { label: string; why: string }[] } | null>(null);
   const environments = project.environments ?? [];
+  const allEnvironments = fields.environment === ALL_ENVIRONMENTS;
+  // Live simulations (7 Nov 2026): the server decides per simulation; null means this project's simulations write for real.
+  const liveSimulation = project.liveSimulationRefused === null && !fields.guest;
+  const chosenEnvironments = environmentsFor(fields.environment, environments);
   const tenants = projects.filter((p) => p.roles.includes('Requester') || p.projectId === project.projectId);
 
   // Resource and access level come only from the tenant's mapping sheet (read fresh): dropdowns, never free text.
@@ -84,7 +92,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     if (!requestId) setFields((f) => ({ ...f, resource: '', accessLevel: '', environment: '' }));
   }, [project.projectId, requestId]);
   const same = (a?: string | null, b?: string | null) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
-  const inEnv = (row: MappingRow) => !row.environment || !fields.environment || same(row.environment, fields.environment);
+  const inEnv = (row: MappingRow) => !row.environment || !fields.environment || chosenEnvironments.some((e) => same(row.environment, e));
   const resources = sheet ? [...new Set(sheet.filter(inEnv).map((x) => x.resource))].sort() : [];
   const levels = sheet ? [...new Set(sheet.filter((x) => inEnv(x) && same(x.resource, fields.resource)).map((x) => x.accessLevel))].sort() : [];
   const envChosen = environments.length === 0 || Boolean(fields.environment);
@@ -93,33 +101,49 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   useEffect(() => {
     if (!isNew) return;
     setSelected([]);
-    setResolved(null);
-    setTicked([]);
-    if (!envChosen) { setOptions(null); return; }
+    setResolvedList([]);
+    setLevelChoice({});
+    if (!envChosen) { setOptions(null); setOptionsByEnv({}); return; }
     let current = true; // a slower answer for an earlier choice never overwrites the latest one
-    api.resourceOptions(project.projectId, fields.environment)
-      .then((r) => { if (current) setOptions(r.options); })
-      .catch((e) => { if (current) { setOptions([]); setResolveError(e); } });
+    // One environment, or every one ("All environments"): the resources any of them offers.
+    const envs = environments.length === 0 ? [fields.environment] : chosenEnvironments;
+    Promise.all(envs.map((e) => api.resourceOptions(project.projectId, e).then((r) => [e, r.options] as const)))
+      .then((pairs) => {
+        if (!current) return;
+        setOptionsByEnv(Object.fromEntries(pairs));
+        setOptions(unionOptions(pairs.map(([, o]) => o)));
+      })
+      .catch((e) => { if (current) { setOptions([]); setOptionsByEnv({}); setResolveError(e); } });
     return () => { current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, project.projectId, fields.environment, envChosen]);
   const chosen = options ? forApi(selected, options) : [];
   useEffect(() => {
-    if (!isNew || chosen.length === 0) { setResolved(null); setTicked([]); return; }
+    if (!isNew || chosen.length === 0) { setResolvedList([]); setLevelChoice({}); return; }
     setResolveError(null);
     let current = true; // ticking fast sends several resolves: only the answer for the latest selection counts
-    api.resolve(project.projectId, fields.environment, chosen)
-      .then((r) => {
+    // Each environment resolves only the chosen resources it offers.
+    const jobs = Object.entries(optionsByEnv)
+      .map(([env, opts]) => [env, chosen.filter((c) => opts.includes(c))] as const)
+      .filter(([, list]) => list.length > 0);
+    Promise.all(jobs.map(([env, list]) => api.resolve(project.projectId, env, list).then((r) => ({ ...r, environment: env, selectedResources: list }))))
+      .then((results) => {
         if (!current) return;
-        setResolved(r);
-        // One requestable group: ticked for the requester; several: they choose (never more access than asked for).
-        const requestable = r.resolvedAccess.filter((a) => a.status !== 'Unresolved');
-        setTicked(requestable.length === 1 ? [groupKey(requestable[0])] : []);
+        setResolvedList(results);
+        // A resource with one level: chosen for the requester; several: they choose (never more access than asked for).
+        setLevelChoice((cur) => settleLevels(cur, levelsByResource(results, chosen)));
       })
       .catch((e) => { if (current) setResolveError(e); });
     return () => { current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNew, project.projectId, fields.environment, chosen.join('|')]);
-  const tickedAccess = resolved?.resolvedAccess.filter((a) => ticked.includes(groupKey(a))) ?? [];
+  }, [isNew, project.projectId, chosen.join('|'), Object.keys(optionsByEnv).join('|')]);
+  const levelOptions = levelsByResource(resolvedList, chosen);
+  const levelsChosen = levelsComplete(levelChoice, levelOptions);
+  const submissions = levelsChosen ? plan(resolvedList, levelChoice) : [];
+  const tickedAccess = submissions.flatMap((x) => x.access);
+  const ticked = submissions.flatMap((x) => x.groups);
+  const unresolved = unresolvedFor(resolvedList, levelChoice);
+  const envLabel = allEnvironments ? chosenEnvironments.join(', ') : fields.environment;
   // Rows flagged Privileged under a job-role level (e.g. Data Engineer): the AI review asks for the tasks in the justification.
   const chosenRows = (sheet ?? []).filter((r) => inEnv(r) && (isNew
     ? tickedAccess.some((a) => same(a.groupName, r.entraGroup))
@@ -161,7 +185,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const mailError = fields.enterpriseId && !ENTERPRISE_MAIL.test(fields.enterpriseId.trim())
     ? 'Use the joiner’s enterprise mail address, e.g. jane.doe@company.com.' : undefined;
   const template = isNew
-    ? justificationTemplate([...new Set(tickedAccess.map((a) => a.accessLevel))].join(', '), chosen.join(', '), fields.environment)
+    ? justificationTemplate([...new Set(Object.values(levelChoice))].join(', ') || [...new Set(tickedAccess.map((a) => a.accessLevel))].join(', '), chosen.join(', '), envLabel)
     : justificationTemplate(fields.accessLevel, fields.resource, fields.environment);
   const templateLeft = TEMPLATE_PLACEHOLDER.test(fields.justification)
     ? 'Replace every [ … ] of the template with your own details.' : undefined;
@@ -184,12 +208,24 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     const body: IntakeFields = Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v === '' ? null : v]));
     try {
       if (isNew) {
-        // F1: one request per ticked group, each through the whole flow.
-        const result = await api.submitBundle(project.projectId, {
-          enterpriseId: body.enterpriseId ?? null, firstName: body.firstName ?? null, lastName: body.lastName ?? null, environment: body.environment ?? null,
-          justification: body.justification ?? null, owner: body.owner ?? null, guest: fields.guest, selectedResources: chosen, groups: ticked,
-        }, simulate);
-        navigate(result.requests.length === 1 ? { page: 'request', requestId: result.requests[0].requestId } : { page: 'requests' });
+        // F1: one request per group of the chosen level, each through the whole flow; one submission per environment.
+        const created: string[] = [];
+        const failed: { label: string; why: string }[] = [];
+        for (const x of submissions) {
+          try {
+            const result = await api.submitBundle(project.projectId, {
+              enterpriseId: body.enterpriseId ?? null, firstName: body.firstName ?? null, lastName: body.lastName ?? null,
+              environment: environments.length === 0 ? body.environment ?? null : x.environment,
+              justification: body.justification ?? null, owner: body.owner ?? null, guest: fields.guest, selectedResources: x.selectedResources, groups: x.groups,
+            }, simulate);
+            created.push(...result.requests.map((r) => r.requestId));
+          } catch (e) {
+            if (submissions.length === 1) throw e;
+            failed.push({ label: x.environment || 'request', why: e instanceof Error ? e.message : 'not submitted' });
+          }
+        }
+        if (failed.length > 0) { setPartial({ done: created.length, failed }); return; }
+        navigate(created.length === 1 ? { page: 'request', requestId: created[0] } : { page: 'requests' });
         return;
       }
       const view = requestId && etag
@@ -242,7 +278,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
       label: 'Access chosen',
       ok: accessOk,
       hint: isNew
-        ? `${environments.length > 0 ? 'Environment, resource' : 'Resource'}, then tick at least one group.`
+        ? `${environments.length > 0 ? 'Environment, resource' : 'Resource'}, then the access level.`
         : 'Resource and access level from the mapping sheet.',
     },
     {
@@ -328,11 +364,22 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
 
           <FormSection n={2} id="access-h" title="What access they need" done={readiness[1].ok}>
             {environments.length > 0 && (
-              <Field label="Environment" required hint="Groups and roles differ per environment. A missing environment (e.g. Prod with no groups yet) is returned by the AI review.">
-                <Select value={fields.environment} onChange={(_, d) => setFields((x) => ({ ...x, environment: d.value, resource: '', accessLevel: '' }))}>
-                  <option value="">Choose…</option>
-                  {environments.map((e) => <option key={e} value={e}>{e}</option>)}
-                </Select>
+              <Field label="Environment" required hint={allEnvironments
+                ? `One submission per environment (${environments.join(', ')}), each with its own groups and approvals. An environment with no group of the chosen level is left out.`
+                : 'Groups and roles differ per environment. A missing environment (e.g. Prod with no groups yet) is returned by the AI review.'}>
+                <div className={s.row}>
+                  <Select value={fields.environment} onChange={(_, d) => setFields((x) => ({ ...x, environment: d.value, resource: '', accessLevel: '' }))}>
+                    <option value="">Choose…</option>
+                    {environments.map((e) => <option key={e} value={e}>{e}</option>)}
+                    {isNew && environments.length > 1 && <option value={ALL_ENVIRONMENTS}>All environments</option>}
+                  </Select>
+                  {isNew && environments.length > 1 && (
+                    <Button size="small" appearance={allEnvironments ? 'primary' : 'secondary'} aria-pressed={allEnvironments}
+                      onClick={() => setFields((x) => ({ ...x, environment: allEnvironments ? '' : ALL_ENVIRONMENTS, resource: '', accessLevel: '' }))}>
+                      {allEnvironments ? 'All environments selected' : 'Select all environments'}
+                    </Button>
+                  )}
+                </div>
               </Field>
             )}
             {isNew && (
@@ -372,41 +419,62 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
                   </MessageBar>
                 )}
                 <ErrorBar error={resolveError} />
-                {resolved && (
-                  <div className={f.resolved} aria-labelledby="resolved-h" role="region">
-                    <Subtitle2 as="h3" id="resolved-h">Access this resolves to</Subtitle2>
-                    <Caption1>Tick the groups to request: one request each, every one through the whole flow. Unresolved groups are never granted.</Caption1>
-                    <div className={s.tableWrap}>
-                      <Table aria-label="Resolved access" size="small">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHeaderCell style={{ width: 72 }}>Request</TableHeaderCell>
-                            <TableHeaderCell>Entra group</TableHeaderCell>
-                            <TableHeaderCell>Access level</TableHeaderCell>
-                            <TableHeaderCell>From</TableHeaderCell>
-                            <TableHeaderCell>Status</TableHeaderCell>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {resolved.resolvedAccess.map((a) => (
-                            <TableRow key={groupKey(a)} className={ticked.includes(groupKey(a)) ? f.picked : undefined}>
-                              <TableCell>
-                                <Checkbox aria-label={a.groupName} disabled={a.status === 'Unresolved'} checked={ticked.includes(groupKey(a))}
-                                  onChange={(_, d) => setTicked((cur) => d.checked === true ? [...cur, groupKey(a)] : cur.filter((x) => x !== groupKey(a)))} />
-                              </TableCell>
-                              <TableCell><span className={s.wrap}>{a.groupName}</span></TableCell>
-                              <TableCell>{a.accessLevel}</TableCell>
-                              <TableCell>{a.sources.join(', ')}</TableCell>
-                              <TableCell><Badge color={STATUS[a.status].color}>{STATUS[a.status].label}</Badge></TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    {resolved.mappingQualityIssues.length > 0 && (
-                      <Caption1>Mapping sheet notes for PMO: {resolved.mappingQualityIssues.map((n) => n.reason).join(' ')}</Caption1>
+                {resolvedList.length > 0 && (
+                  <div className={f.resolved} aria-label="Access level and groups" role="region">
+                    {levelOptions.map(({ resource, levels: offered }) => (
+                      <Field key={resource} label={levelOptions.length === 1 ? 'Access level' : `Access level for ${resource}`} required
+                        hint={levelOptions.length === 1 ? 'The levels the mapping sheet has for this resource. The Entra groups follow from the mapping sheet.' : undefined}
+                        validationMessage={offered.length === 0 ? 'No group of this resource can be requested here (unresolved groups are escalated to PMO).' : undefined}>
+                        <Select value={levelChoice[resource] ?? ''} disabled={offered.length === 0}
+                          onChange={(_, d) => setLevelChoice((cur) => ({ ...cur, [resource]: d.value }))}>
+                          <option value="">Choose…</option>
+                          {offered.map((l) => <option key={l} value={l}>{l}</option>)}
+                        </Select>
+                      </Field>
+                    ))}
+                    {levelsChosen && (
+                      <Caption1>
+                        {submissions.length === 0
+                          ? 'No group of these levels in the chosen environment.'
+                          : `${ticked.length} request${ticked.length === 1 ? '' : 's'} will be created${allEnvironments ? ` across ${submissions.map((x) => x.environment).join(', ')}` : ''}, each through the whole flow.`}
+                      </Caption1>
                     )}
-                    <Caption1 className={s.muted}>Mapping version {resolved.mappingVersion}. Production above Read waits for a ProdApprover after Owner and Security.</Caption1>
+                    {unresolved.length > 0 && (
+                      <MessageBar intent="warning" layout="multiline">
+                        <MessageBarBody>{`${unresolved.length} group${unresolved.length === 1 ? '' : 's'} of this selection could not be resolved and ${unresolved.length === 1 ? 'is' : 'are'} never granted; PMO is told.`}</MessageBarBody>
+                      </MessageBar>
+                    )}
+                    {tickedAccess.length > 0 && (
+                      <details>
+                        <summary><Caption1>Show the Entra groups (reference only)</Caption1></summary>
+                        <div className={s.tableWrap}>
+                          <Table aria-label="Resolved access" size="small">
+                            <TableHeader>
+                              <TableRow>
+                                {allEnvironments && <TableHeaderCell>Environment</TableHeaderCell>}
+                                <TableHeaderCell>Entra group</TableHeaderCell>
+                                <TableHeaderCell>Access level</TableHeaderCell>
+                                <TableHeaderCell>Status</TableHeaderCell>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {submissions.flatMap((x) => x.access.map((a) => (
+                                <TableRow key={`${x.environment}|${a.groupObjectId || a.groupName}`}>
+                                  {allEnvironments && <TableCell>{x.environment}</TableCell>}
+                                  <TableCell><span className={s.wrap}>{a.groupName}</span></TableCell>
+                                  <TableCell>{a.accessLevel}</TableCell>
+                                  <TableCell><Badge color={STATUS[a.status].color}>{STATUS[a.status].label}</Badge></TableCell>
+                                </TableRow>
+                              )))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </details>
+                    )}
+                    {resolvedList.some((r) => r.mappingQualityIssues.length > 0) && (
+                      <Caption1>Mapping sheet notes for PMO: {resolvedList.flatMap((r) => r.mappingQualityIssues).map((n) => n.reason).join(' ')}</Caption1>
+                    )}
+                    <Caption1 className={s.muted}>Mapping version {resolvedList.map((r) => r.mappingVersion).filter((v, i, a) => a.indexOf(v) === i).join(', ')}. Production above Read waits for a ProdApprover after Owner and Security.</Caption1>
                   </div>
                 )}
               </>
@@ -496,10 +564,10 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
           </FormSection>
 
           {isNew && developer && (
-            <Field hint={requester
-              ? 'Developer: a simulation runs every stage with you acting for the Owner, Security and the teams. Nothing is created in Entra or Azure and its mails stay in the app.'
-              : 'You have the Developer role only, so your requests are simulations: every stage runs with you acting for each, nothing is created in Entra or Azure and mails stay in the app.'}>
-              <Switch label="Simulation (developer dry run)" checked={simulate} disabled={!requester} onChange={(_, d) => setSimulate(d.checked)} />
+            <Field hint={liveSimulation
+              ? `LIVE: you act for the Owner, Security and the teams, and the AI agent creates the user, group and membership and assigns the roles in Entra and Azure for real${chosenEnvironments.some(isProduction) ? ' (not for the Prod environment: that one stays a dry run)' : ''}. Use test accounts only; remove what it created with Offboard user.`
+              : `${requester ? 'Developer: a simulation' : 'You have the Developer role only, so your requests are simulations:'} every stage runs with you acting for the Owner, Security and the teams. Nothing is created in Entra or Azure and its mails stay in the app.${project.liveSimulationRefused && project.liveSimulationRefused.indexOf('switched off') < 0 ? ` Not live: ${project.liveSimulationRefused}.` : ''}`}>
+              <Switch label={liveSimulation ? 'Simulation (LIVE: real Entra and Azure writes)' : 'Simulation (developer dry run)'} checked={simulate} disabled={!requester} onChange={(_, d) => setSimulate(d.checked)} />
             </Field>
           )}
           <div className={f.submitBar}>

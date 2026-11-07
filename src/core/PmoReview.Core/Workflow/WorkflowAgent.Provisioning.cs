@@ -150,7 +150,8 @@ public sealed partial class WorkflowAgent
 
         if (!BothApprovalsCurrent(flow))
             return ToIdTeam(r, task, work with { Manual = "the Owner and Security approvals are not both current" }, project, now, IssueSeverity.High);
-        var manual = Tenants.NotConnected(project, settings.AgentTenantId)
+        var manual = LiveSimulation.RefusedNow(settings, project, r)
+            ?? Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (r.Guest ? "guest accounts are invited by the ID team, not created by the agent"
             : PrivilegedReason(row, scope)
             ?? (row?.Flag == RowFlag.Red ? $"mapping row {scope.MappingRowId} is flagged red (needs a human decision)" : null));
@@ -490,7 +491,8 @@ public sealed partial class WorkflowAgent
         // too (one row per plane), so a request is never completed with only half of its access in place.
         var databricksRow = Databricks.DatabricksPolicy.IsDatabricksScope(scope.RoleScope);
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
-            : Tenants.NotConnected(project, settings.AgentTenantId)
+            : LiveSimulation.RefusedNow(settings, project, r)
+            ?? Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (row is null ? $"mapping row {scope.MappingRowId} not found"
             : PrivilegedReason(row, scope)
             ?? (databricksRow && grants.Count > 0 ? DatabricksMixed

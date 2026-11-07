@@ -70,6 +70,9 @@ public sealed record PilotSettings
         // Re-check 6: settings that decide what the agent may read or change are refused when they cannot be read, instead of
         // being dropped. A tenant that is not a GUID made the agent leave every real project alone without saying why; a
         // subscription list with a typo became empty, which means "every subscription the worker can list" (wider).
+        // Live simulations (7 Nov 2026): one person approves every stage, so never in production.
+        if (On("SIMULATION_LIVE_WRITES") && environment == "prod")
+            throw new InvalidOperationException("SIMULATION_LIVE_WRITES=true is for test environments only; switch it off before APP_ENVIRONMENT=prod.");
         var tenant = get("AGENT_TENANT_ID")?.Trim();
         if (!string.IsNullOrEmpty(tenant) && !Guid.TryParse(tenant, out _))
             throw new InvalidOperationException("AGENT_TENANT_ID must be the tenant id (a GUID), not a domain name.");
@@ -117,6 +120,8 @@ public sealed record PilotSettings
                 // Agent TAP (approval-gated: deploy_free.sh tap): the agent mails a new account's sign-in details once.
                 AgentTap = On("AGENT_TAP"),
                 AgentPrivileged = On("AGENT_PRIVILEGED"),
+                // Live simulations (Gokul, 7 Nov 2026; approval-gated: deploy_free.sh simulation … live on).
+                SimulationLiveWrites = On("SIMULATION_LIVE_WRITES"),
                 AgentTapLifetimeMinutes = Math.Clamp(int.TryParse(get("AGENT_TAP_LIFETIME_MINUTES"), out var al) ? al : 480, 60, 43200),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
@@ -251,7 +256,7 @@ public static class PilotApp
         var verifier = new Verifier(directory, roles, settings.Workflow, databricks);
         var agent = new WorkflowAgent(stores, sources, runs, notifier, issues, verifier, settings.Workflow, policy, clock,
             loggers.CreateLogger<WorkflowAgent>(), canCrossCheck: engine.CanCrossCheck, directory, assistant, writer, roleWriter, directMail, databricks);
-        var service = new WorkflowService(stores, new RequestService(stores, clock), agent, sources, notifier, issues, settings.Workflow, clock,
+        var service = new WorkflowService(stores, new RequestService(stores, clock, settings.Workflow), agent, sources, notifier, issues, settings.Workflow, clock,
             loggers.CreateLogger<WorkflowService>());
         var resources = new ResourceService(stores, clock, settings.Workflow.AgentTenantId, settings.Workflow.AllowUnverifiedEntra);
         return new WorkflowParts(stores, runs, engine, processor, agent, service, new MappingSheetService(stores, clock), notifier, issues,

@@ -57,7 +57,7 @@ public static class RequestFields
 }
 
 /// <summary>Stage 1: intake. Incomplete requests are rejected with exactly what is missing; nothing is saved.</summary>
-public sealed partial class RequestService(DataStores stores, IClock clock)
+public sealed partial class RequestService(DataStores stores, IClock clock, WorkflowSettings? settings = null)
 {
     private const int ShortMax = 200;
     private const int JustificationMax = 2000;
@@ -85,11 +85,19 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         var (clean, fixes) = Validate(input);
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        RefuseBadDomainId(DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix));
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
-        if (simulated) flow = flow.Log(now, caller.UserId, "simulation", $"SIMULATION by {caller.DisplayName}: nothing is created in Entra or Azure, mails stay in the app, and the developer acts for every stage.");
+        // Live simulation (Gokul, 7 Nov 2026): decided here by the server only, and re-checked before every agent write.
+        var liveRefused = simulated ? (settings is null ? "live simulations are switched off" : LiveSimulation.Refused(settings, project, environment, clean.Guest ?? false)) : null;
+        var live = simulated && liveRefused is null;
+        if (live)
+            flow = flow.Log(now, caller.UserId, "simulation", $"LIVE SIMULATION by {caller.DisplayName}: the developer acts for every stage, and the AI agent creates the user, group and membership and assigns the roles in Entra and Azure for real (same switches, allow-lists and checks as a real request). Mails go out as for a real request. Clean up with Offboard user.");
+        else if (simulated)
+            flow = flow.Log(now, caller.UserId, "simulation", $"SIMULATION by {caller.DisplayName}: nothing is created in Entra or Azure, mails stay in the app, and the developer acts for every stage" +
+                (settings?.SimulationLiveWrites == true ? $" (not live: {liveRefused})." : "."));
         var doc = new AccessRequest
         {
             Id = Guid.NewGuid().ToString("n"),
@@ -106,6 +114,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Guest = clean.Guest ?? false,
             BundleId = bundleId,
             Simulated = simulated,
+            LiveWrites = live,
             CreatedBy = caller.UserId,
             CreatedByName = caller.DisplayName,
             CreatedAt = now,
@@ -115,6 +124,13 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
             Flow = flow,
         };
         return await stores.Requests.CreateAsync(doc, ct);
+    }
+
+    /// <summary>The domain-specific ID the request would create must be one Entra accepts (7 Nov 2026).</summary>
+    private static void RefuseBadDomainId(string domainId)
+    {
+        if (DomainIds.EntraProblem(domainId) is { } why)
+            throw AppException.Invalid($"The domain-specific ID {domainId} cannot be created in Entra: {why}. Correct the Enterprise ID.");
     }
 
     /// <summary>
@@ -151,6 +167,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         var environment = EnvironmentFor(project, input.Environment);
+        RefuseBadDomainId(DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix));
         await RefuseLeaverAsync(projectId, DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix), ct);
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
@@ -269,7 +286,9 @@ public sealed partial class RequestService(DataStores stores, IClock clock)
         return CultureInfo.InvariantCulture.TextInfo.ToTitleCase(spaced.ToLowerInvariant());
     }
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9._'+-]{0,63}@[a-z0-9-]+(\\.[a-z0-9-]+)+$")]
+    // 7 Nov 2026: dots only between characters (no dot first, last or twice before '@'; RFC 5322 dot-atom), at most 64
+    // characters before '@'. A dot right before '@' was accepted and gave a domain ID Entra refuses (VERIFIED_FACTS F136).
+    [GeneratedRegex("^(?=[^@]{1,64}@)[a-z0-9][a-z0-9_'+-]*(\\.[a-z0-9_'+-]+)*@[a-z0-9-]+(\\.[a-z0-9-]+)+$")]
     private static partial Regex EnterpriseMailFormat();
 
     [GeneratedRegex(@"^[\p{L}][\p{L} .'-]{0,99}$")]
@@ -306,6 +325,22 @@ public static partial class DomainIds
         if (string.IsNullOrWhiteSpace(suffix)) return id;
         var local = id.Contains('@') ? UpnUnsafe().Replace(id[..id.IndexOf('@')], "") : id;
         return local + suffix.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Why Entra would refuse <paramref name="domainId"/> as a user principal name, or null (VERIFIED_FACTS F136, Learn:
+    /// "Can't contain a period character '.' immediately preceding the '@' symbol"; at most 64 characters before '@').
+    /// Leading and doubled dots are refused too (not a valid mail address either).
+    /// </summary>
+    public static string? EntraProblem(string domainId)
+    {
+        var at = domainId.IndexOf('@');
+        var local = at < 0 ? domainId : domainId[..at];
+        if (local.Length == 0) return "the part before '@' is empty";
+        if (local.Length > 64) return "the part before '@' is longer than 64 characters";
+        if (local.EndsWith('.')) return "it ends with a dot right before '@', which Entra does not allow";
+        if (local.StartsWith('.') || local.Contains("..", StringComparison.Ordinal)) return "it starts with a dot or has two dots in a row";
+        return null;
     }
 
     /// <summary>The Enterprise ID when it is a mail address (where the joiner is notified), else null.</summary>
