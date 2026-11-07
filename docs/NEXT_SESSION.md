@@ -14,6 +14,11 @@
 
 **Independent review (REVIEW.md re-check 7):** 2 High, 5 Medium, 4 Low found and fixed. The agent never mails a TAP for a simulation. A live simulation only creates new accounts, never the Developer's own. A row for every environment counts as Prod, and every project of the tenant must be marked test. A live simulation can't be deleted before Offboard user. Stopped before any write, it continues as a dry run. Several resources are never preselected. `environment … prod` switches live simulations off. Open (Low): no SIMULATION marker on response-document records; `verify_features` does not show the switch.
 
+**Later on 7 Nov: the TAP for live simulations** (Gokul: "temp pass also not generated. create that also and send to the email that is marked as enterprise id"). Two new switches, both off until approved:
+- `simulation <sub> tap on` (`SIMULATION_LIVE_TAP`): the agent creates the one-time TAP for a new account of a **live** simulation and mails it once, with the initial password and the MFA steps, to the **Enterprise ID typed on the simulation**. A personal mailbox is allowed there (e.g. a gmail `+` alias), never your own sign-in address. Never for a dry run. Subject starts `[LIVE SIMULATION]`.
+- `tap <sub> on --via acs` (`TAP_MAIL_VIA=acs`): the TAP mail goes through the app's ACS sender (`DoNotReply@…azurecomm.net`), so no Exchange mailbox or Mail.Send scope is needed (the pilot tenant has no `TAP_MAIL_SENDER`). Still one recipient, never redirected to the test mailbox, no copy kept (F138). It shares the ACS limit of 10 mails an hour (F70); a refused send leaves the pass to you as the ID team. Look in the spam folder.
+Run Blocks 2 and 6b. Tests: .NET 660 (659 pass, 1 skip); `verify_features.py --self-test` passes.
+
 **Tests (this container, 7 Nov, after the fixes):** .NET 640 (639 pass, 1 opt-in Cosmos skip), build 0 warnings; SPA 58/58, tsc, web build; Playwright 15/15 (fresh local emulator). Not run: `bicep build`, anything against Azure.
 
 ### Deploy from scratch (fresh Cloud Shell, one block at a time)
@@ -113,11 +118,35 @@ tools/deploy_free.sh privileged $SUB on --approved-by "Gokul 2026-11-07"
 ```
 A newly granted Azure right can take a few minutes; a Graph one up to 24 h (F61).
 
+**Block 6b: the agent TAP for live simulations** (approval-gated; needs Block 5b first). Two dry runs first, both change nothing. Expect *TAP mail: through ACS from DoNotReply@…*, the tenant TAP policy `state: enabled`, then the simulation plan and "Dry run: nothing changed" twice.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh tap $SUB on --via acs --lifetime 60
+tools/deploy_free.sh simulation $SUB tap on
+```
+Then, only after "approved". Expect `Already granted: UserAuthMethod-TAP.ReadWrite.All`, `Agent TAP on`, `Live-simulation TAP on (approved by Gokul 2026-11-07)`:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh tap $SUB on --via acs --lifetime 60 --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh simulation $SUB tap on --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-07"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+(The `app` line copies the new worker settings to the website, so its wording says the agent mails the pass.) Switch off any time: `tools/deploy_free.sh simulation $SUB tap off`.
+
 **Block 7: the live E2E test on the site** (no Cloud Shell).
-1. *New request* → tenant PEST → environment **Dev** → resource *PH* (or *Support Reader* first: no privileged row needed) → access level → Enterprise ID a **new** test address, e.g. `pmo.livetest01@<any company domain>` (no dot before '@'; never your own) → justification → Owner → switch **Simulation (LIVE: real Entra and Azure writes)** on → *Submit simulation*.
+1. *New request* → tenant PEST → environment **Dev** → resource *PH* (or *Support Reader* first: no privileged row needed) → access level → Enterprise ID a **new** address that you can read but is not your sign-in, e.g. `gopalakrishnan.baskaran+livetest01@gmail.com` (the TAP mail goes there after Block 6b; the domain ID becomes `gopalakrishnanbaskaranlivetest01@…onmicrosoft.com`; no dot before '@') → justification → Owner → switch **Simulation (LIVE: real Entra and Azure writes)** on → *Submit simulation*.
 2. The request page shows **LIVE SIMULATION**. Approve as Owner, then as Security (you act for both).
 3. Within about 5 minutes the agent creates the group (if new), the user `pmo.livetest01@gopalakrishnanbaskarangmail.onmicrosoft.com` and the membership, then assigns the allow-listed roles. Check in Entra (Users, Groups) and Azure (`rg-pmo-sample-access` → Access control).
-4. As the ID team: Entra → the user → Authentication methods → Add → Temporary Access Pass, **One-time use: Yes**, at most 60 minutes. Record only issued time, expiry, one-time and issued-by on the request.
+4. With Block 6b: one mail *[LIVE SIMULATION] Your new account …: sign-in details* arrives at that address (check spam) with the sign-in name, temporary password, one-time TAP and the steps; the ID-team task shows *Sign-in details mailed* with the masked address. Without 6b (or if the mail failed, named on the trail), as the ID team: Entra → the user → Authentication methods → Add → Temporary Access Pass, **One-time use: Yes**, at most 60 minutes. Record only issued time, expiry, one-time and issued-by on the request.
 5. The agent verifies the ID step, the roles and the access: **Completed**. Mails go to the test mailbox only.
 6. Anything it leaves to you is named on the trail (`agent-manual`): e.g. a privileged row without Block 6, a role not on the allow-list, an existing account.
 

@@ -8,8 +8,8 @@ namespace PmoReview.Core.Workflow;
 /// assigns and verifies it in Entra and Azure for real. Because one person approves, the real writes are kept to a test
 /// tenant and to accounts the agent creates for the simulation: this rule is checked when the simulation is submitted and
 /// again before every agent write. Everything a real request needs still applies on top (agent switches, allow-lists,
-/// privileged rule, never-by-agent roles, tenant separation). The agent never issues a TAP for a simulation (the address
-/// was approved by the developer alone).
+/// privileged rule, never-by-agent roles, tenant separation). The agent issues a TAP for a live simulation's new account only
+/// with <c>SIMULATION_LIVE_TAP</c> (Gokul, 7 Nov 2026, approval-gated: the address was approved by the developer alone).
 /// </summary>
 public static class LiveSimulation
 {

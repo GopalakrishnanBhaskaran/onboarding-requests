@@ -57,6 +57,12 @@ public sealed record WorkflowSettings
     /// </summary>
     public bool SimulationLiveWrites { get; init; }
     /// <summary>
+    /// Live simulations, agent TAP (<c>SIMULATION_LIVE_TAP</c>, Gokul 7 Nov 2026, default false, approval-gated:
+    /// <c>deploy_free.sh simulation … tap on</c>): the agent also issues the one-time TAP for an account it created for a live
+    /// simulation and mails it to the Enterprise ID on that simulation (<see cref="TapRecipient"/>). Needs the agent TAP itself.
+    /// </summary>
+    public bool SimulationLiveTap { get; init; }
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>
@@ -115,7 +121,14 @@ public sealed record WorkflowSettings
     /// <c>NOTIFY_SENDER</c>, so <see cref="MailEnabled"/> says nothing about it). Re-check 6: <c>AGENT_TAP</c> without
     /// <c>TAP_MAIL_SENDER</c> (the live state on 31 Oct) made the site say the agent mails the pass while the ID team issued it.
     /// </summary>
-    public bool TapMailByAgent => AgentProvisioning && AgentTap && !string.IsNullOrWhiteSpace(TapMailSender);
+    public bool TapMailByAgent => AgentProvisioning && AgentTap && (TapMailViaAcs || !string.IsNullOrWhiteSpace(TapMailSender));
+    /// <summary>
+    /// <c>TAP_MAIL_VIA=acs</c> (7 Nov 2026; the alternative in docs/PERMISSIONS.md, no new permission): the TAP mail goes through the
+    /// app's Azure Communication Services sender (<c>NOTIFY_SENDER=AcsEmail</c>, <c>NOTIFY_FROM</c>), still sent at once to one
+    /// checked recipient, never redirected, never stored (ACS processes email content in real time, F138). Default: Graph from
+    /// <see cref="TapMailSender"/>.
+    /// </summary>
+    public bool TapMailViaAcs { get; init; }
     /// <summary>F4 (<c>MAX_UPLOAD_BYTES</c>): largest accepted upload file. Default 5 MB, never above 25 MB (SWA request limit 30 MB, F88).</summary>
     public int MaxUploadBytes { get; init; } = 5 * 1024 * 1024;
     /// <summary>F4 (<c>EXTERNAL_UPLOAD_API_ENABLED</c>, default false): the app-only upload API answers; off it returns 404.</summary>

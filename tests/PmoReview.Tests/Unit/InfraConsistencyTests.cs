@@ -201,7 +201,7 @@ public partial class InfraConsistencyTests
         // Each writer only behind its capability; WorkerStartup.Capabilities maps them to the switches (AgentInitializationTests).
         Assert.Contains("can.DirectoryWriter ? new GraphDirectoryWriter", worker);
         Assert.Contains("can.RoleWriter", worker);
-        Assert.Contains("IDirectMail? directMail = can.TapMail", worker);
+        Assert.Contains("IDirectMail? directMail = !can.TapMail ? null", worker);
         Assert.Contains("can.OffboardingWriters ? new GraphOffboardingWriter", worker);
         Assert.Contains("can.OffboardingWriters ? new ArmRoleAssignmentRemover", worker);
         var bicep = MainBicep() + Worker();
@@ -235,6 +235,11 @@ public partial class InfraConsistencyTests
             Assert.Contains($"\"{param}\": v(live.get(\"{setting}\"", deploy);
         }
         Assert.Contains("removed by the apply:", deploy); // whatif names any live setting the template would drop
+        // 7 Nov 2026: the TAP mail channel is carried too; the live-simulation switches go back to off on an apply.
+        Assert.Contains("{ name: 'TAP_MAIL_VIA', value: tapMailVia }", worker);
+        Assert.Contains("\"tapMailVia\": v(\"acs\" if live.get(\"TAP_MAIL_VIA\"", deploy);
+        Assert.Contains("{ name: 'SIMULATION_LIVE_WRITES', value: 'false' }", worker);
+        Assert.Contains("{ name: 'SIMULATION_LIVE_TAP', value: 'false' }", worker);
     }
 
     [Fact]

@@ -41,13 +41,15 @@
 #       "off": settings off, then (approved) removes those rights.
 #       Security change: without --approved-by it only shows what it would do.
 #
-#   tools/deploy_free.sh tap <subscriptionId> on [--lifetime <minutes>] [--approved-by "<name> <date>"]
+#   tools/deploy_free.sh tap <subscriptionId> on [--sender <mailbox> | --via acs] [--lifetime <minutes>] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh tap <subscriptionId> off [--approved-by "<name> <date>"]
 #       Agent TAP (requested by Gokul 22 Oct 2026): for an account it has just created after both approvals, the agent
 #       mails a one-time Temporary Access Pass, the initial password and the MFA steps to the Enterprise ID mail, once.
 #       "on": Graph application permission UserAuthMethod-TAP.ReadWrite.All + worker/SWA AGENT_TAP=true. Needs agent
 #       provisioning and mail on. Shows the tenant's TAP policy. Security change: dry run without --approved-by.
 #       "off": AGENT_TAP=false at once (the ID team issues passes again); removing the permission needs --approved-by.
+#       Mail channel: --sender <mailbox> (Graph sendMail, Exchange RBAC scope, F81) or --via acs (7 Nov 2026: the app's ACS
+#       sender, no new permission, no Exchange mailbox; still one recipient, never redirected, no copy kept, F138).
 #
 #   tools/deploy_free.sh privileged <subscriptionId> on|off [--approved-by "<name> <date>"]
 #       Agent privileged rows (requested by Gokul 22 Oct 2026): the agent also provisions and assigns mapping rows flagged
@@ -62,6 +64,10 @@
 #       never with APP_ENVIRONMENT=prod; only for projects that name the agent's tenant and are marked not production;
 #       never a Prod environment or a guest. Same agent switches, allow-lists and checks as a real request.
 #       "on" is a security change (one person approves): dry run without --approved-by. "off" any time.
+#   tools/deploy_free.sh simulation <subscriptionId> tap on|off [--approved-by "<name> <date>"]
+#       Live-simulation TAP (Gokul, 7 Nov 2026): the agent also mails a live simulation's new account a one-time TAP and the
+#       initial password, at the Enterprise ID on the simulation (SIMULATION_LIVE_TAP). Needs live simulations and the agent TAP.
+#       "on" is a security change: dry run without --approved-by. "off" any time.
 #
 #   tools/deploy_free.sh offboarding <subscriptionId> on [--subscriptions <id,id>] [--delete-user] [--approved-by "<name> <date>"]
 #   tools/deploy_free.sh offboarding <subscriptionId> off|delete-off     (always allowed)
@@ -374,7 +380,7 @@ tap_policy() {
 }
 
 agent_tap() {
-  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" name mi swa graph role assignment policy max prov appid mailsend
+  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" via="${4:-graph}" name mi swa graph role assignment policy max prov appid mailsend notify acs from
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -395,14 +401,28 @@ agent_tap() {
   # v1.1 F2 (decision 19): the pass goes only through Graph sendMail from one mailbox (TAP_MAIL_SENDER), Application Mail.Send
   # scoped to it by Exchange RBAC for Applications (F81), to the Enterprise ID approved on the request (else the people
   # inventory's verified address, TapRecipient); never redirected.
-  tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
-  [[ "$tap_sender" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "--sender <mailbox> is required: the shared mailbox the TAP mail is sent from (TAP_MAIL_SENDER)."; return 1; }
+  # 7 Nov 2026: or --via acs: the app's Azure Communication Services sender (NOTIFY_FROM) carries the TAP mail instead, sent at
+  # once to the one checked recipient, never redirected; no new permission and no Exchange mailbox (docs/PERMISSIONS.md, F138).
+  [[ "$via" == "graph" || "$via" == "acs" ]] || { echo "--via must be graph or acs"; return 1; }
+  if [[ "$via" == "acs" ]]; then
+    notify=$(worker_setting "$name" NOTIFY_SENDER || true); acs=$(worker_setting "$name" ACS_ENDPOINT || true); from=$(worker_setting "$name" NOTIFY_FROM || true)
+    [[ "$notify" == "AcsEmail" && -n "$acs" && -n "$from" ]] || { echo "--via acs needs the app mail on ACS first (NOTIFY_SENDER=AcsEmail, ACS_ENDPOINT, NOTIFY_FROM: tools/deploy_free.sh email). Now: NOTIFY_SENDER=${notify:-not set}."; return 1; }
+    tap_sender=""
+  else
+    tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
+    [[ "$tap_sender" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || { echo "--sender <mailbox> is required: the shared mailbox the TAP mail is sent from (TAP_MAIL_SENDER). Or --via acs."; return 1; }
+  fi
   prov=$(worker_setting "$name" AGENT_PROVISIONING)
   appid=$(az ad sp show --id "$mi" --query appId -o tsv)
   mailsend=$(az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" --query "value[?appRoleId=='$(graph_role_id Mail.Send)'].id | [0]" -o tsv)
   echo "Checks:"
   echo "  Agent provisioning: ${prov:-false} (must be true: the agent mails passes only for accounts it creates)"
-  echo "  TAP sender mailbox: $tap_sender (Graph sendMail; the TAP mail is never redirected, also not in test)"
+  if [[ "$via" == "acs" ]]; then
+    echo "  TAP mail: through ACS from $from (sent at once, one recipient, never redirected, also not in test; ACS keeps no copy of the content, F138)"
+    echo "  It shares the ACS limit (Azure-managed domain 5 a minute, 10 an hour, F70): a refused send leaves the pass to the ID team. Check spam folders."
+  else
+    echo "  TAP sender mailbox: $tap_sender (Graph sendMail; the TAP mail is never redirected, also not in test)"
+  fi
   echo "  Recipient: the Enterprise ID on the request (approved by the Owner and Security; not a personal domain, not the requester or an approver,"
   echo "  not against the people inventory); else the inventory's EnterpriseEmail equal to the Entra mail or UPN; otherwise an escalation"
   [[ -z "$mailsend" ]] || echo "  WARNING: the worker holds Graph Mail.Send in Entra: it adds up with the Exchange scope and makes it useless (F81). Remove it."
@@ -419,12 +439,12 @@ agent_tap() {
   [[ "$lifetime" -ge 60 ]] || { echo "Lifetime must be at least 60 minutes (the joiner reads it from mail)."; return 1; }
   echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
-  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAIL_SENDER=$tap_sender; SWA: AGENT_TAP=true"
-  echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
+  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAIL_VIA=$via TAP_MAIL_SENDER=${tap_sender:-<empty>}; SWA: the same"
+  [[ "$via" == "graph" ]] && echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
   echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
-  echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
-  echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
-  echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
+  [[ "$via" == "graph" ]] && echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
+  [[ "$via" == "graph" ]] && echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
+  [[ "$via" == "graph" ]] && echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
   echo "  Risk: the TAP permission is tenant-wide (any user's TAP). The code issues one only for a user the agent created in the same"
   echo "  request after both approvals, mails it once to the approved Enterprise ID and keeps no copy (audit: masked recipient only)."
   if [[ -z "${APPROVED_BY:-}" ]]; then
@@ -432,7 +452,7 @@ agent_tap() {
     return 0
   fi
   [[ "$prov" == "true" ]] || { echo "Switch agent provisioning on first (tools/deploy_free.sh provisioning ...)."; return 1; }
-  [[ -z "$mailsend" ]] || { echo "Remove the Entra Mail.Send grant first (F81)."; return 1; }
+  [[ "$via" == "acs" || -z "$mailsend" ]] || { echo "Remove the Entra Mail.Send grant first (F81)."; return 1; }
   graph=$(az ad sp show --id 00000003-0000-0000-c000-000000000000 --query id -o tsv)
   if [[ -z "$assignment" ]]; then
     az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$mi/appRoleAssignments" \
@@ -441,11 +461,13 @@ agent_tap() {
   else
     echo "Already granted: $GRAPH_TAP_ROLE"
   fi
-  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender"
-  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true "TAP_MAIL_SENDER=$tap_sender" -o none
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via" -o none
   echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
-  echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
+  [[ "$via" == "graph" ]] && echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
+  [[ "$via" == "acs" ]] && echo "The TAP mail goes through ACS from $from. Live simulations get a pass only with: tools/deploy_free.sh simulation <sub> tap on"
+  return 0
 }
 
 # Agent privileged rows (requested by Gokul 22 Oct 2026, approval-gated): a setting only. What the agent may assign stays
@@ -517,7 +539,7 @@ simulation_live() {
   echo "  then creates a NEW user, the group and membership and assigns the allow-listed roles in Entra and Azure FOR REAL,"
   echo "  and verifies them. Only in projects that name tenant ${tenant:-?} where every project of that tenant is marked not"
   echo "  production; never a Prod environment (or a row for every environment), a guest, an account that already exists or"
-  echo "  the developer's own; never an agent TAP (the developer issues the pass); mails only to the test mailbox (NOTIFY_REDIRECT_TO)."
+  echo "  the developer's own; an agent TAP only after simulation <sub> tap on (else the developer issues the pass); other mails only to the test mailbox (NOTIFY_REDIRECT_TO)."
   echo "  Separation of duties does not apply to these simulations (one person approves): keep it to test accounts."
   echo "  Clean up with Offboard user (PMO or Operator, on the request page); a live simulation with granted access cannot be deleted before."
   if [[ -z "${APPROVED_BY:-}" ]]; then
@@ -528,6 +550,46 @@ simulation_live() {
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=true -o none
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=true -o none
   echo "Live simulations on (approved by $APPROVED_BY). New simulations in a test tenant say LIVE SIMULATION on their trail."
+}
+
+# Live simulations, agent TAP (Gokul, 7 Nov 2026, approval-gated): a setting only. For an account the agent created for a live
+# simulation it also creates the one-time TAP and mails it, with the initial password, to the Enterprise ID on the simulation.
+simulation_tap() {
+  local mode="$1" name swa env live tap prov via sender
+  name=$(worker_name)
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "off" ]]; then
+    [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_TAP=false -o none
+    [[ -n "$swa" ]] && az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_TAP=false -o none
+    echo "Live-simulation TAP switched off on $name and $swa: the Developer issues the pass of a live simulation again (the ID team task)."
+    return 0
+  fi
+  [[ "$mode" == "on" ]] || { echo "simulation tap on|off"; return 1; }
+  [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  env=$(worker_setting "$name" APP_ENVIRONMENT); live=$(worker_setting "$name" SIMULATION_LIVE_WRITES); tap=$(worker_setting "$name" AGENT_TAP)
+  prov=$(worker_setting "$name" AGENT_PROVISIONING); via=$(worker_setting "$name" TAP_MAIL_VIA || true); sender=$(worker_setting "$name" TAP_MAIL_SENDER || true)
+  [[ "${env:-pilot}" != "prod" ]] || { echo "Refused: APP_ENVIRONMENT=prod. Live simulations are for test environments only (nothing changed)."; return 1; }
+  echo "Checks:"
+  echo "  APP_ENVIRONMENT: ${env:-pilot} (must not be prod)"
+  echo "  Live simulations (SIMULATION_LIVE_WRITES): ${live:-false} (must be true: simulation <sub> live on)"
+  echo "  Agent provisioning: ${prov:-false}; agent TAP (AGENT_TAP): ${tap:-false} (both must be true)"
+  echo "  TAP mail: ${via:-graph}$([[ "${via:-graph}" == "graph" ]] && echo " from ${sender:-<no TAP_MAIL_SENDER: no pass is mailed; use tap <sub> on --via acs>}")"
+  echo "Plan for $name and $swa, expected cost 0, no permission change:"
+  echo "  Settings: SIMULATION_LIVE_TAP=true (worker + SWA)"
+  echo "  Effect: for a NEW account the agent created for a live simulation, it creates a one-time Temporary Access Pass and mails"
+  echo "  it once, with the initial password and the MFA steps, to the Enterprise ID typed on the simulation (never redirected,"
+  echo "  no copy kept). A personal mailbox is allowed for a live simulation (e.g. a gmail \"+\" alias); the Developer's own sign-in"
+  echo "  address, a guest and a dry-run simulation never get one."
+  echo "  Risk: one person (the Developer) approves the simulation and chooses the mailbox, so a Developer can get a working sign-in"
+  echo "  for a test account with the allow-listed roles. Test tenant only, never Prod; switch off with: simulation <sub> tap off"
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  [[ "$live" == "true" && "$tap" == "true" && "$prov" == "true" ]] || { echo "Switch on live simulations, agent provisioning and the agent TAP first (nothing changed)."; return 1; }
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_TAP=true -o none
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_TAP=true -o none
+  echo "Live-simulation TAP on (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
 }
 
 # v1.2 (Gokul, 2 Nov 2026): the agent sets up a Databricks row's group after both approvals — account and workspace (A3),
@@ -674,7 +736,7 @@ set_environment() {
   tenant=$(az account show --query tenantId -o tsv)
   # Live simulations are refused at start-up in prod (7 Nov 2026): going to prod switches them off in the same call.
   local extra=()
-  [[ "$env" == "prod" ]] && extra=("SIMULATION_LIVE_WRITES=false")
+  [[ "$env" == "prod" ]] && extra=("SIMULATION_LIVE_WRITES=false" "SIMULATION_LIVE_TAP=false")
   [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none \
     --settings "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant" ${extra[@]+"${extra[@]}"}
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" -o none \
@@ -882,7 +944,7 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv offb dbx tapsender simlive
+  local env sender redirect tenant tap priv offb dbx tapsender simlive simtap tapvia
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   # The website says "the agent mails the pass" only when the worker can (AGENT_TAP, provisioning and this mailbox; re-check 6).
@@ -891,12 +953,14 @@ app_settings_v2() {
   offb=$([[ -n "$w" ]] && worker_setting "$w" AGENT_OFFBOARDING || true)
   dbx=$([[ -n "$w" ]] && worker_setting "$w" AGENT_DATABRICKS || true)
   simlive=$([[ -n "$w" ]] && worker_setting "$w" SIMULATION_LIVE_WRITES || true)
+  simtap=$([[ -n "$w" ]] && worker_setting "$w" SIMULATION_LIVE_TAP || true)
+  tapvia=$([[ -n "$w" ]] && worker_setting "$w" TAP_MAIL_VIA || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
   az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" "SIMULATION_LIVE_WRITES=${simlive:-false}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" "SIMULATION_LIVE_WRITES=${simlive:-false}" "SIMULATION_LIVE_TAP=${simtap:-false}" "TAP_MAIL_VIA=${tapvia:-graph}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -1062,6 +1126,7 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "agentOffboarding": v(live.get("AGENT_OFFBOARDING", "").lower() == "true"),
      "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
      "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
+     "tapMailVia": v("acs" if live.get("TAP_MAIL_VIA", "").strip().lower() == "acs" else "graph"),
      "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", "")),
      # v1.2 as it is live: the agent's Databricks set-up (deploy_free.sh databricks, approved separately).
      "agentDatabricks": v(live.get("AGENT_DATABRICKS", "").lower() == "true"),
@@ -1103,16 +1168,17 @@ PY
     provisioning "$MODE" ${ARGS[@]+"${ARGS[@]}"}
     ;;
   tap)
-    MODE="${3:?on|off}"; shift 3; LIFETIME=480; TAP_SENDER=""
+    MODE="${3:?on|off}"; shift 3; LIFETIME=480; TAP_SENDER=""; TAP_VIA=graph
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --lifetime) LIFETIME="${2:?minutes}"; shift 2 ;;
         --sender) TAP_SENDER="${2:?sender mailbox}"; shift 2 ;;
+        --via) TAP_VIA="${2:?graph or acs}"; shift 2 ;;
         --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (tap $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
         *) echo "unknown argument $1"; exit 1 ;;
       esac
     done
-    agent_tap "$MODE" "$LIFETIME" "$TAP_SENDER"
+    agent_tap "$MODE" "$LIFETIME" "$TAP_SENDER" "$TAP_VIA"
     ;;
   privileged)
     MODE="${3:?on|off}"
@@ -1122,12 +1188,12 @@ PY
     agent_privileged "$MODE"
     ;;
   simulation)
-    [[ "${3:-}" == "live" ]] || { echo "usage: deploy_free.sh simulation <subscriptionId> live on|off [--approved-by \"<name> <date>\"]"; exit 1; }
+    [[ "${3:-}" == "live" || "${3:-}" == "tap" ]] || { echo "usage: deploy_free.sh simulation <subscriptionId> live|tap on|off [--approved-by \"<name> <date>\"]"; exit 1; }
     MODE="${4:?on|off}"
     if [[ "${5:-}" == "--approved-by" && -n "${6:-}" ]]; then
-      APPROVED_BY="$6"; echo "Approval recorded (simulation live $MODE): $6" | tee -a "$ROOT/.local/approval.txt"
+      APPROVED_BY="$6"; echo "Approval recorded (simulation $3 $MODE): $6" | tee -a "$ROOT/.local/approval.txt"
     fi
-    simulation_live "$MODE"
+    if [[ "$3" == "tap" ]]; then simulation_tap "$MODE"; else simulation_live "$MODE"; fi
     ;;
   offboarding)
     MODE="${3:?on|off|delete-off}"; shift 3; OFF_SUBS=""; OFF_DELETE=no

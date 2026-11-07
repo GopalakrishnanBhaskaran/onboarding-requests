@@ -124,6 +124,12 @@ param databricksGrantCatalogs string = ''
 
 @description('v1.1 F2: the one shared mailbox the agent TAP mail is sent from (tools/deploy_free.sh tap … --sender). Empty = not configured (the ID team issues passes).')
 param tapMailSender string = ''
+@description('The agent TAP mail channel (TAP_MAIL_VIA): graph (from tapMailSender) or acs (the app ACS sender). Carried so a redeploy keeps it.')
+@allowed([
+  'graph'
+  'acs'
+])
+param tapMailVia string = 'graph'
 
 @description('Mail sender limits after a custom mail domain (empty = the Azure-managed domain defaults, F70).')
 param mailMaxPerMinute string = ''
@@ -193,6 +199,7 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     databricksWorkspaces: databricksWorkspaces
     databricksGrantCatalogs: databricksGrantCatalogs
     tapMailSender: tapMailSender
+    tapMailVia: tapMailVia
     mailMaxPerMinute: mailMaxPerMinute
     mailMaxPerHour: mailMaxPerHour
   }

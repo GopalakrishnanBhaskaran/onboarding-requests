@@ -25,6 +25,7 @@ public static class TapRecipient
 
     public const string FromInventorySource = "people inventory, checked against Entra";
     public const string FromRequestSource = "the Enterprise ID on the request, approved by the Owner and Security";
+    public const string FromLiveSimulationSource = "the Enterprise ID on the live simulation, approved by the developer";
 
     /// <summary>Consumer mail domains: never a TAP recipient (an enterprise account's pass goes to an enterprise mailbox).</summary>
     public static readonly IReadOnlySet<string> PersonalDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -69,7 +70,10 @@ public static class TapRecipient
         if (Guest(raw)) return Check.Refuse("the request's Enterprise ID is a guest sign-in form (#EXT#), not a mailbox");
         var to = raw.ToLowerInvariant();
         if (MailAddresses.Normalize(to) != to) return Check.Refuse("the request's Enterprise ID is not a plain mail address");
-        if (PersonalDomains.Contains(Domain(to))) return Check.Refuse($"the request's Enterprise ID is in a personal mail domain ({Domain(to)})");
+        // A live simulation (test account, SIMULATION_LIVE_TAP) may name a personal mailbox the developer reads, e.g. a "+" alias:
+        // never the developer's own sign-in address (the requester and approver checks below).
+        var live = r.Simulated && r.LiveWrites;
+        if (!live && PersonalDomains.Contains(Domain(to))) return Check.Refuse($"the request's Enterprise ID is in a personal mail domain ({Domain(to)})");
         var owner = r.Flow?.CurrentApproval(ApprovalStage.Owner);
         var security = r.Flow?.CurrentApproval(ApprovalStage.Security);
         if (owner?.Decision != ApprovalDecision.Approved || security?.Decision != ApprovalDecision.Approved)
@@ -85,7 +89,7 @@ public static class TapRecipient
             if (SameMailbox(person.AlternateEmail, to)) return Check.Refuse($"the request's Enterprise ID is the AlternateEmail of {upn}, which is never used for a TAP");
             if (SameMailbox(person.ManagerEnterpriseId, to)) return Check.Refuse($"the request's Enterprise ID is the manager's address of {upn}");
         }
-        return new Check(to, null, FromRequestSource);
+        return new Check(to, null, live ? FromLiveSimulationSource : FromRequestSource);
     }
 
     /// <summary>Before the account exists: the approved request's Enterprise ID, else the inventory.</summary>

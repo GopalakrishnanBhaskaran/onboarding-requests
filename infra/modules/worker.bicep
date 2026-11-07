@@ -100,6 +100,12 @@ param databricksGrantCatalogs string = ''
 
 @description('v1.1 F2: the agent TAP mail sender mailbox (TAP_MAIL_SENDER). Kept here so a redeploy never drops it: the settings below replace all of the worker\'s app settings.')
 param tapMailSender string = ''
+@description('TAP_MAIL_VIA: graph or acs (7 Nov 2026). Kept here for the same reason as tapMailSender.')
+@allowed([
+  'graph'
+  'acs'
+])
+param tapMailVia string = 'graph'
 
 @description('MAIL_MAX_PER_MINUTE / MAIL_MAX_PER_HOUR (empty = defaults, F70).')
 param mailMaxPerMinute string = ''
@@ -224,6 +230,7 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'AGENT_PRIVILEGED', value: agentPrivileged ? 'true' : 'false' }
         // Live simulations (7 Nov 2026): off in the template; switched on only with deploy_free.sh simulation <sub> live on (approval).
         { name: 'SIMULATION_LIVE_WRITES', value: 'false' }
+        { name: 'SIMULATION_LIVE_TAP', value: 'false' }
         { name: 'AGENT_OFFBOARDING', value: agentOffboarding ? 'true' : 'false' }
         { name: 'OFFBOARD_DELETE_USER', value: offboardDeleteUser ? 'true' : 'false' }
         { name: 'OFFBOARD_SUBSCRIPTIONS', value: offboardSubscriptions }
@@ -232,6 +239,7 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'DATABRICKS_WORKSPACES', value: databricksWorkspaces }
         { name: 'DATABRICKS_GRANT_CATALOGS', value: databricksGrantCatalogs }
         { name: 'TAP_MAIL_SENDER', value: tapMailSender }
+        { name: 'TAP_MAIL_VIA', value: tapMailVia }
         { name: 'MAIL_MAX_PER_MINUTE', value: mailMaxPerMinute }
         { name: 'MAIL_MAX_PER_HOUR', value: mailMaxPerHour }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.

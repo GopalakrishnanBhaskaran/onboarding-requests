@@ -68,9 +68,14 @@ var host = new HostBuilder()
             // Agent TAP (F2): the sign-in details go only through Graph sendMail from the one TAP_MAIL_SENDER mailbox
             // (Application Mail.Send scoped to it by Exchange RBAC for Applications, F81), to one verified address, never
             // redirected and never through the stored outbox. Without the setting the ID team issues every pass.
-            IDirectMail? directMail = can.TapMail
-                ? new DirectMail(new GraphMailSender(Http(), credential, settings.Workflow.TapMailSender!))
-                : null;
+            // TAP_MAIL_VIA=acs (7 Nov 2026): the same one-recipient direct mail through the app's ACS sender instead (no new
+            // permission; ACS processes the content in real time, F138). Misconfigured ACS: the send fails and the ID team hands the pass over.
+            IDirectMail? directMail = !can.TapMail ? null
+                : settings.Workflow.TapMailViaAcs
+                    ? new DirectMail(Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var tapAcs) && !string.IsNullOrWhiteSpace(Env("NOTIFY_FROM"))
+                        ? new AcsEmailSender(tapAcs, credential, Env("NOTIFY_FROM")!)
+                        : new MisconfiguredSender("TAP_MAIL_VIA=acs needs ACS_ENDPOINT and NOTIFY_FROM"))
+                    : new DirectMail(new GraphMailSender(Http(), credential, settings.Workflow.TapMailSender!));
             // v1.2 (AGENT_DATABRICKS, approval-gated: deploy_free.sh databricks): the Databricks set-up of a request's group, after
             // both approvals, with the worker's managed identity as a Databricks service principal. Needs the role assignment step on.
             var databricks = settings.Workflow.AgentDatabricks && roleWriter is not null && settings.Workflow.DatabricksAccountId is { } dbxAccount

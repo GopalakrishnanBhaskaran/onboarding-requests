@@ -129,22 +129,25 @@ def evaluate(ctx: dict, projects: list[dict], rows: list[dict], requests: list[d
     # by Exchange RBAC for Applications, F81; not visible from here), never through the notification sender. Without the
     # sender mailbox the worker mails no pass and the ID team hands it over.
     mailbox = lambda v: bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v or ""))  # noqa: E731
-    sender = mailbox(s.get("TAP_MAIL_SENDER"))
+    # 7 Nov 2026: or TAP_MAIL_VIA=acs, the app's ACS sender (NOTIFY_SENDER=AcsEmail; no Exchange scope, no Mail.Send).
+    via_acs = lambda d: str(d.get("TAP_MAIL_VIA", "")).strip().lower() == "acs" and d.get("NOTIFY_SENDER") == "AcsEmail"  # noqa: E731
+    sender = via_acs(s) or mailbox(s.get("TAP_MAIL_SENDER"))
     # Re-check 6: the website says "the agent mails the pass" by the same rule as the worker (WorkflowSettings.TapMailByAgent),
     # from its own settings; deploy_free.sh app copies them. Different means the banner and the request text are wrong.
     swa_on = lambda k: str(swa.get(k, "")).lower() == "true"  # noqa: E731
-    site_says = swa_on("AGENT_PROVISIONING") and swa_on("AGENT_TAP") and mailbox(swa.get("TAP_MAIL_SENDER"))
+    site_says = swa_on("AGENT_PROVISIONING") and swa_on("AGENT_TAP") and (via_acs(swa) or mailbox(swa.get("TAP_MAIL_SENDER")))
     worker_mails = on("AGENT_TAP") and on("AGENT_PROVISIONING") and sender
     tap_ok = worker_mails and TAP_ROLE in roles and "Mail.Send" not in roles and site_says
     out.append(Result("5b. Agent issues the one-time TAP and mails it with the initial password and MFA steps", PASS if tap_ok else WAIT,
                       f"AGENT_TAP={s.get('AGENT_TAP') or 'false'} (lifetime {s.get('AGENT_TAP_LIFETIME_MINUTES') or '-'} min); {TAP_ROLE} {'held' if TAP_ROLE in roles else 'not held'}; "
-                      f"TAP_MAIL_SENDER {'set' if sender else 'not set (v1.1: no pass is mailed; the ID team hands it over)'}; "
+                      f"{'TAP mail via ACS' if via_acs(s) else 'TAP_MAIL_SENDER ' + ('set' if sender else 'not set (v1.1: no pass is mailed; the ID team hands it over)')}; "
+                      f"live-simulation TAP {s.get('SIMULATION_LIVE_TAP') or 'false'}; "
                       f"{'Graph Mail.Send held in Entra (remove it: it overrides the Exchange scope, F81); ' if 'Mail.Send' in roles else ''}"
                       f"website says {'the agent mails the pass' if site_says else 'the ID team issues the pass'}"
                       f"{'' if site_says == worker_mails else ' (not what the worker does: run tools/deploy_free.sh app <sub>)'}",
                       "" if tap_ok else "tools/deploy_free.sh app <sub> (no approval: the website copies the worker's TAP settings)"
                       if worker_mails and TAP_ROLE in roles and "Mail.Send" not in roles
-                      else "P7 option 2: tools/deploy_free.sh tap <sub> on --sender <mailbox> (dry run → approval) and the Exchange scope it prints (F81)"))
+                      else "tools/deploy_free.sh tap <sub> on --via acs (dry run → approval), or --sender <mailbox> and the Exchange scope it prints (F81)"))
 
     # 5c. Privileged rows by the agent (the PEST Data Engineer row: its roles must be on the allow-list)
     prow = next((r for r in rows if r.get("projectId") == "PEST" and r.get("rowId") == PRIVILEGED_ROW), None)
@@ -452,6 +455,13 @@ def self_test() -> None:
     says_more = json.loads(json.dumps(ctx)); says_more["worker_settings"]["TAP_MAIL_SENDER"] = ""
     assert l5b(says_more).status == WAIT and "not what the worker does" in l5b(says_more).detail and "--sender" in l5b(says_more).next, l5b(says_more)
     assert l5b(ctx).status == PASS and "website says the agent mails the pass" in l5b(ctx).detail, l5b(ctx)
+    # 7 Nov 2026: TAP_MAIL_VIA=acs with the ACS mail sender passes without a sender mailbox; without ACS it waits.
+    acs = json.loads(json.dumps(ctx))
+    for side in ("worker_settings", "swa_settings"):
+        acs[side].update({"TAP_MAIL_SENDER": "", "TAP_MAIL_VIA": "acs", "NOTIFY_SENDER": "AcsEmail"})
+    assert l5b(acs).status == PASS and "TAP mail via ACS" in l5b(acs).detail, l5b(acs)
+    acs["worker_settings"]["NOTIFY_SENDER"] = "Outbox"
+    assert l5b(acs).status == WAIT, l5b(acs)
     # Test environment (redirect on): everything passes but the go-live check, which names the switch to production.
     # (Line 18, the agent's Databricks set-up, is off by default: WAIT until it is approved, tested below.)
     assert all(r.status == PASS for r in res if not r.feature.startswith(("15.", "18."))), [(r.feature, r.status, r.detail) for r in res if r.status != PASS]

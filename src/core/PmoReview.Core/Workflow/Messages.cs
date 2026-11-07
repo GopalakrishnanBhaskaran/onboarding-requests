@@ -208,7 +208,9 @@ public static class Messages
         {
             $"Hello {r.FirstName},",
             "",
-            $"Your account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created after the Owner and Security approved request {Short(r)}.",
+            r.Simulated
+                ? $"LIVE SIMULATION (test account): this account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created for real by the AI agent for simulation {Short(r)}, which the developer approved for every stage."
+                : $"Your account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created after the Owner and Security approved request {Short(r)}.",
             "",
             password is null
                 ? "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then set your own password (steps 3 and 4). Do it now, before the pass expires."
@@ -236,7 +238,7 @@ public static class Messages
             "",
             $"Request {Short(r)} · requested by {r.CreatedByName}.",
         };
-        return ($"Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in", string.Join("\n", lines));
+        return ($"{(r.Simulated ? "[LIVE SIMULATION] " : "")}Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in", string.Join("\n", lines));
     }
 
     public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null, bool signInDetailsMailed = false)

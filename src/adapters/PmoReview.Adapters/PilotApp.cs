@@ -73,6 +73,8 @@ public sealed record PilotSettings
         // Live simulations (7 Nov 2026): one person approves every stage, so never in production.
         if (On("SIMULATION_LIVE_WRITES") && environment == "prod")
             throw new InvalidOperationException("SIMULATION_LIVE_WRITES=true is for test environments only; switch it off before APP_ENVIRONMENT=prod.");
+        if (On("SIMULATION_LIVE_TAP") && environment == "prod")
+            throw new InvalidOperationException("SIMULATION_LIVE_TAP=true is for test environments only; switch it off before APP_ENVIRONMENT=prod.");
         var tenant = get("AGENT_TENANT_ID")?.Trim();
         if (!string.IsNullOrEmpty(tenant) && !Guid.TryParse(tenant, out _))
             throw new InvalidOperationException("AGENT_TENANT_ID must be the tenant id (a GUID), not a domain name.");
@@ -83,6 +85,12 @@ public sealed record PilotSettings
         if (string.IsNullOrEmpty(sender)) sender = "Outbox";
         if (!NotifySenders.Contains(sender, StringComparer.Ordinal))
             throw new InvalidOperationException($"NOTIFY_SENDER must be one of {string.Join(", ", NotifySenders)} (exact spelling).");
+        // The TAP mail channel (7 Nov 2026): Graph from TAP_MAIL_SENDER (default) or the app's ACS sender.
+        var tapVia = (get("TAP_MAIL_VIA") ?? "").Trim().ToLowerInvariant();
+        if (tapVia is not ("" or "graph" or "acs"))
+            throw new InvalidOperationException("TAP_MAIL_VIA must be graph or acs.");
+        if (tapVia == "acs" && sender != "AcsEmail")
+            throw new InvalidOperationException("TAP_MAIL_VIA=acs needs NOTIFY_SENDER=AcsEmail (the app's Azure Communication Services sender).");
         static string? Mailbox(string? value, string name)
         {
             var v = value?.Trim().ToLowerInvariant();
@@ -122,6 +130,8 @@ public sealed record PilotSettings
                 AgentPrivileged = On("AGENT_PRIVILEGED"),
                 // Live simulations (Gokul, 7 Nov 2026; approval-gated: deploy_free.sh simulation … live on).
                 SimulationLiveWrites = On("SIMULATION_LIVE_WRITES"),
+                SimulationLiveTap = On("SIMULATION_LIVE_TAP"),
+                TapMailViaAcs = tapVia == "acs",
                 AgentTapLifetimeMinutes = Math.Clamp(int.TryParse(get("AGENT_TAP_LIFETIME_MINUTES"), out var al) ? al : 480, 60, 43200),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),
                 RoleAssignScopes = List("ROLE_ASSIGN_SCOPES").Where(s => s.StartsWith("/subscriptions/", StringComparison.OrdinalIgnoreCase)).ToList(),
@@ -181,7 +191,8 @@ public static class WorkerStartup
     public static WorkerCapabilities Capabilities(PilotSettings s, Func<string, string?> get) => new(
         DirectoryWriter: s.Workflow.AgentProvisioning,
         RoleWriter: s.Workflow.AgentRoleAssignment,
-        // F2: the sign-in details go only through Graph sendMail from TAP_MAIL_SENDER, and only for accounts the agent creates.
+        // F2: the sign-in details go only through Graph sendMail from TAP_MAIL_SENDER (or, TAP_MAIL_VIA=acs, the ACS sender),
+        // and only for accounts the agent creates.
         TapMail: s.Workflow.TapMailByAgent,
         OffboardingWriters: s.Workflow.AgentOffboarding,
         RoleReader: get("ROLE_READER") == "Arm");

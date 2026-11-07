@@ -22,21 +22,21 @@ public class LiveSimulationTests
     private const string FinanceUser = "sample.e2001@sample.invalid";
     private const string FinanceGroup = "SAMPLE-GRP-ALPHA-FIN-VIEW";
 
-    private static PilotSettings Settings(bool live = true, string? redirect = null, bool tap = false) => new()
+    private static PilotSettings Settings(bool live = true, string? redirect = null, bool tap = false, bool liveTap = false) => new()
     {
         Workflow = new WorkflowSettings
         {
             AgentProvisioning = true, AgentRoleAssignment = true, AgentOffboarding = true,
             AgentTap = tap, TapMailSender = tap ? "sample.tap.sender@sample.invalid" : null,
             RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader], RoleAssignScopes = [Scope],
-            AgentTenantId = Tenant, SimulationLiveWrites = live, MailRedirectTo = redirect, AppEnvironment = "test",
+            AgentTenantId = Tenant, SimulationLiveWrites = live, SimulationLiveTap = liveTap, MailRedirectTo = redirect, AppEnvironment = "test",
         },
     };
 
     /// <summary>SAMPLE-ALPHA named as the agent's tenant, marked not production (or as given), and the Finance row with an allow-listed role.</summary>
-    private static async Task<TestApp> App(bool live = true, bool? production = false, string? redirect = null, bool tap = false)
+    private static async Task<TestApp> App(bool live = true, bool? production = false, string? redirect = null, bool tap = false, bool liveTap = false)
     {
-        var app = TestApp.With(settings: Settings(live, redirect, tap));
+        var app = TestApp.With(settings: Settings(live, redirect, tap, liveTap));
         var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
         await app.Stores.Projects.ReplaceAsync(p.Value with { TenantId = Tenant, IsProductionTenant = production }, p.ETag);
         var v = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, "A-FIN-VIEW"))!;
@@ -47,8 +47,8 @@ public class LiveSimulationTests
         return app;
     }
 
-    private static object Finance(bool guest = false, string? environment = null) =>
-        TestApp.Intake(enterpriseId: "sample.e2001@sample-corp.invalid", resource: "SAMPLE Finance Reports", accessLevel: "Viewer", guest: guest, environment: environment);
+    private static object Finance(bool guest = false, string? environment = null, string enterpriseId = "sample.e2001@sample-corp.invalid") =>
+        TestApp.Intake(enterpriseId: enterpriseId, resource: "SAMPLE Finance Reports", accessLevel: "Viewer", guest: guest, environment: environment);
 
     private static async Task<string> Simulate(TestApp app, object intake)
     {
@@ -167,7 +167,7 @@ public class LiveSimulationTests
     }
 
     [Fact]
-    public async Task The_agent_never_issues_or_mails_a_tap_for_a_live_simulation()
+    public async Task Without_the_live_simulation_tap_switch_the_agent_never_issues_or_mails_a_tap_for_a_live_simulation()
     {
         var app = await App(tap: true, redirect: "sample.tests@sample.invalid"); // finding 1: the sign-in mail is never redirected
         var id = await SimulatedAndApproved(app, Finance());
@@ -178,6 +178,48 @@ public class LiveSimulationTests
         var task = (await app.Request(id)).Flow!.IdTeamTask!;
         Assert.Null(task.Agent!.SignInDetailsSentAt);
         Assert.Contains("ONE-TIME Temporary Access Pass", task.Instructions); // the developer, as the ID team, issues it
+    }
+
+    [Fact]
+    public async Task With_the_live_simulation_tap_switch_the_agent_mails_a_one_time_tap_to_the_enterprise_id_never_redirected()
+    {
+        // Gokul, 7 Nov 2026: "temp pass also not generated. create that also and send to the email that is marked as enterprise id".
+        var app = await App(tap: true, liveTap: true, redirect: "sample.tests@sample.invalid");
+        var id = await SimulatedAndApproved(app, Finance());
+        await app.RunWorker();
+        Assert.Contains($"create-user {FinanceUser}", app.Writer.Calls);
+        Assert.Single(app.Writer.Calls, c => c.StartsWith("create-tap", StringComparison.Ordinal));
+        var mail = Assert.Single(app.Mail.Sent);
+        Assert.Equal(["sample.e2001@sample-corp.invalid"], mail.To); // the Enterprise ID, not the test mailbox
+        Assert.StartsWith("[LIVE SIMULATION] ", mail.Subject);
+        Assert.Contains("LIVE SIMULATION (test account)", mail.Body);
+        var task = (await app.Request(id)).Flow!.IdTeamTask!;
+        Assert.NotNull(task.Agent!.SignInDetailsSentAt);
+        Assert.Equal(TapRecipient.FromLiveSimulationSource, task.Agent.SignInDetailsFrom);
+        Assert.Equal("s***@sample-corp.invalid", task.Agent.SignInDetailsSentTo);
+    }
+
+    [Fact]
+    public async Task A_live_simulation_may_mail_the_tap_to_a_personal_mailbox_alias_a_real_request_may_not()
+    {
+        var app = await App(tap: true, liveTap: true);
+        var id = await SimulatedAndApproved(app, Finance(enterpriseId: "sample.tester+e2001@gmail.com"));
+        await app.RunWorker();
+        Assert.Equal(["sample.tester+e2001@gmail.com"], Assert.Single(app.Mail.Sent).To);
+
+        var r = await app.Request(id);
+        Assert.Contains("personal mail domain", TapRecipient.FromApprovedRequest(r with { Simulated = false, LiveWrites = false }, null, r.DomainId!).Reason);
+        Assert.Contains("personal mail domain", TapRecipient.FromApprovedRequest(r with { LiveWrites = false }, null, r.DomainId!).Reason); // a dry run
+    }
+
+    [Fact]
+    public async Task A_dry_run_simulation_never_gets_a_tap_even_with_the_live_simulation_tap_switch()
+    {
+        var app = await App(live: false, tap: true, liveTap: true);
+        await SimulatedAndApproved(app, Finance());
+        await app.RunWorker();
+        Assert.Empty(app.Writer.Calls);
+        Assert.Empty(app.Mail.Sent);
     }
 
     [Fact]
@@ -275,6 +317,28 @@ public class LiveSimulationTests
         Assert.Contains("SIMULATION_LIVE_WRITES", e.Message);
         env["APP_ENVIRONMENT"] = "test";
         Assert.True(PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k)).Workflow.SimulationLiveWrites);
+    }
+
+    [Fact]
+    public void The_live_simulation_tap_and_the_tap_mail_channel_are_checked_at_start_up()
+    {
+        var env = new Dictionary<string, string?> { ["APP_ENVIRONMENT"] = "prod", ["SIMULATION_LIVE_TAP"] = "true" };
+        Assert.Contains("SIMULATION_LIVE_TAP", Assert.Throws<InvalidOperationException>(() => PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k))).Message);
+        env["APP_ENVIRONMENT"] = "test";
+        Assert.True(PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k)).Workflow.SimulationLiveTap);
+
+        // TAP_MAIL_VIA=acs: the app's ACS sender carries the TAP mail, so no TAP_MAIL_SENDER mailbox is needed.
+        env["TAP_MAIL_VIA"] = "acs";
+        Assert.Contains("NOTIFY_SENDER=AcsEmail", Assert.Throws<InvalidOperationException>(() => PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k))).Message);
+        env["NOTIFY_SENDER"] = "AcsEmail"; env["AGENT_PROVISIONING"] = "true"; env["AGENT_TAP"] = "true";
+        var s = PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k));
+        Assert.True(s.Workflow.TapMailViaAcs);
+        Assert.True(s.Workflow.TapMailByAgent);
+        Assert.True(WorkerStartup.Capabilities(s, _ => null).TapMail);
+        env["TAP_MAIL_VIA"] = "smtp";
+        Assert.Contains("TAP_MAIL_VIA", Assert.Throws<InvalidOperationException>(() => PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k))).Message);
+        env["TAP_MAIL_VIA"] = null;
+        Assert.False(PilotSettings.FromEnvironment(k => env.GetValueOrDefault(k)).Workflow.TapMailByAgent); // Graph without a sender mailbox
     }
 
     [Fact]

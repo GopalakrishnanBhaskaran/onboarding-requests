@@ -328,6 +328,8 @@ Checked and OK (reviewer):
 
 Tests after the fixes: .NET **640** (639 pass, 1 opt-in Cosmos skip; 15 live-simulation tests, 14 address tests), build 0 warnings; SPA 58/58, tsc, web build; Playwright 15/15 (fresh local emulator). Mutants: removing the TAP guard, the existing-account guard or the write-time re-check each fails a test.
 
+**Owner decision after re-check 7 (Gokul, 7 Nov 2026):** finding 35 is reopened on purpose behind its own approval: "temp pass also not generated. create that also and send to the email that is marked as enterprise id". With `SIMULATION_LIVE_TAP` (off until `simulation <sub> tap on --approved-by`), a live simulation's new account gets the agent TAP at the simulation's Enterprise ID. What stays: never a dry run, a guest, the Developer's own sign-in address, an existing account or a Prod environment; one recipient, never redirected, no copy kept; re-checked before every write. Accepted risk (printed in the dry run): one person approves and chooses the mailbox, so a Developer can get a working sign-in for a test account with the allow-listed roles. Tests `With_the_live_simulation_tap_switch_…`, `Without_the_live_simulation_tap_switch_…` (mutant killed). The TAP mail may also go through ACS (`TAP_MAIL_VIA=acs`, F138). Not independently re-reviewed yet.
+
 ### Summary of OPEN findings after re-check 7
 | Severity | Count | Findings |
 |---|---|---|

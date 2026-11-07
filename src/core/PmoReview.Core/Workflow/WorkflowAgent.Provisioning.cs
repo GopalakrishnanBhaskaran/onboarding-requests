@@ -33,8 +33,10 @@ public sealed partial class WorkflowAgent
     /// The agent mails the pass itself: switched on, the TAP mail sender configured (Graph, <c>TAP_MAIL_SENDER</c>) and a
     /// member account. Where it goes is decided only by <see cref="TapRecipient"/>: the approved Enterprise ID, never another body field.
     /// </summary>
-    /// Never for a simulation (review 7 Nov 2026, finding 1): its recipient was approved by the developer alone.
-    private bool TapByAgent(AccessRequest r) => settings.AgentTap && directMail?.Delivers == true && !r.Guest && !r.Simulated;
+    /// A simulation (review 7 Nov 2026, finding 1: its recipient was approved by the developer alone) only when it is live and
+    /// Gokul switched the live-simulation TAP on (<c>SIMULATION_LIVE_TAP</c>, 7 Nov 2026, approval-gated); never a dry run.
+    private bool TapByAgent(AccessRequest r) => settings.AgentTap && directMail?.Delivers == true && !r.Guest
+        && (!r.Simulated || (r.LiveWrites && settings.SimulationLiveTap));
 
     /// <summary>Nothing of this task was written to Entra yet (a live simulation stopped here can continue as a dry run).</summary>
     private static bool NothingWritten(AgentWork w) => !(w.UserCreated || w.GroupCreated || w.MemberAdded || w.RoleAssigned || w.TapIssuedAt is not null);
