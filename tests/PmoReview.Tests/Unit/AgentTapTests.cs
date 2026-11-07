@@ -118,6 +118,16 @@ public class AgentTapTests
         Assert.Contains("change your password right after you sign in", mail.Subject);
         Assert.True(mail.Body.IndexOf("Change your password now", StringComparison.Ordinal) < mail.Body.IndexOf("Sign out", StringComparison.Ordinal));
 
+        // 7 Nov 2026: the same mail as readable HTML, every value escaped, the steps as a numbered list with links; never stored.
+        var html = mail.Html!;
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(pass), html);
+        Assert.Contains(System.Net.WebUtility.HtmlEncode(password), html);
+        Assert.Contains("<ol", html);
+        Assert.Contains("<a href=\"https://aka.ms/mysecurityinfo\"", html);
+        Assert.Contains("Set up your account", html);
+        Assert.Contains("valid for 8 hours", mail.Body);
+        Assert.DoesNotContain(pass, System.Text.Json.JsonSerializer.Serialize(mail with { Body = "", Subject = "" }, PmoReview.Core.Common.AppJson.Options)); // the HTML part is never stored
+
         // F2: no copy of the mail is kept; the audit event holds the user id, the masked recipient, the time, the expiry
         // and the correlation id. Nothing the app stored holds either value.
         Assert.DoesNotContain(await app.Notifications(id), n => n.Kind == NotificationKind.SignInDetails);
@@ -279,7 +289,7 @@ public class AgentTapTests
         await app.RunWorker();
         var mail = Assert.Single(app.Mail.Sent);
         Assert.DoesNotContain(app.Writer.Passwords[0], mail.Body);
-        Assert.Contains("Temporary password (not included): you set your own in step 4", mail.Body);
+        Assert.Contains("Temporary password: not included: you set your own in step 4", mail.Body);
         Assert.Contains("4. Set your password now: go to https://aka.ms/sspr", mail.Body);
         Assert.Contains($"Temporary Access Pass: {app.Writer.Passes[0]}", mail.Body);
         Assert.Single(app.Writer.Users); // the account was created once

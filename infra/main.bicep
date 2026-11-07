@@ -97,6 +97,8 @@ param agentTap bool = false
 
 @description('Lifetime in minutes of an agent-issued TAP.')
 param agentTapLifetimeMinutes int = 480
+@description('Longest pass the ID team may record (TAP_MAX_LIFETIME_MINUTES). Carried from the live worker by params.')
+param tapMaxLifetimeMinutes int = 60
 
 @description('Agent privileged rows: the agent also provisions rows flagged privileged (never privileged administrator roles). Approval-gated: deploy_free.sh privileged.')
 param agentPrivileged bool = false
@@ -130,6 +132,8 @@ param tapMailSender string = ''
   'acs'
 ])
 param tapMailVia string = 'graph'
+@description('F3 ProdApprover stage (PROD_APPROVAL_REQUIRED). Carried from the live worker by params; true by default.')
+param prodApprovalRequired bool = true
 
 @description('Mail sender limits after a custom mail domain (empty = the Azure-managed domain defaults, F70).')
 param mailMaxPerMinute string = ''
@@ -190,6 +194,7 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     roleAssignScopes: roleAssignScopes
     agentTap: agentTap
     agentTapLifetimeMinutes: agentTapLifetimeMinutes
+    tapMaxLifetimeMinutes: tapMaxLifetimeMinutes
     agentPrivileged: agentPrivileged
     agentOffboarding: agentOffboarding
     offboardDeleteUser: offboardDeleteUser
@@ -200,6 +205,7 @@ module worker 'modules/worker.bicep' = if (enableHandoff && deployWorker) {
     databricksGrantCatalogs: databricksGrantCatalogs
     tapMailSender: tapMailSender
     tapMailVia: tapMailVia
+    prodApprovalRequired: prodApprovalRequired
     mailMaxPerMinute: mailMaxPerMinute
     mailMaxPerHour: mailMaxPerHour
   }

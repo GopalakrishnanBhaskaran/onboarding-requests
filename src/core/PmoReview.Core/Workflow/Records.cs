@@ -51,6 +51,12 @@ public sealed record Notification : IDocument
     public required IReadOnlyList<string> To { get; init; }
     public required string Subject { get; init; }
     public required string Body { get; init; }
+    /// <summary>
+    /// Optional HTML part (7 Nov 2026: the sign-in details mail). Never stored (it can hold the pass of a mail sent directly):
+    /// a stored notification is sent with its plain body turned into simple HTML.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? Html { get; init; }
     public required DateTimeOffset CreatedAt { get; init; }
     public required NotificationStatus Status { get; init; }
     public int Attempts { get; init; }

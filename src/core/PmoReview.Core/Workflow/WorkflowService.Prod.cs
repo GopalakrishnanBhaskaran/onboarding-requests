@@ -148,7 +148,7 @@ public sealed partial class WorkflowService
     private async Task RequireProdApprovedAsync(AccessRequest r, CancellationToken ct)
     {
         var scope = r.Flow?.Scope;
-        if (scope is null) return;
+        if (scope is null || !settings.ProdApprovalRequired) return;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var e = (await stores.Escalations.GetAsync(r.ProjectId, ProdGuard.EscalationId(r, scope), ct))?.Value;
         if (!ProdGuard.MayFulfil(r, scope, row, e, out var reason))

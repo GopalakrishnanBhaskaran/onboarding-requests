@@ -63,6 +63,21 @@ public sealed record WorkflowSettings
     /// </summary>
     public bool SimulationLiveTap { get; init; }
     /// <summary>
+    /// F3 ProdApprover stage (<c>PROD_APPROVAL_REQUIRED</c>, default true). Gokul, 7 Nov 2026 ("remove the prod approver", all
+    /// requests): false = Prod above Read goes from Security straight to the ID team, like any request; the trail says so.
+    /// Switched off only with <c>deploy_free.sh prod-approval … off --approved-by</c>; on again any time.
+    /// </summary>
+    public bool ProdApprovalRequired { get; init; } = true;
+    /// <summary>
+    /// Databricks access through the Entra group (<c>DATABRICKS_ACCESS_VIA_GROUP</c>, default true; Gokul, 7 Nov 2026: "only need
+    /// to add in centralized group. that will take care of adding the people directly via entra connection"). A Databricks
+    /// row (role scope <c>dbx:…</c>, no Azure role) is done once the user is a member of its group: automatic identity
+    /// management brings the members into Databricks, and the group's workspace and Unity Catalog access is set up once per
+    /// group (<c>aim_setup.sh</c>). So no role assignment step waits for a person; the final check is the membership.
+    /// False: the role assignment step as before (the team, or <c>AGENT_DATABRICKS</c>).
+    /// </summary>
+    public bool DatabricksAccessViaGroup { get; init; } = true;
+    /// <summary>
     /// How long a refused agent write is retried before the team does it. A managed identity's token is cached for about
     /// 24 hours, so a newly granted permission can take that long to reach the worker (VERIFIED_FACTS F61).
     /// </summary>

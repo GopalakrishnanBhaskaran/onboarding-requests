@@ -282,9 +282,11 @@ public sealed partial class WorkflowService(
         }
         else
         {
-            // F3: Prod above Read waits for a ProdApprover; nothing is granted before that decision.
+            // F3: Prod above Read waits for a ProdApprover; nothing is granted before that decision. Gokul, 7 Nov 2026:
+            // the stage can be switched off for every request (PROD_APPROVAL_REQUIRED=false); the trail then says so.
             var row = sheet.FirstOrDefault(x => x.RowId == flow.Scope.MappingRowId);
-            if (ProdGuard.AboveReadInProd(r, flow.Scope, row) is { } prodReason)
+            var aboveRead = ProdGuard.AboveReadInProd(r, flow.Scope, row);
+            if (settings.ProdApprovalRequired && aboveRead is { } prodReason)
             {
                 var escalation = agent.NewProdEscalation(r, flow.Scope, prodReason, cid);
                 next = next.To(RequestStatus.AwaitingProdApproval, WaitingOn.ProdApprover, now, caller.UserId, "security-approved",
@@ -295,7 +297,9 @@ public sealed partial class WorkflowService(
             }
             else
             {
-                var (fulfil, fx) = agent.ToIdTeam(r, next, project, caller.UserId, "security-approved", "Security approved risk and access level.");
+                var (fulfil, fx) = agent.ToIdTeam(r, next, project, caller.UserId, "security-approved", aboveRead is null
+                    ? "Security approved risk and access level."
+                    : $"Security approved risk and access level. Production above Read ({aboveRead}): no ProdApprover stage, it is switched off (PROD_APPROVAL_REQUIRED=false).");
                 next = fulfil;
                 effects.AddRange(fx);
                 record = x => x with { SecurityApprovedBy = caller.DisplayName, SecurityApprovedAt = now, State = ResponseState.Approved };

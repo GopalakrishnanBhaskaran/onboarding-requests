@@ -33,7 +33,7 @@ public sealed class AcsEmailSender(EmailClient client, string senderAddress) : I
             foreach (var batch in n.To.Chunk(MailLimits.RecipientsPerMail))
             {
                 var message = new EmailMessage(senderAddress, new EmailRecipients(batch.Select(a => new EmailAddress(a)).ToList()),
-                    new EmailContent(n.Subject) { PlainText = n.Body, Html = Html(n.Body) })
+                    new EmailContent(n.Subject) { PlainText = n.Body, Html = n.Html ?? Html(n.Body) })
                 {
                     UserEngagementTrackingDisabled = true,
                 };

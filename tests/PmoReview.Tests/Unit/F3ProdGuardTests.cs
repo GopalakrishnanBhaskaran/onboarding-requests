@@ -22,11 +22,11 @@ public class F3ProdGuardTests
     private const string Petra = "sample-user-petra"; // ProdApprover (SAMPLE-PEST)
     private const string Reason = "SAMPLE: provides application support for the PEST platform and fixes failed production loads (re-drops, file corrections).";
 
-    private static PilotSettings On(bool provisioning = true) => new()
+    private static PilotSettings On(bool provisioning = true, bool prodApproval = true) => new()
     {
         Workflow = new WorkflowSettings
         {
-            AgentProvisioning = provisioning, AgentRoleAssignment = provisioning,
+            AgentProvisioning = provisioning, AgentRoleAssignment = provisioning, ProdApprovalRequired = prodApproval,
             RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader, "ba92f5b4-2d11-453d-a403-e96b0029c9fe", "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"],
             RoleAssignScopes = [TestApp.SampleAccessScope],
         },
@@ -35,9 +35,9 @@ public class F3ProdGuardTests
     private static AzureRoleGrant Grant(string name, string id) => new() { RoleName = name, RoleDefinitionId = id, Scope = TestApp.SampleAccessScope, ResourceName = "rg-pmo-sample-access" };
 
     /// <summary>A Prod writer row (Storage Blob Data Contributor) and the Prod reader row made usable (read-only roles).</summary>
-    private static async Task<TestApp> App(bool provisioning = true, string writerLevel = "Support Writer")
+    private static async Task<TestApp> App(bool provisioning = true, string writerLevel = "Support Writer", bool prodApproval = true)
     {
-        var app = TestApp.With(settings: On(provisioning));
+        var app = TestApp.With(settings: On(provisioning, prodApproval));
         var writer = app.Directory.AddGroup(WriterGroup);
         var reader = app.Directory.AddGroup(ReaderGroup);
         await app.Stores.MappingSheet.CreateAsync(new MappingRow
@@ -150,6 +150,29 @@ public class F3ProdGuardTests
         Assert.Contains("ProdApprover", alice.GetProperty("approvalHint").GetString());
         var devOnReal = (await app.View(real, dev, TestApp.Pest)).Json; // a developer never decides a real Prod stage
         Assert.DoesNotContain("DecideProd", devOnReal.GetProperty("actions").EnumerateArray().Select(a => a.GetString()));
+    }
+
+    [Fact]
+    public async Task F3_with_the_prod_approval_stage_switched_off_prod_write_goes_from_security_to_the_agent()
+    {
+        // Gokul, 7 Nov 2026: "remove the prod approver" (all requests), behind PROD_APPROVAL_REQUIRED=false.
+        var app = await App(prodApproval: false);
+        var id = await BothApproved(app);
+        var r = await app.Request(id, TestApp.Pest);
+        Assert.NotEqual(RequestStatus.AwaitingProdApproval, r.Flow!.Status);
+        Assert.Contains(r.Flow.Events, e => e.Step == "security-approved" && e.Note!.Contains("PROD_APPROVAL_REQUIRED=false", StringComparison.Ordinal));
+        Assert.DoesNotContain(await app.Stores.Escalations.ListAsync(TestApp.Pest), e => e.Value.RequestId == id);
+        await app.RunWorker();
+        Assert.Contains(app.Writer.Calls, c => c.StartsWith("add-member", StringComparison.Ordinal) || c.StartsWith("create-user", StringComparison.Ordinal));
+        Assert.NotEqual(RequestStatus.AwaitingProdApproval, (await app.Request(id, TestApp.Pest)).Flow!.Status); // the grant-point guard does not send it back
+    }
+
+    [Fact]
+    public void F3_the_prod_approval_stage_stays_unless_switched_off_explicitly()
+    {
+        Assert.True(PilotSettings.FromEnvironment(_ => null).Workflow.ProdApprovalRequired);
+        Assert.True(PilotSettings.FromEnvironment(k => k == "PROD_APPROVAL_REQUIRED" ? "no" : null).Workflow.ProdApprovalRequired);
+        Assert.False(PilotSettings.FromEnvironment(k => k == "PROD_APPROVAL_REQUIRED" ? "false" : null).Workflow.ProdApprovalRequired);
     }
 
     [Fact]

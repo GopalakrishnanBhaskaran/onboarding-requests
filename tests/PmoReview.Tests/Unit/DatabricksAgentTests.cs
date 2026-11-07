@@ -21,11 +21,12 @@ public class DatabricksAgentTests
     private const string Scope = "dbx:ws-sample/sample_e2e.curated";
     private static readonly DatabricksWorkspace Ws = DatabricksWorkspace.Parse("ws-sample=https://adb-1234567890123456.7.azuredatabricks.net")!;
 
-    private static PilotSettings Settings(bool databricks = true, string catalogs = "sample_e2e") => new()
+    // These tests cover the per-request Databricks set-up (DATABRICKS_ACCESS_VIA_GROUP=false); the group-only path is tested below.
+    private static PilotSettings Settings(bool databricks = true, string catalogs = "sample_e2e", bool viaGroup = false) => new()
     {
         Workflow = new WorkflowSettings
         {
-            AgentProvisioning = true, AgentRoleAssignment = true, AgentDatabricks = databricks,
+            AgentProvisioning = true, AgentRoleAssignment = true, AgentDatabricks = databricks, DatabricksAccessViaGroup = viaGroup,
             RoleAssignAllowedRoleIds = [FakeRoleWriter.Reader], RoleAssignScopes = [TestApp.SampleAccessScope],
             DatabricksAccountId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", DatabricksWorkspaces = [Ws], DatabricksGrantCatalogs = [catalogs],
         },
@@ -63,6 +64,32 @@ public class DatabricksAgentTests
             notes = "SAMPLE: TAP given to the user directly.",
         })).Status);
         return id;
+    }
+
+    [Theory]
+    [InlineData(true)]   // the agent's Databricks set-up on: still not used, the group is enough
+    [InlineData(false)]  // off: no role team waits either
+    public async Task Via_the_entra_group_a_databricks_row_is_complete_once_the_user_is_a_member(bool agentDatabricks)
+    {
+        // Gokul, 7 Nov 2026: "only need to add in centralized group. that will take care of adding the people directly via entra connection".
+        var app = TestApp.With(settings: Settings(databricks: agentDatabricks, viaGroup: true));
+        await DatabricksRow(app);
+        var id = await ToRoleStep(app);
+        await app.RunWorker();
+        var r = await app.Request(id);
+        Assert.Equal(RequestStatus.Completed, r.Flow!.Status);
+        Assert.Empty(app.Databricks.Calls); // nothing written in Databricks per request
+        Assert.Equal(TeamTaskState.Verified, r.Flow.RoleTeamTask!.State);
+        Assert.Contains(r.Flow.Events, e => e.Step == "role-team-task" && e.Note!.Contains("automatic identity management", StringComparison.Ordinal));
+        Assert.DoesNotContain(await app.Notifications(id), n => n.Kind == NotificationKind.TeamTask && n.IdempotencyKey.Contains("role-team", StringComparison.Ordinal));
+        Assert.Contains(r.Flow.FinalChecks, c => c.Status == CheckStatus.Pass && c.Detail.Contains("is a member of", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Databricks_access_via_the_group_is_the_default_and_can_be_switched_back()
+    {
+        Assert.True(PilotSettings.FromEnvironment(_ => null).Workflow.DatabricksAccessViaGroup);
+        Assert.False(PilotSettings.FromEnvironment(k => k == "DATABRICKS_ACCESS_VIA_GROUP" ? "false" : null).Workflow.DatabricksAccessViaGroup);
     }
 
     [Fact]

@@ -119,7 +119,7 @@ public sealed record PilotSettings
                 IdTeamSla = Hours("ID_TEAM_SLA_HOURS", 24),
                 RoleTeamSla = Hours("ROLE_TEAM_SLA_HOURS", 24),
                 VerifySla = Hours("VERIFY_SLA_HOURS", 2),
-                TapMaxLifetimeMinutes = Math.Clamp(int.TryParse(get("TAP_MAX_LIFETIME_MINUTES"), out var t) ? t : 60, 10, 480),
+                TapMaxLifetimeMinutes = Math.Clamp(int.TryParse(get("TAP_MAX_LIFETIME_MINUTES"), out var t) ? t : 60, 10, 43200), // Entra allows up to 30 days (F139)
                 AllowUnverifiedEntra = unverified,
                 AppUrl = Uri.TryCreate(get("APP_URL"), UriKind.Absolute, out var app) && app.Scheme == Uri.UriSchemeHttps ? app.AbsoluteUri : null,
                 // v2.1 agent provisioning: needs the approved write permissions (deploy_free.sh provisioning).
@@ -131,6 +131,9 @@ public sealed record PilotSettings
                 // Live simulations (Gokul, 7 Nov 2026; approval-gated: deploy_free.sh simulation … live on).
                 SimulationLiveWrites = On("SIMULATION_LIVE_WRITES"),
                 SimulationLiveTap = On("SIMULATION_LIVE_TAP"),
+                // Unset or anything but "false": the ProdApprover stage stays (the safe default).
+                DatabricksAccessViaGroup = !string.Equals(get("DATABRICKS_ACCESS_VIA_GROUP")?.Trim(), "false", StringComparison.OrdinalIgnoreCase),
+                ProdApprovalRequired = !string.Equals(get("PROD_APPROVAL_REQUIRED")?.Trim(), "false", StringComparison.OrdinalIgnoreCase),
                 TapMailViaAcs = tapVia == "acs",
                 AgentTapLifetimeMinutes = Math.Clamp(int.TryParse(get("AGENT_TAP_LIFETIME_MINUTES"), out var al) ? al : 480, 60, 43200),
                 RoleAssignAllowedRoleIds = List("ROLE_ASSIGN_ALLOWED_ROLES").Where(r => Guid.TryParse(r, out _)).Select(r => r.ToLowerInvariant()).ToList(),

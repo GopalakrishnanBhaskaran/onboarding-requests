@@ -583,7 +583,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
 
           {isNew && developer && (
             <Field hint={liveSimulation
-              ? `LIVE: you act for the Owner, Security and the teams, and the AI agent creates the user, group and membership and assigns the roles in Entra and Azure for real${chosenEnvironments.some(isProduction) ? ' (not for the Prod environment: that one stays a dry run)' : ''}. Use test accounts only; remove what it created with Offboard user.`
+              ? `LIVE: you act for the Owner, Security and the teams, and the AI agent creates the user, group and membership and assigns the roles in Entra and Azure for real${chosenEnvironments.some(isProduction) ? ' (Prod included: this tenant is a test tenant)' : ''}. Use test accounts only; remove what it created with Offboard user.`
               : `${requester ? 'Developer: a simulation' : 'You have the Developer role only, so your requests are simulations:'} every stage runs with you acting for the Owner, Security and the teams. Nothing is created in Entra or Azure and its mails stay in the app.${project.liveSimulationRefused && project.liveSimulationRefused.indexOf('switched off') < 0 ? ` Not live: ${project.liveSimulationRefused}.` : ''}`}>
               <Switch label={liveSimulation ? 'Simulation (LIVE: real Entra and Azure writes)' : 'Simulation (developer dry run)'} checked={simulate} disabled={!requester} onChange={(_, d) => setSimulate(d.checked)} />
             </Field>

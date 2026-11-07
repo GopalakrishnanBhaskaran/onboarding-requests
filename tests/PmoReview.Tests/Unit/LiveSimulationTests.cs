@@ -137,7 +137,6 @@ public class LiveSimulationTests
         { "tenant not marked (counts as production)", true, null, false, null },
         { "production tenant", true, true, false, null },
         { "guest", true, false, true, null },
-        { "Prod environment", true, false, false, "Prod" },
     };
 
     [Theory]
@@ -193,6 +192,7 @@ public class LiveSimulationTests
         Assert.Equal(["sample.e2001@sample-corp.invalid"], mail.To); // the Enterprise ID, not the test mailbox
         Assert.StartsWith("[LIVE SIMULATION] ", mail.Subject);
         Assert.Contains("LIVE SIMULATION (test account)", mail.Body);
+        Assert.Contains("LIVE SIMULATION (test account)", mail.Html);
         var task = (await app.Request(id)).Flow!.IdTeamTask!;
         Assert.NotNull(task.Agent!.SignInDetailsSentAt);
         Assert.Equal(TapRecipient.FromLiveSimulationSource, task.Agent.SignInDetailsFrom);
@@ -210,6 +210,22 @@ public class LiveSimulationTests
         var r = await app.Request(id);
         Assert.Contains("personal mail domain", TapRecipient.FromApprovedRequest(r with { Simulated = false, LiveWrites = false }, null, r.DomainId!).Reason);
         Assert.Contains("personal mail domain", TapRecipient.FromApprovedRequest(r with { LiveWrites = false }, null, r.DomainId!).Reason); // a dry run
+    }
+
+    [Fact]
+    public async Task A_dry_run_task_left_waiting_on_the_agent_goes_to_the_developer_at_the_next_run()
+    {
+        // Live report 7 Nov 2026: "Waiting on AI agent" for 1 h 15 m on a dry-run simulation's open ID team task.
+        var app = await App(live: false);
+        var id = await SimulatedAndApproved(app, Finance());
+        var stored = (await app.Stores.Requests.GetAsync(TestApp.Alpha, id))!;
+        Assert.Equal(RequestStatus.WithIdTeam, stored.Value.Flow!.Status);
+        await app.Stores.Requests.ReplaceAsync(stored.Value with { Flow = stored.Value.Flow with { WaitingOn = WaitingOn.Agent } }, stored.ETag);
+        await app.RunWorker();
+        var r = await app.Request(id);
+        Assert.Equal((RequestStatus.WithIdTeam, WaitingOn.IdTeam), (r.Flow!.Status, r.Flow.WaitingOn));
+        Assert.Contains(r.Flow.Events, e => e.Step == "agent-manual" && e.Note!.Contains("dry-run simulation", StringComparison.Ordinal));
+        Assert.Empty(app.Writer.Calls);
     }
 
     [Fact]
@@ -254,16 +270,18 @@ public class LiveSimulationTests
         Assert.Contains(r.Flow!.Events, e => e.Step == "simulation" && e.Note!.Contains("your own account"));
     }
 
-    [Fact]
-    public async Task A_row_for_every_environment_counts_as_prod_and_is_never_written_by_a_live_simulation()
+    [Theory]
+    [InlineData("Prod", "Prod")]   // a Prod environment of a test tenant (Gokul, 7 Nov 2026: "Yes, Prod too")
+    [InlineData("Dev", null)]      // a row for every environment
+    public async Task A_live_simulation_in_a_test_tenant_is_written_for_real_in_prod_too(string environment, string? rowEnvironment)
     {
         var app = await App();
         var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
         await app.Stores.Projects.ReplaceAsync(p.Value with { Environments = ["Dev", "Prod"] }, p.ETag);
         var v = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, "A-FIN-VIEW"))!;
-        await app.Stores.MappingSheet.ReplaceAsync(v.Value with { Environment = null, Version = v.Value.Version + 1 }, v.ETag);
-        var id = await Simulate(app, Finance(environment: "Dev"));
-        Assert.True((await app.Request(id)).LiveWrites); // Dev at submit (the row is not known yet)
+        await app.Stores.MappingSheet.ReplaceAsync(v.Value with { Environment = rowEnvironment, Version = v.Value.Version + 1 }, v.ETag);
+        var id = await Simulate(app, Finance(environment: environment));
+        Assert.True((await app.Request(id)).LiveWrites);
         await app.RunWorker();
         if (await app.Status(id) == RequestStatus.AwaitingOwner)
         {
@@ -271,8 +289,7 @@ public class LiveSimulationTests
             Assert.Equal(200, (await app.Approve(id, Dev)).Status);
             await app.RunWorker();
         }
-        Assert.Empty(app.Writer.Calls); // finding 3: ProdGuard.Effective makes it Prod
-        Assert.Empty(app.RoleWriter.Calls);
+        Assert.Contains($"create-user {FinanceUser}", app.Writer.Calls);
     }
 
     [Fact]

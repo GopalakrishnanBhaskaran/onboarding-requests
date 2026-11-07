@@ -1,6 +1,50 @@
 # Next session — handoff (updated 7 Nov 2026: live simulations, access level per resource, All environments; code only, not deployed yet)
 
-## 7 Nov 2026 (latest) — branch `claude/determined-heisenberg-yzubb2`
+## 7 Nov 2026 (evening, latest): no holds — ProdApprover off, Prod live simulations, 48-hour TAP, readable mail, Databricks via the group
+Same branch. Details: the "7 Nov (evening)" row of `DEPLOYMENT_LOG.md`. Test data was cleaned up live (0 failures).
+
+**E1: deploy worker, then app** (code only). Expect the new commit, `Worker deployed …`, `Deployed commit …`.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1 && mkdir -p .local
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-07"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+**E2: dry runs** (change nothing): ProdApprover stage off; agent TAP through ACS with 48 hours (shows the tenant policy maximum, normally 480, and that the apply raises it to 2880); live simulations; live-simulation TAP.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1 && mkdir -p .local
+tools/deploy_free.sh prod-approval $SUB off
+tools/deploy_free.sh tap $SUB on --via acs --lifetime 2880
+tools/deploy_free.sh simulation $SUB live on
+tools/deploy_free.sh simulation $SUB tap on
+```
+**E3: only after "approved"** (order matters: the simulation TAP needs the other two on; `app` copies the settings to the website):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1 && mkdir -p .local
+tools/deploy_free.sh simulation $SUB live on --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh tap $SUB on --via acs --lifetime 2880 --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh simulation $SUB tap on --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh prod-approval $SUB off --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-07"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+Raising the TAP policy needs your account to be Authentication Policy Administrator (or Global Administrator); if refused, nothing else in that line changes.
+
+**Test:** delete the dry-run simulation 703928c5 (*Delete simulation*), then a **new** simulation with the switch *Simulation (LIVE …)* on, Enterprise ID e.g. `gopalakrishnan.baskaran+livetest02@gmail.com`, any environment (Prod too). Approve as Owner and Security. Within ~5 minutes: account + membership by the agent, the sign-in mail at that address (48 hours, check spam), Databricks rows complete without a role step, then **Completed**. The trail must say **LIVE SIMULATION** at submit; if it says *SIMULATION … (not live: …)*, the reason follows.
+
+## 7 Nov 2026 — branch `claude/determined-heisenberg-yzubb2`
 **Start the next session with:**
 > Continue the PMO Access Portal on branch `claude/determined-heisenberg-yzubb2`. Read `CLAUDE.md`, this section of `docs/NEXT_SESSION.md` and the last 4 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Deploy from scratch* below, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
 

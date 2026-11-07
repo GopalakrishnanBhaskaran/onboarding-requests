@@ -26,7 +26,7 @@ public sealed class GraphMailSender(HttpClient http, TokenCredential credential,
             message = new
             {
                 subject = n.Subject,
-                body = new { contentType = "Text", content = n.Body },
+                body = n.Html is { } html ? new { contentType = "HTML", content = html } : new { contentType = "Text", content = n.Body },
                 toRecipients = n.To.Select(a => new { emailAddress = new { address = a } }).ToArray(),
             },
             saveToSentItems = false,

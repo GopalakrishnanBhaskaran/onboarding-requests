@@ -541,6 +541,10 @@ public sealed partial class WorkflowAgent(
             return writer is null || directory is null ? null : await ProvisionAsync(r, task, cid, ct); // only the worker holds the writer
         if (SwitchedOffWhileWaiting(task, flow, settings.AgentProvisioning))
             return ToIdTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = ProvisioningSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
+        // 7 Nov 2026 (live: "Waiting on AI agent" for over an hour on a dry-run simulation): the agent never acts on a dry run,
+        // so a task waiting for it is handed to the team at once (e.g. a request saved by a worker of another version).
+        if (r.DryRun && task.State == TeamTaskState.Open && flow.WaitingOn == WaitingOn.Agent)
+            return ToIdTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = DryRunTeamStep }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.IdReport is null) return null;
 
@@ -562,6 +566,29 @@ public sealed partial class WorkflowAgent(
                 .Log(now, Agent, "id-team-verified", "AI verified the ID team's correction.")
                 .To(RequestStatus.Verifying, WaitingOn.Agent, now, Agent, "verify-start", "Final verification resumed.");
             return new Step(r with { Flow = again }, [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.VerificationMismatch], c)]);
+        }
+
+        // A Databricks row with no Azure role (7 Nov 2026): the membership just verified is the whole grant. Automatic identity
+        // management brings the group's members into Databricks; the group's workspace and catalog access is set up once per
+        // group. Nothing for a role team to do: straight on to the final check (the membership, read again).
+        if (settings.DatabricksAccessViaGroup && Databricks.DatabricksPolicy.IsDatabricksScope(flow.Scope!.RoleScope) && flow.Scope.Grants().Count == 0)
+        {
+            var viaGroup = new TeamTask
+            {
+                Id = Ids.Key(r.Id, $"role-team:{flow.Events.Count(e => e.Step == "role-team-task")}"),
+                Team = AppRole.RoleTeam,
+                State = TeamTaskState.Verified,
+                Instructions = $"Nothing to assign: Databricks access comes from membership of {flow.Scope.EntraGroup} through automatic identity management (DATABRICKS_ACCESS_VIA_GROUP).",
+                CreatedAt = now,
+                SinceAt = now,
+                ReportedBy = Agent,
+            };
+            var direct = (flow with { IdTeamTask = task with { State = TeamTaskState.Verified, Checks = v.Checks }, RoleTeamTask = viaGroup })
+                .Log(now, Agent, "id-team-verified", "AI verified the ID team's work: user, group, membership, mapping sheet and TAP rules.")
+                .Log(now, Agent, "role-team-task", $"Databricks access through the Entra group {flow.Scope.EntraGroup} (automatic identity management): no role assignment step.")
+                .To(RequestStatus.Verifying, WaitingOn.Agent, now, Agent, "verify-start", "Final verification: the AI agent checks the account and the group membership.");
+            return new Step(r with { Flow = direct },
+                [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.GroupNameMismatch, IssueKind.VerificationMismatch, IssueKind.TaskSlaBreached], c)]);
         }
 
         // Passed: the role assignment team gets user, group and role from the response document (a simulation is never in it).
@@ -647,6 +674,8 @@ public sealed partial class WorkflowAgent(
             return roleWriter is null || directory is null ? null : await AssignRoleAsync(r, task, ct); // only the worker holds the writer
         if (SwitchedOffWhileWaiting(task, flow, settings.AgentRoleAssignment))
             return ToRoleTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = RoleAssignmentSwitchedOff }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
+        if (r.DryRun && task.State == TeamTaskState.Open && flow.WaitingOn == WaitingOn.Agent)
+            return ToRoleTeam(r, task, (task.Agent ?? new AgentWork { At = clock.UtcNow }) with { Manual = DryRunTeamStep }, await ProjectAsync(r, ct), clock.UtcNow, IssueSeverity.Info);
         if (task.State is TeamTaskState.Open or TeamTaskState.Returned) return await TaskSlaAsync(r, task, ct);
         if (task.State != TeamTaskState.Reported || task.RoleReport is null) return null;
 

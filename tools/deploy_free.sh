@@ -62,8 +62,11 @@
 #       Live simulations (Gokul, 7 Nov 2026): a Developer's simulation is provisioned, assigned and verified in Entra and
 #       Azure for real, while the Developer still approves every stage. Settings only (SIMULATION_LIVE_WRITES, worker + SWA);
 #       never with APP_ENVIRONMENT=prod; only for projects that name the agent's tenant and are marked not production;
-#       never a Prod environment or a guest. Same agent switches, allow-lists and checks as a real request.
+#       every environment, Prod included (7 Nov 2026); never a guest. Same agent switches, allow-lists and checks as a real request.
 #       "on" is a security change (one person approves): dry run without --approved-by. "off" any time.
+#   tools/deploy_free.sh prod-approval <subscriptionId> on|off [--approved-by "<name> <date>"]
+#       F3 ProdApprover stage for every request (Gokul, 7 Nov 2026: "remove the prod approver"). PROD_APPROVAL_REQUIRED,
+#       worker + SWA. "off" is a security change: dry run without --approved-by. "on" any time.
 #   tools/deploy_free.sh simulation <subscriptionId> tap on|off [--approved-by "<name> <date>"]
 #       Live-simulation TAP (Gokul, 7 Nov 2026): the agent also mails a live simulation's new account a one-time TAP and the
 #       initial password, at the Enterprise ID on the simulation (SIMULATION_LIVE_TAP). Needs live simulations and the agent TAP.
@@ -376,11 +379,11 @@ GRAPH_TAP_ROLE=UserAuthMethod-TAP.ReadWrite.All
 
 tap_policy() {
   az rest --method GET --url "https://graph.microsoft.com/v1.0/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/TemporaryAccessPass" \
-    --query "{state:state, defaultLifetime:defaultLifetimeInMinutes, maxLifetime:maxLifetimeInMinutes, oneTimeOnly:isUsableOnce, length:defaultLength, forGroups:includeTargets[].id}" -o json 2>/dev/null || true
+    --query "{state:state, defaultLifetime:defaultLifetimeInMinutes, minLifetime:minimumLifetimeInMinutes, maxLifetime:maximumLifetimeInMinutes, oneTimeOnly:isUsableOnce, length:defaultLength, forGroups:includeTargets[].id}" -o json 2>/dev/null || true
 }
 
 agent_tap() {
-  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" via="${4:-graph}" name mi swa graph role assignment policy max prov appid mailsend notify acs from
+  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" via="${4:-graph}" name mi swa graph role assignment policy max prov appid mailsend notify acs from raise_policy=0
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -432,14 +435,17 @@ agent_tap() {
     max=$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('maxLifetime') or '')" "$policy")
     [[ "$(python3 -c "import json,sys;print(json.loads(sys.argv[1]).get('state'))" "$policy")" == "enabled" ]] \
       || echo "  WARNING: the TAP method is not enabled in the tenant: Entra refuses the pass and the ID team gets the task."
-    if [[ -n "$max" && "$lifetime" -gt "$max" ]]; then echo "  Lifetime $lifetime > policy maximum $max: using $max."; lifetime=$max; fi
+    # 7 Nov 2026 (Gokul: "TAP can be valid for 48 hours"): a lifetime above the policy maximum raises the tenant maximum
+    # (PATCH maximumLifetimeInMinutes, F139; needs Authentication Policy Administrator) instead of shortening the pass.
+    if [[ -n "$max" && "$lifetime" -gt "$max" ]]; then raise_policy=1; echo "  Lifetime $lifetime > policy maximum $max: the apply raises the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
   else
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
-  [[ "$lifetime" -ge 60 ]] || { echo "Lifetime must be at least 60 minutes (the joiner reads it from mail)."; return 1; }
+  [[ "$lifetime" -ge 60 && "$lifetime" -le 43200 ]] || { echo "Lifetime must be 60 to 43200 minutes (30 days, F139)."; return 1; }
   echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
-  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAIL_VIA=$via TAP_MAIL_SENDER=${tap_sender:-<empty>}; SWA: the same"
+  echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAX_LIFETIME_MINUTES=$lifetime (a pass the ID team records) TAP_MAIL_VIA=$via TAP_MAIL_SENDER=${tap_sender:-<empty>}; SWA: the same"
+  [[ "$raise_policy" == 1 ]] && echo "  Tenant TAP policy: maximumLifetimeInMinutes $max -> $lifetime (PATCH; you need Authentication Policy Administrator)"
   [[ "$via" == "graph" ]] && echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
   echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
   [[ "$via" == "graph" ]] && echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
@@ -461,8 +467,15 @@ agent_tap() {
   else
     echo "Already granted: $GRAPH_TAP_ROLE"
   fi
-  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via"
-  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via" -o none
+  if [[ "$raise_policy" == 1 ]]; then
+    az rest --method PATCH --url "https://graph.microsoft.com/v1.0/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/TemporaryAccessPass" \
+      --headers "Content-Type=application/json" \
+      --body "{\"@odata.type\":\"#microsoft.graph.temporaryAccessPassAuthenticationMethodConfiguration\",\"maximumLifetimeInMinutes\":$lifetime}" -o none \
+      || { echo "Could not raise the tenant TAP policy maximum (needs Authentication Policy Administrator). Nothing else changed."; return 1; }
+    echo "Tenant TAP policy maximum lifetime: $lifetime minutes (approved by $APPROVED_BY)"
+  fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAX_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via"
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names AGENT_TAP=true "TAP_MAX_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via" -o none
   echo "Agent TAP on. Note: a new Graph permission can take up to ~24 h to reach the worker's token (F61). Until then the agent"
   echo "waits before creating an account (so the password and the pass go out together); the request page says so."
   [[ "$via" == "graph" ]] && echo "Until the Exchange scope above is in place, Graph refuses the mail (MailForbidden) and the ID team issues the pass."
@@ -538,7 +551,7 @@ simulation_live() {
   echo "  Effect: a Developer submits a simulation (form switch Simulation) and approves as Owner and Security; the AI agent"
   echo "  then creates a NEW user, the group and membership and assigns the allow-listed roles in Entra and Azure FOR REAL,"
   echo "  and verifies them. Only in projects that name tenant ${tenant:-?} where every project of that tenant is marked not"
-  echo "  production; never a Prod environment (or a row for every environment), a guest, an account that already exists or"
+  echo "  production; every environment, Prod included; never a guest, an account that already exists or"
   echo "  the developer's own; an agent TAP only after simulation <sub> tap on (else the developer issues the pass); other mails only to the test mailbox (NOTIFY_REDIRECT_TO)."
   echo "  Separation of duties does not apply to these simulations (one person approves): keep it to test accounts."
   echo "  Clean up with Offboard user (PMO or Operator, on the request page); a live simulation with granted access cannot be deleted before."
@@ -550,6 +563,38 @@ simulation_live() {
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=true -o none
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=true -o none
   echo "Live simulations on (approved by $APPROVED_BY). New simulations in a test tenant say LIVE SIMULATION on their trail."
+}
+
+# ProdApprover stage (F3) on/off for every request (Gokul, 7 Nov 2026: "remove the prod approver", all requests).
+# A setting only (PROD_APPROVAL_REQUIRED). "off" is a security change (dry run, then --approved-by); "on" any time.
+prod_approval() {
+  local mode="$1" name swa env
+  name=$(worker_name)
+  swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
+  if [[ "$mode" == "on" ]]; then
+    [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings PROD_APPROVAL_REQUIRED=true -o none
+    [[ -n "$swa" ]] && az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names PROD_APPROVAL_REQUIRED=true -o none
+    echo "ProdApprover stage on for $name and $swa: Prod above Read waits for a ProdApprover after Security again."
+    return 0
+  fi
+  [[ "$mode" == "off" ]] || { echo "prod-approval on|off"; return 1; }
+  [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  env=$(worker_setting "$name" APP_ENVIRONMENT)
+  echo "Checks:"
+  echo "  APP_ENVIRONMENT: ${env:-pilot}; now PROD_APPROVAL_REQUIRED=$(worker_setting "$name" PROD_APPROVAL_REQUIRED || true) (empty = true)"
+  echo "Plan for $name and $swa, expected cost 0, no permission change:"
+  echo "  Settings: PROD_APPROVAL_REQUIRED=false (worker + SWA)"
+  echo "  Effect: for EVERY request (real and simulated), access above Read in Prod goes from the Security approval straight"
+  echo "  to the ID team / AI agent, with no ProdApprover decision. Requests now Awaiting Prod approval move on at the next agent run."
+  echo "  The trail of each such request says the stage was switched off. Owner and Security approvals stay."
+  echo "  Risk: one four-eyes control less for production write access. Switch it back on any time: prod-approval <sub> on"
+  if [[ -z "${APPROVED_BY:-}" ]]; then
+    echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
+    return 0
+  fi
+  az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings PROD_APPROVAL_REQUIRED=false -o none
+  az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names PROD_APPROVAL_REQUIRED=false -o none
+  echo "ProdApprover stage off (approved by $APPROVED_BY). Takes effect on the next agent run (every 5 minutes)."
 }
 
 # Live simulations, agent TAP (Gokul, 7 Nov 2026, approval-gated): a setting only. For an account the agent created for a live
@@ -944,7 +989,7 @@ app_settings_v2() {
   p=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_PROVISIONING'].value | [0]" -o tsv || true)
   r=$([[ -n "$w" ]] && az functionapp config appsettings list -g "$RG_DEFAULT" -n "$w" --query "[?name=='AGENT_ROLE_ASSIGNMENT'].value | [0]" -o tsv || true)
   # The website shows the same environment, mail mode and tenant as the worker that sends and provisions.
-  local env sender redirect tenant tap priv offb dbx tapsender simlive simtap tapvia
+  local env sender redirect tenant tap priv offb dbx tapsender simlive simtap tapvia prodappr tapmax
   env=$([[ -n "$w" ]] && worker_setting "$w" APP_ENVIRONMENT || true)
   tap=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TAP || true)
   # The website says "the agent mails the pass" only when the worker can (AGENT_TAP, provisioning and this mailbox; re-check 6).
@@ -955,12 +1000,14 @@ app_settings_v2() {
   simlive=$([[ -n "$w" ]] && worker_setting "$w" SIMULATION_LIVE_WRITES || true)
   simtap=$([[ -n "$w" ]] && worker_setting "$w" SIMULATION_LIVE_TAP || true)
   tapvia=$([[ -n "$w" ]] && worker_setting "$w" TAP_MAIL_VIA || true)
+  prodappr=$([[ -n "$w" ]] && worker_setting "$w" PROD_APPROVAL_REQUIRED || true)
+  tapmax=$([[ -n "$w" ]] && worker_setting "$w" TAP_MAX_LIFETIME_MINUTES || true)
   sender=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_SENDER || true)
   redirect=$([[ -n "$w" ]] && worker_setting "$w" NOTIFY_REDIRECT_TO || true)
   tenant=$([[ -n "$w" ]] && worker_setting "$w" AGENT_TENANT_ID || true)
-  az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=60" \
+  az staticwebapp appsettings set -n "$swa" -g "$rg" --setting-names "TAP_MAX_LIFETIME_MINUTES=${tapmax:-60}" \
     "APP_URL=https://$(az staticwebapp show -n "$swa" -g "$rg" --query defaultHostname -o tsv)" \
-    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" "SIMULATION_LIVE_WRITES=${simlive:-false}" "SIMULATION_LIVE_TAP=${simtap:-false}" "TAP_MAIL_VIA=${tapvia:-graph}" \
+    "AGENT_PROVISIONING=${p:-false}" "AGENT_ROLE_ASSIGNMENT=${r:-false}" "AGENT_TAP=${tap:-false}" "TAP_MAIL_SENDER=${tapsender:-}" "AGENT_PRIVILEGED=${priv:-false}" "AGENT_OFFBOARDING=${offb:-false}" "AGENT_DATABRICKS=${dbx:-false}" "SIMULATION_LIVE_WRITES=${simlive:-false}" "SIMULATION_LIVE_TAP=${simtap:-false}" "TAP_MAIL_VIA=${tapvia:-graph}" "PROD_APPROVAL_REQUIRED=${prodappr:-true}" \
     "APP_ENVIRONMENT=${env:-pilot}" "NOTIFY_SENDER=${sender:-Outbox}" "NOTIFY_REDIRECT_TO=${redirect:-}" "AGENT_TENANT_ID=${tenant:-$(az account show --query tenantId -o tsv)}" -o none
   az staticwebapp appsettings delete -n "$swa" -g "$rg" \
     --setting-names ENTRA_HANDOFF_ENABLED ENTRA_AUTO_ASSIGN REQUIRE_SEPARATE_REVIEWER ENTRA_AUTO_CREATE_PACKAGES -o none 2>/dev/null || true
@@ -1116,6 +1163,7 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      # Agent TAP as it is live (deploy_free.sh tap, approved separately).
      "agentTap": v(live.get("AGENT_TAP", "").lower() == "true"),
      "agentTapLifetimeMinutes": v(int(live.get("AGENT_TAP_LIFETIME_MINUTES") or 480)),
+     "tapMaxLifetimeMinutes": v(int(live.get("TAP_MAX_LIFETIME_MINUTES") or 60)),
      # Agent privileged rows as they are live (deploy_free.sh privileged, approved separately).
      "agentPrivileged": v(live.get("AGENT_PRIVILEGED", "").lower() == "true"),
      # Mail and environment as they are live (deploy_free.sh email / environment).
@@ -1127,6 +1175,7 @@ p = {"resourceGroupName": v("rg-pmo-review-pilot"), "location": v("centralindia"
      "offboardDeleteUser": v(live.get("OFFBOARD_DELETE_USER", "").lower() == "true"),
      "offboardSubscriptions": v(live.get("OFFBOARD_SUBSCRIPTIONS", "")), "tapMailSender": v(live.get("TAP_MAIL_SENDER", "")),
      "tapMailVia": v("acs" if live.get("TAP_MAIL_VIA", "").strip().lower() == "acs" else "graph"),
+     "prodApprovalRequired": v(live.get("PROD_APPROVAL_REQUIRED", "").strip().lower() != "false"),
      "mailMaxPerMinute": v(live.get("MAIL_MAX_PER_MINUTE", "")), "mailMaxPerHour": v(live.get("MAIL_MAX_PER_HOUR", "")),
      # v1.2 as it is live: the agent's Databricks set-up (deploy_free.sh databricks, approved separately).
      "agentDatabricks": v(live.get("AGENT_DATABRICKS", "").lower() == "true"),
@@ -1186,6 +1235,13 @@ PY
       APPROVED_BY="$5"; echo "Approval recorded (privileged $MODE): $5" | tee -a "$ROOT/.local/approval.txt"
     fi
     agent_privileged "$MODE"
+    ;;
+  prod-approval)
+    MODE="${3:?on|off}"
+    if [[ "${4:-}" == "--approved-by" && -n "${5:-}" ]]; then
+      APPROVED_BY="$5"; echo "Approval recorded (prod-approval $MODE): $5" | tee -a "$ROOT/.local/approval.txt"
+    fi
+    prod_approval "$MODE"
     ;;
   simulation)
     [[ "${3:-}" == "live" || "${3:-}" == "tap" ]] || { echo "usage: deploy_free.sh simulation <subscriptionId> live|tap on|off [--approved-by \"<name> <date>\"]"; exit 1; }

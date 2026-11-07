@@ -344,12 +344,12 @@ public class AgentTests
         var s = PilotSettings.FromEnvironment(k => k switch
         {
             "OWNER_SLA_HOURS" => "8",
-            "TAP_MAX_LIFETIME_MINUTES" => "5000",
+            "TAP_MAX_LIFETIME_MINUTES" => "50000",
             "APP_URL" => "http://not-https.invalid",
             _ => null,
         });
         Assert.Equal(TimeSpan.FromHours(8), s.Workflow.OwnerSla);
-        Assert.Equal(480, s.Workflow.TapMaxLifetimeMinutes);
+        Assert.Equal(43200, s.Workflow.TapMaxLifetimeMinutes); // Entra's limit, 30 days (F139); 48 hours (2880) fits
         Assert.Null(s.Workflow.AppUrl);
         Assert.Equal(TimeSpan.FromHours(24), s.Workflow.SecuritySla);
     }

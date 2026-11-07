@@ -106,6 +106,8 @@ param tapMailSender string = ''
   'acs'
 ])
 param tapMailVia string = 'graph'
+@description('PROD_APPROVAL_REQUIRED (7 Nov 2026): false = no ProdApprover stage. Kept here so a redeploy never resets it.')
+param prodApprovalRequired bool = true
 
 @description('MAIL_MAX_PER_MINUTE / MAIL_MAX_PER_HOUR (empty = defaults, F70).')
 param mailMaxPerMinute string = ''
@@ -240,6 +242,7 @@ resource worker 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'DATABRICKS_GRANT_CATALOGS', value: databricksGrantCatalogs }
         { name: 'TAP_MAIL_SENDER', value: tapMailSender }
         { name: 'TAP_MAIL_VIA', value: tapMailVia }
+        { name: 'PROD_APPROVAL_REQUIRED', value: prodApprovalRequired ? 'true' : 'false' }
         { name: 'MAIL_MAX_PER_MINUTE', value: mailMaxPerMinute }
         { name: 'MAIL_MAX_PER_HOUR', value: mailMaxPerHour }
         // Retired Phase 2b/2c switches: the worker refuses to start if any is true.

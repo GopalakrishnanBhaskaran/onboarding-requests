@@ -240,6 +240,8 @@ public partial class InfraConsistencyTests
         Assert.Contains("\"tapMailVia\": v(\"acs\" if live.get(\"TAP_MAIL_VIA\"", deploy);
         Assert.Contains("{ name: 'SIMULATION_LIVE_WRITES', value: 'false' }", worker);
         Assert.Contains("{ name: 'SIMULATION_LIVE_TAP', value: 'false' }", worker);
+        Assert.Contains("{ name: 'PROD_APPROVAL_REQUIRED', value: prodApprovalRequired ? 'true' : 'false' }", worker);
+        Assert.Contains("\"prodApprovalRequired\": v(live.get(\"PROD_APPROVAL_REQUIRED\"", deploy);
     }
 
     [Fact]

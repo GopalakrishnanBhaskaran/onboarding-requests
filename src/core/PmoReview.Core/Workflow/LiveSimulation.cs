@@ -1,5 +1,4 @@
 using PmoReview.Core.Domain;
-using PmoReview.Core.Resources;
 
 namespace PmoReview.Core.Workflow;
 
@@ -28,21 +27,22 @@ public static class LiveSimulation
         if (project.IsProductionTenant != false) return $"tenant {Tenants.Label(project)} is not marked as a test (non-production) tenant";
         if (allProjects.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.TenantId) && Same(p.TenantId, project.TenantId) && p.IsProductionTenant != false) is { } other)
             return $"project {other.ProjectId} uses the same tenant and is not marked as a test tenant";
-        if (Environments.IsProduction(environment)) return $"the {environment} environment is production";
+        // Gokul, 7 Nov 2026 ("Yes, Prod too (test tenant)"): every environment of a test tenant, Prod included (review finding 3
+        // closed that path; the owner reopened it). The tenant checks above keep it to a tenant marked not production.
         if (guest) return "guest accounts are invited by people, never by the agent";
         return null;
     }
 
     /// <summary>
     /// The check before an agent write on a simulation: null when the write may go ahead. <paramref name="row"/>: the mapping
-    /// row; a row with no environment counts as Prod when the request names one (<see cref="ProdGuard.Effective"/>, finding 3).
+    /// row (kept for the call sites; since 7 Nov 2026 a Prod row or a row for every environment is written in a test tenant too).
     /// </summary>
     public static string? RefusedNow(WorkflowSettings s, Project? project, AccessRequest r, MappingRow? row, IEnumerable<Project> allProjects)
     {
         if (!r.Simulated) return null;
         if (!r.LiveWrites) return "a dry-run simulation is never written to Entra or Azure";
-        var why = Refused(s, project, r.Environment, r.Guest, allProjects)
-            ?? (Environments.IsProduction(ProdGuard.Effective(row, r.Environment)) ? "the mapping row applies to every environment, Prod included" : null);
+        _ = row;
+        var why = Refused(s, project, r.Environment, r.Guest, allProjects);
         return why is null ? null : $"live simulation stopped: {why}";
     }
 

@@ -102,6 +102,7 @@ public sealed partial class WorkflowAgent
 
     private const string PrivilegedLeft = " is privileged access (agent privileged provisioning is off)";
     private const string ProvisioningSwitchedOff = "AI agent provisioning was switched off (AGENT_PROVISIONING=false) while the task waited for the agent";
+    private const string DryRunTeamStep = "this is a dry-run simulation: the AI agent writes nothing to Entra or Azure, so the developer does this step (a live simulation needs SIMULATION_LIVE_WRITES at submit)";
     private const string RoleAssignmentSwitchedOff = "AI agent role assignment was switched off (AGENT_ROLE_ASSIGNMENT=false) while the task waited for the agent";
 
     /// <summary>
@@ -384,6 +385,7 @@ public sealed partial class WorkflowAgent
         }
         work = work with { TapIssuedAt = tap.IssuedAt, TapExpiresAt = tap.ExpiresAt };
         var (subject, body) = Messages.SignInDetails(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);
+        var html = Messages.SignInDetailsHtml(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);
         var key = Ids.Key(r.Id, $"{task.Id}:sign-in");
         var masked = TapRecipient.Masked(to);
         try
@@ -391,7 +393,7 @@ public sealed partial class WorkflowAgent
             await directMail!.SendNowAsync(new Notification
             {
                 Id = Notification.MakeId(key, NotificationKind.SignInDetails), ProjectId = r.ProjectId, RequestId = r.Id, Kind = NotificationKind.SignInDetails,
-                IdempotencyKey = key, To = [to], Subject = subject, Body = body, CreatedAt = clock.UtcNow, Status = NotificationStatus.Pending,
+                IdempotencyKey = key, To = [to], Subject = subject, Body = body, Html = html, CreatedAt = clock.UtcNow, Status = NotificationStatus.Pending,
             }, ct);
         }
         catch (OutboundException e)

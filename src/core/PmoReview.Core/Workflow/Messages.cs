@@ -197,48 +197,117 @@ public static class Messages
     /// Called twice: with the real values for the mail that is sent, and with <see cref="SecretMasker.Mask"/> for the copy
     /// the app keeps. Without the password (account created in an earlier run) the user sets one after MFA.
     /// </summary>
+    /// <summary>
+    /// The agent's sign-in details mail (sent once, never stored): plain text and, from the same content, a readable HTML
+    /// version (Gokul, 7 Nov 2026: "format the email so that its readable and clear instructions"). Every value is escaped
+    /// in the HTML. Order: what this is, the details, before you start, the steps (password change right after the TAP
+    /// sign-in, F133), the access, keep it safe.
+    /// </summary>
     public static (string Subject, string Body) SignInDetails(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass,
         DateTimeOffset expires, WorkflowSettings s)
     {
-        var tenant = project?.TenantName ?? project?.Name;
-        var grants = scope.Grants();
-        var access = grants.Count == 0 ? $"{scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
-            : string.Join(", ", grants.Select(g => g.RoleName).Distinct(StringComparer.OrdinalIgnoreCase));
-        var lines = new List<string>
+        var m = SignInMail.For(r, scope, project, upn, password, pass, expires, s);
+        return (m.Subject, m.Text());
+    }
+
+    /// <summary>The same mail as HTML (for the mail's HTML part).</summary>
+    public static string SignInDetailsHtml(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass,
+        DateTimeOffset expires, WorkflowSettings s) => SignInMail.For(r, scope, project, upn, password, pass, expires, s).Html();
+
+    private sealed record SignInMail(string Subject, string Greeting, string Intro, string? Simulation, IReadOnlyList<(string Label, string Value, bool Secret)> Details,
+        string ExpiryLine, string Important, IReadOnlyList<string> Before, IReadOnlyList<string> Steps, string Access, IReadOnlyList<string> Safe, string Footer)
+    {
+        public static SignInMail For(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass, DateTimeOffset expires, WorkflowSettings s)
         {
-            $"Hello {r.FirstName},",
-            "",
-            r.Simulated
-                ? $"LIVE SIMULATION (test account): this account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created for real by the AI agent for simulation {Short(r)}, which the developer approved for every stage."
-                : $"Your account{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")} was created after the Owner and Security approved request {Short(r)}.",
-            "",
-            password is null
-                ? "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then set your own password (steps 3 and 4). Do it now, before the pass expires."
-                : "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then change the temporary password to your own (steps 3 and 4). Do it now, before the pass expires.",
-            "",
-            $"Sign-in name: {upn}",
-            password is null ? "Temporary password (not included): you set your own in step 4" : $"Temporary password: {password}",
-            $"Temporary Access Pass: {pass}",
-            $"The Temporary Access Pass works once and expires {Time(expires)}.",
-            "",
-            "Steps:",
-            "1. Open a private (InPrivate / Incognito) browser window and go to https://aka.ms/mysecurityinfo",
-            "2. Enter your sign-in name. When asked, enter the Temporary Access Pass (not the password).",
-            "3. Select \"Add sign-in method\" and choose Microsoft Authenticator. Install the Microsoft Authenticator app on your phone, add a work or school account, and scan the QR code. Approve the test notification. Finish within 10 minutes of signing in.",
-            password is null
-                ? "4. Set your password now: go to https://aka.ms/sspr, enter your sign-in name and confirm with Microsoft Authenticator. If that page is not available to you, ask the ID team."
-                : "4. Change your password now, still signed in: open https://mysignins.microsoft.com/security-info/password/change (or select Password on the left). If asked for the current password, enter the temporary password above. Choose a new password of your own and submit.",
-            "5. Back on Security info: delete the Temporary Access Pass entry if you see one.",
-            "6. Sign out and close the private window. From now on sign in with your new password and approve in Microsoft Authenticator.",
-            "",
-            $"Your access: '{r.AccessLevel}' on '{r.Resource}' through group {scope.EntraGroup} ({access}). You get another mail when the access is ready.",
-            "",
-            "Keep this mail private and delete it once you have set up your account. Nobody will ask you for the pass or the password.",
-            "If the pass expired before you used it, ask the ID team for a new one.",
-            "",
-            $"Request {Short(r)} · requested by {r.CreatedByName}.",
-        };
-        return ($"{(r.Simulated ? "[LIVE SIMULATION] " : "")}Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in", string.Join("\n", lines));
+            var tenant = project?.TenantName ?? project?.Name;
+            var where = $"{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")}";
+            var grants = scope.Grants();
+            var access = grants.Count == 0 ? $"{scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
+                : string.Join(", ", grants.Select(g => g.RoleName).Distinct(StringComparer.OrdinalIgnoreCase));
+            var lifetime = TimeSpan.FromMinutes(s.AgentTapLifetimeMinutes);
+            var valid = lifetime.TotalHours >= 1 ? $"{lifetime.TotalHours:0.#} hours" : $"{(int)lifetime.TotalMinutes} minutes";
+            return new SignInMail(
+                $"{(r.Simulated ? "[LIVE SIMULATION] " : "")}Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in",
+                $"Hello {r.FirstName},",
+                $"Your new work account{where} is ready. Set it up before {Time(expires)}: it takes about 10 minutes.",
+                r.Simulated ? $"LIVE SIMULATION (test account): this account was created for real by the AI agent for simulation {Short(r)}, which the developer approved for every stage." : null,
+                [
+                    ("Sign-in name", upn, false),
+                    ("Temporary password", password ?? "not included: you set your own in step 4", password is not null),
+                    ("Temporary Access Pass", pass, true),
+                ],
+                $"The Temporary Access Pass works once and is valid for {valid}, until {Time(expires)}.",
+                password is null
+                    ? "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then set your own password (steps 3 and 4)."
+                    : "IMPORTANT: right after you sign in with the Temporary Access Pass, set up Microsoft Authenticator and then change the temporary password to your own (steps 3 and 4).",
+                [
+                    "Your phone, with the Microsoft Authenticator app installed (App Store or Google Play).",
+                    "A private browser window (InPrivate in Edge, Incognito in Chrome).",
+                ],
+                [
+                    "Open https://aka.ms/mysecurityinfo in the private window.",
+                    "Enter your sign-in name. When asked, enter the Temporary Access Pass (not the password).",
+                    "Select \"Add sign-in method\" and choose Microsoft Authenticator. In the app, add a work or school account and scan the QR code. Approve the test notification. Finish within 10 minutes of signing in.",
+                    password is null
+                        ? "Set your password now: go to https://aka.ms/sspr, enter your sign-in name and confirm with Microsoft Authenticator. If that page is not available to you, ask the ID team."
+                        : "Change your password now, still signed in: open https://mysignins.microsoft.com/security-info/password/change (or select Password on the left). If asked for the current password, enter the temporary password above. Choose a new password of your own and submit.",
+                    "Back on Security info: delete the Temporary Access Pass entry if you see one.",
+                    "Sign out and close the private window. From now on sign in with your new password and approve in Microsoft Authenticator.",
+                ],
+                $"'{r.AccessLevel}' on '{r.Resource}' through group {scope.EntraGroup} ({access}). You get another mail when the access is ready.",
+                [
+                    "Nobody will ever ask you for the pass or the password. Do not forward this mail.",
+                    "Delete this mail once your account is set up.",
+                    "Pass expired or not working? Ask the ID team for a new one.",
+                ],
+                $"Request {Short(r)} · requested by {r.CreatedByName}.");
+        }
+
+        public string Text()
+        {
+            var lines = new List<string> { Greeting, "", Intro, "" };
+            if (Simulation is not null) lines.AddRange([Simulation, ""]);
+            lines.Add(Important);
+            lines.AddRange(["", "YOUR SIGN-IN DETAILS"]);
+            lines.AddRange(Details.Select(d => $"  {d.Label}: {d.Value}"));
+            lines.AddRange([$"  {ExpiryLine}", "", "BEFORE YOU START, HAVE READY"]);
+            lines.AddRange(Before.Select(b => $"  - {b}"));
+            lines.AddRange(["", "SET UP YOUR ACCOUNT (steps)"]);
+            lines.AddRange(Steps.Select((x, i) => $"{i + 1}. {x}"));
+            lines.AddRange(["", "YOUR ACCESS", $"  {Access}", "", "KEEP THIS SAFE"]);
+            lines.AddRange(Safe.Select(x => $"  - {x}"));
+            lines.AddRange(["", Footer]);
+            return string.Join("\n", lines);
+        }
+
+        public string Html()
+        {
+            static string E(string v) => System.Net.WebUtility.HtmlEncode(v);
+            // Escaped first, then links made clickable (the URLs in the steps are fixed text, never request input).
+            static string L(string v) => System.Text.RegularExpressions.Regex.Replace(E(v), @"https://[A-Za-z0-9./?=_%&#-]+",
+                x => $"<a href=\"{x.Value}\" style=\"color:#0f6cbd\">{x.Value}</a>");
+            const string h = "font-size:15px;font-weight:600;color:#242424;margin:22px 0 8px";
+            var b = new System.Text.StringBuilder();
+            b.Append("<div style=\"font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.5;color:#242424;max-width:640px\">");
+            b.Append($"<p style=\"margin:0 0 12px\">{E(Greeting)}</p><p style=\"margin:0 0 12px\">{E(Intro)}</p>");
+            if (Simulation is not null)
+                b.Append($"<p style=\"margin:0 0 12px;padding:10px 12px;background:#fde7e9;border-left:4px solid #c50f1f\">{E(Simulation)}</p>");
+            b.Append($"<p style=\"margin:0 0 12px;padding:10px 12px;background:#fff4ce;border-left:4px solid #8a6d00\"><strong>{E(Important)}</strong></p>");
+            b.Append($"<div style=\"{h}\">Your sign-in details</div>");
+            b.Append("<table cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;background:#f5f5f5;border:1px solid #d1d1d1;width:100%\">");
+            foreach (var (label, value, secret) in Details)
+                b.Append($"<tr><td style=\"padding:8px 12px;width:42%;color:#616161\">{E(label)}</td><td style=\"padding:8px 12px;{(secret ? "font-family:Consolas,Menlo,monospace;font-size:15px;font-weight:600;letter-spacing:.5px" : "font-weight:600")}\">{E(value)}</td></tr>");
+            b.Append($"</table><p style=\"margin:8px 0 0;color:#616161\">{E(ExpiryLine)}</p>");
+            b.Append($"<div style=\"{h}\">Before you start, have ready</div><ul style=\"margin:0;padding-left:20px\">");
+            foreach (var x in Before) b.Append($"<li style=\"margin:0 0 4px\">{E(x)}</li>");
+            b.Append($"</ul><div style=\"{h}\">Set up your account</div><ol style=\"margin:0;padding-left:20px\">");
+            foreach (var x in Steps) b.Append($"<li style=\"margin:0 0 8px\">{L(x)}</li>");
+            b.Append($"</ol><div style=\"{h}\">Your access</div><p style=\"margin:0\">{E(Access)}</p>");
+            b.Append($"<div style=\"{h}\">Keep this safe</div><ul style=\"margin:0;padding-left:20px\">");
+            foreach (var x in Safe) b.Append($"<li style=\"margin:0 0 4px\">{E(x)}</li>");
+            b.Append($"</ul><p style=\"margin:22px 0 0;color:#616161;font-size:12px\">{E(Footer)}</p></div>");
+            return b.ToString();
+        }
     }
 
     public static (string, string) AccessReady(AccessRequest r, ReviewedScope scope, Project? project = null, bool signInDetailsMailed = false)

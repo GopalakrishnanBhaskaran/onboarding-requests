@@ -90,6 +90,13 @@ public sealed partial class WorkflowAgent
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var e = await ProdEscalationAsync(r, scope, ct);
         var now = clock.UtcNow;
+        if (!settings.ProdApprovalRequired)
+        {
+            // Switched off (Gokul, 7 Nov 2026): a request already waiting moves on, like a new one.
+            var (n, fx) = ToIdTeam(r, flow, project, Agent, "prod-approval-off",
+                "The ProdApprover stage is switched off (PROD_APPROVAL_REQUIRED=false): no ProdApprover decision is needed.");
+            return new Step(r with { Flow = n }, fx);
+        }
         if (e is null)
         {
             var reason = ProdGuard.AboveReadInProd(r, scope, row);
@@ -136,7 +143,7 @@ public sealed partial class WorkflowAgent
     private async Task<Step?> ProdBlockAsync(AccessRequest r, CancellationToken ct)
     {
         var flow = r.Flow!;
-        if (flow.Scope is not { } scope) return null;
+        if (flow.Scope is not { } scope || !settings.ProdApprovalRequired) return null;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         if (ProdGuard.AboveReadInProd(r, scope, row) is not { } reason) return null;
         var e = await ProdEscalationAsync(r, scope, ct);
