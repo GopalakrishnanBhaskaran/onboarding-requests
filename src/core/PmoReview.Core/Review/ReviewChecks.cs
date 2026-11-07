@@ -179,7 +179,10 @@ public static partial class ReviewChecks
             : MappingSheet.Same(r.Resource, s.Resource) && MappingSheet.Same(r.AccessLevel, s.AccessLevel)).ToList();
         Add(CheckCodes.RespNoDuplicate, CheckGroups.ResponseDocument, duplicates.Count == 0 ? CheckStatus.Pass : CheckStatus.Fail, duplicates.Count == 0
             ? "No existing or pending assignment of the same access for this user."
-            : $"This user already has this access: {string.Join("; ", duplicates.Select(Describe))}.");
+            : duplicates.All(d => d.State == ResponseState.PendingApproval)
+                // 7 Nov 2026: a pending record is another open request for the same access, not access the user has.
+                ? $"This access is already requested for this user in another open request (not decided yet): {string.Join("; ", duplicates.Select(Describe))}. Continue with that request, or delete it first."
+                : $"This user already has this access: {string.Join("; ", duplicates.Select(Describe))}.");
 
         var conflicts = active.Except(duplicates).Where(r => MappingSheet.Same(r.Resource, s.Resource)
             && (!MappingSheet.Same(r.AccessLevel, s.AccessLevel) || (row is not null && !MappingSheet.Same(r.Role, row.Role)))).ToList();

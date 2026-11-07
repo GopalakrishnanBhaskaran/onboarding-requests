@@ -60,6 +60,13 @@ describe('request form: all environments (7 Nov 2026)', () => {
     expect(p.map((x) => [x.environment, x.groups, x.selectedResources])).toEqual([['Dev', ['grp-dev-de'], ['PH']], ['Prod', ['grp-prd-de'], ['PH', 'ACQ']]]);
   });
 
+  it('requests a group once when it is offered in several environments (a row with no environment)', () => {
+    const shared = g('grp-dbw-datareaders', 'Data Reader', ['PH'], 'Auto', 'oid-shared');
+    const r = [res('Dev', [shared, g('grp-dev-only', 'Data Reader', ['PH'])]), res('Test', [shared]), res('Prod', [shared, g('grp-prd-only', 'Data Reader', ['PH'])])];
+    const p = plan(r, { PH: 'Data Reader' });
+    expect(p.map((x) => [x.environment, x.groups])).toEqual([['Dev', ['oid-shared', 'grp-dev-only']], ['Prod', ['grp-prd-only']]]);
+  });
+
   it('lists each resource once across environments', () => {
     expect(unionOptions([['PH', 'ACQ'], ['PH', 'FIN'], []])).toEqual(['PH', 'ACQ', 'FIN']);
   });

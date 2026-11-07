@@ -66,12 +66,19 @@ export function chosenLevels(choice: LevelChoice): string[] {
 const wanted = (a: ResolvedAccess, choice: LevelChoice) =>
   a.sources.some((s) => choice[s] && choice[s] !== NOT_NEEDED && norm(choice[s]) === norm(a.accessLevel));
 
-/** One submission per environment: the requestable groups of the chosen levels (environments with none are left out). */
+/**
+ * One submission per environment: the requestable groups of the chosen levels (environments with none are left out).
+ * A group is requested once: a mapping row with no environment is offered in every environment, and asking for it in each
+ * made the review return all but the first as duplicates (7 Nov 2026). It goes with the first environment it appears in.
+ */
 export function plan(results: ResolveResult[], choice: LevelChoice): { environment: string; selectedResources: string[]; groups: string[]; access: ResolvedAccess[] }[] {
+  const taken = new Set<string>();
   return results
     .map((r) => {
-      const access = r.resolvedAccess.filter((a) => requestable(a) && wanted(a, choice));
-      return { environment: r.environment, selectedResources: r.selectedResources, groups: [...new Set(access.map(groupKey))], access };
+      const access = r.resolvedAccess.filter((a) => requestable(a) && wanted(a, choice) && !taken.has(groupKey(a)));
+      const unique = access.filter((a, i) => access.findIndex((b) => groupKey(b) === groupKey(a)) === i);
+      unique.forEach((a) => taken.add(groupKey(a)));
+      return { environment: r.environment, selectedResources: r.selectedResources, groups: unique.map(groupKey), access: unique };
     })
     .filter((x) => x.groups.length > 0);
 }
