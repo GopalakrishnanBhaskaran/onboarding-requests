@@ -104,7 +104,12 @@ public static class Reports
         RequestStatus.WithIdTeam => f.IdTeamTask?.State == TeamTaskState.Reported ? "AI verifies the ID team's work" : "ID team creates user/group, adds membership, issues TAP",
         RequestStatus.WithRoleTeam => f.RoleTeamTask?.State == TeamTaskState.Reported ? "AI verifies the role assignment" : "Role assignment team assigns the role",
         RequestStatus.Verifying => "AI agent verifies the account, membership and roles, then completes and notifies the requester",
+        // 7 Nov 2026: these fell through to "—", so the request page showed no next step (reported live at Awaiting Prod approval).
+        RequestStatus.AwaitingProdApproval => "A ProdApprover (not the requester, the Owner or the Security approver) approves or rejects the production access on the Escalations page; then the ID team step starts",
         RequestStatus.FailedNeedsDev => "Developer investigates (see developer report)",
+        RequestStatus.Completed => "Nothing: the access is verified and in place. To remove it later, PMO or an Operator uses Offboard user",
+        RequestStatus.Rejected => "Nothing: the request is closed. The requester can submit a new request",
+        RequestStatus.Closed => "Nothing: the person was offboarded. A rehire is marked Active in the people inventory by the Data Steward, then requested again",
         _ => "—",
     };
 

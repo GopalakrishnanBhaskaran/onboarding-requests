@@ -12,7 +12,7 @@ export type CheckStatus = 'Pass' | 'Fail' | 'Pending' | 'NotApplicable' | 'Flagg
 export type GroupState = 'Exists' | 'ToBeCreated';
 export type TeamTaskState = 'Open' | 'Reported' | 'Returned' | 'Verified' | 'Cancelled';
 /** Delete: Developer only, on the request page (never in My actions). */
-export type ActionName = 'ApproveOwner' | 'ApproveSecurity' | 'IdTeamTask' | 'RoleTeamTask' | 'Resubmit' | 'Delete';
+export type ActionName = 'ApproveOwner' | 'ApproveSecurity' | 'DecideProd' | 'IdTeamTask' | 'RoleTeamTask' | 'Resubmit' | 'Delete';
 
 export interface Item<T> {
   value: T;
@@ -328,6 +328,8 @@ export interface RequestView {
   whoDoesWhat: string;
   /** Why no decision is shown while the request waits for an approval (wrong sign-in, missing role, four eyes). */
   approvalHint?: string | null;
+  /** The open Prod escalation at Awaiting Prod approval: decided on the request page with action DecideProd (7 Nov 2026). */
+  prodEscalation?: Escalation | null;
 }
 
 export interface ReviewResult {

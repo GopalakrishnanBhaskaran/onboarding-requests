@@ -47,6 +47,8 @@ public sealed record RequestView(
 {
     /// <summary>Why the caller sees no decision while the request waits for an approval (wrong person, missing role, …).</summary>
     public string? ApprovalHint { get; init; }
+    /// <summary>The open Prod escalation of a request at Awaiting Prod approval (7 Nov 2026: decided on the request page too).</summary>
+    public Escalation? ProdEscalation { get; init; }
 }
 
 public sealed record ActionItem(StatusLine Status, string Action);
@@ -67,6 +69,8 @@ public static class Actions
     public const string Resubmit = "Resubmit";
     /// <summary>Developer: delete this request (4 Nov 2026).</summary>
     public const string Delete = "Delete";
+    /// <summary>The Prod stage: a ProdApprover, or the developer on a simulation (7 Nov 2026: on the request page, not only Escalations).</summary>
+    public const string DecideProd = "DecideProd";
 }
 
 /// <summary>
@@ -506,10 +510,13 @@ public sealed partial class WorkflowService(
             ? (await stores.Issues.ListAsync(projectId, ct)).Select(i => i.Value).Where(i => i.RequestId == requestId).OrderByDescending(i => i.LastSeenAt).ToList()
             : [];
         var actions = ActionsFor(caller, r);
+        var prod = r.Flow is { Status: RequestStatus.AwaitingProdApproval, Scope: { } scope }
+            ? (await stores.Escalations.GetAsync(projectId, Resources.ProdGuard.EscalationId(r, scope), ct))?.Value : null;
         return new RequestView(Endpoints.ToItem(current), Reports.StatusLine(r, now), Reports.Timings(r, now), actions,
             await notifier.ForRequestAsync(projectId, requestId, ct), issueList, StatusText.FlowOverview, Messages.WhoDoesWhatFor(settings))
         {
             ApprovalHint = ApprovalHint(caller, r, actions),
+            ProdEscalation = prod is { Status: EscalationStatus.Open } ? prod : null,
         };
     }
 
@@ -539,6 +546,10 @@ public sealed partial class WorkflowService(
                 return "You gave the Owner approval on this request, so another Security approver must decide (four eyes).";
             return "Waiting for a Security approver.";
         }
+        if (f.Status == RequestStatus.AwaitingProdApproval && !actions.Contains(Actions.DecideProd))
+            return caller.Has(p, Permission.DecideProdEscalation)
+                ? "You submitted, approved or get the access of this request, so another ProdApprover must decide the Prod stage (four eyes)."
+                : "Waiting for a ProdApprover (not the requester, the Owner or the Security approver). They decide here or on the Escalations page.";
         return null;
     }
 
@@ -608,6 +619,12 @@ public sealed partial class WorkflowService(
             list.Add(Actions.IdTeamTask);
         if (f.Status == RequestStatus.WithRoleTeam && f.WaitingOn == WaitingOn.RoleTeam && f.RoleTeamTask?.State is TeamTaskState.Open or TeamTaskState.Returned && Can(caller, r, Permission.WorkRoleTeamTasks))
             list.Add(Actions.RoleTeamTask);
+        // Same four-eyes rules as DecideProdEscalationAsync (which checks them again): never the requester, the person who gets
+        // the access or an earlier approver of a real request.
+        if (f.Status == RequestStatus.AwaitingProdApproval && (sim || (caller.Has(p, Permission.DecideProdEscalation) && !SubmittedBy(r, caller)
+                && !caller.Is(r.EnterpriseId) && !caller.Is(r.DomainId)
+                && f.CurrentApproval(ApprovalStage.Owner)?.By != caller.UserId && f.CurrentApproval(ApprovalStage.Security)?.By != caller.UserId)))
+            list.Add(Actions.DecideProd);
         if (f.Status == RequestStatus.Returned && Can(caller, r, Permission.SubmitRequests)) list.Add(Actions.Resubmit);
         if (caller.Has(p, Permission.DeleteRequests)) list.Add(Actions.Delete);
         return list;

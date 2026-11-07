@@ -120,6 +120,38 @@ public class F3ProdGuardTests
         Assert.Equal(RequestStatus.AwaitingProdApproval, (await app.Request(real, TestApp.Pest)).Flow!.Status);
     }
 
+    /// <summary>
+    /// 7 Nov 2026 (live): at Awaiting Prod approval the request page showed no decision and no next step; the decision was only
+    /// on the Escalations page. The page now offers it (DecideProd + the open escalation) to whoever may decide, and says who
+    /// decides to everyone else.
+    /// </summary>
+    [Fact]
+    public async Task F3_the_request_page_offers_the_prod_decision_to_who_may_decide_and_tells_the_others()
+    {
+        const string dev = "sample-user-dev";
+        var app = await App();
+        await Grant(app, dev, AppRole.Developer);
+        var sim = await app.Call(dev, "POST", $"projects/{TestApp.Pest}/requests/simulate", Prod());
+        var id = sim.Request.GetProperty("id").GetString()!;
+        await app.RunWorker();
+        Assert.Equal(200, (await app.Approve(id, dev, project: TestApp.Pest)).Status);
+        Assert.Equal(200, (await app.Approve(id, dev, project: TestApp.Pest)).Status);
+        var view = (await app.View(id, dev, TestApp.Pest)).Json;
+        Assert.Contains("DecideProd", view.GetProperty("actions").EnumerateArray().Select(a => a.GetString()));
+        Assert.Equal((await TheEscalation(app, id)).Id, view.GetProperty("prodEscalation").GetProperty("id").GetString());
+        Assert.Contains("ProdApprover", view.GetProperty("status").GetProperty("next").GetString());
+
+        var real = await BothApproved(app, TestApp.Intake(enterpriseId: "jane.page@sample-corp.invalid", resource: Platform, accessLevel: "Support Writer",
+            environment: "Prod", justification: Reason, first: "Jane", last: "Page"));
+        var petra = (await app.View(real, Petra, TestApp.Pest)).Json;
+        Assert.Contains("DecideProd", petra.GetProperty("actions").EnumerateArray().Select(a => a.GetString()));
+        var alice = (await app.View(real, TestApp.Alice, TestApp.Pest)).Json; // the requester: four eyes
+        Assert.DoesNotContain("DecideProd", alice.GetProperty("actions").EnumerateArray().Select(a => a.GetString()));
+        Assert.Contains("ProdApprover", alice.GetProperty("approvalHint").GetString());
+        var devOnReal = (await app.View(real, dev, TestApp.Pest)).Json; // a developer never decides a real Prod stage
+        Assert.DoesNotContain("DecideProd", devOnReal.GetProperty("actions").EnumerateArray().Select(a => a.GetString()));
+    }
+
     [Fact]
     public async Task F3_prod_write_via_the_api_waits_after_both_approvals_and_nothing_is_granted()
     {

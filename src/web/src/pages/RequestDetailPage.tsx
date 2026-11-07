@@ -12,7 +12,7 @@ import type { Item, ProjectSummary, RequestView, ReviewedScope, ReviewRun } from
 import { dateTime, fieldLabel, grantsOf, scopeName, statusColor } from '../lib/format';
 import { journey, stepSeconds, waitingLong } from '../lib/tracker';
 import { useActionQueue } from '../lib/queue';
-import { ApprovalPanel } from '../components/ApprovalPanel';
+import { ApprovalPanel, ProdDecisionPanel } from '../components/ApprovalPanel';
 import { IdTeamForm, RoleTeamForm, TaskSummary } from '../components/TeamTaskPanel';
 import { Breakable, Empty, ErrorBar, Loading, PageTitle, useStyles } from '../components/common';
 import { OffboardingPanel } from '../components/OffboardingPanel';
@@ -215,6 +215,9 @@ export function RequestDetailPage({ project, requestId, tap = false }: { project
 
           {view.actions.includes('ApproveOwner') && <ApprovalPanel request={r} stage="owner" project={project} tap={tap} onDone={done} onStale={() => void load()} />}
           {view.actions.includes('ApproveSecurity') && <ApprovalPanel request={r} stage="security" project={project} tap={tap} onDone={done} onStale={() => void load()} />}
+          {view.actions.includes('DecideProd') && view.prodEscalation && (
+            <ProdDecisionPanel escalation={view.prodEscalation} projectId={project.projectId} onDone={() => void load()} />
+          )}
           {view.approvalHint && (
             <MessageBar intent="info" layout="multiline">
               <MessageBarBody><MessageBarTitle>Waiting for a decision</MessageBarTitle>{view.approvalHint}</MessageBarBody>

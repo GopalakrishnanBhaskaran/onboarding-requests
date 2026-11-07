@@ -17,6 +17,7 @@ import { Breakable, Loading, PageHeader, useStyles } from '../components/common'
 export const ACTION_LABEL: Record<ActionName, string> = {
   ApproveOwner: 'Owner decision',
   ApproveSecurity: 'Security decision',
+  DecideProd: 'Prod decision',
   IdTeamTask: 'ID team task',
   RoleTeamTask: 'Role assignment task',
   Resubmit: 'Correct and resubmit',
@@ -27,6 +28,7 @@ export const ACTION_LABEL: Record<ActionName, string> = {
 const OPEN_LABEL: Record<ActionName, string> = {
   ApproveOwner: 'Open to decide',
   ApproveSecurity: 'Open to decide',
+  DecideProd: 'Open to decide',
   IdTeamTask: 'Open the task',
   RoleTeamTask: 'Open the task',
   Resubmit: 'Open and correct',
@@ -36,13 +38,14 @@ const OPEN_LABEL: Record<ActionName, string> = {
 const ICON: Record<ActionName, React.ReactElement> = {
   ApproveOwner: <PersonAvailable20Regular />,
   ApproveSecurity: <ShieldCheckmark20Regular />,
+  DecideProd: <ShieldCheckmark20Regular />,
   IdTeamTask: <People20Regular />,
   RoleTeamTask: <Wrench20Regular />,
   Resubmit: <Edit20Regular />,
   Delete: <Delete20Regular />,
 };
 
-const ORDER: ActionName[] = ['ApproveOwner', 'ApproveSecurity', 'IdTeamTask', 'RoleTeamTask', 'Resubmit'];
+const ORDER: ActionName[] = ['ApproveOwner', 'ApproveSecurity', 'DecideProd', 'IdTeamTask', 'RoleTeamTask', 'Resubmit'];
 
 const useLocal = makeStyles({
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' },
