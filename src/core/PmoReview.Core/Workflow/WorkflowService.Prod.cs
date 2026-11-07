@@ -62,7 +62,7 @@ public sealed partial class WorkflowService
                 $"The request changed after this escalation was raised (now revision {r.Revision}). Nothing was approved; read the current request and its escalation.");
         // Four eyes: whoever submitted or resubmitted any revision, the person who gets the access, and the people who
         // approved the earlier stages never decide the Prod stage.
-        // (A simulation grants nothing, so the developer acts for every stage of it.)
+        // (The developer acts for every stage of a simulation. A live simulation is never written for Prod: LiveSimulation.RefusedNow.)
         if (!r.Simulated && SubmittedBy(r, caller))
             throw new AppException(ErrorKind.Forbidden, "requester_cannot_approve", "You submitted or changed this request; another ProdApprover must decide it.");
         if (!r.Simulated && (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId)))

@@ -113,8 +113,13 @@ public sealed partial class WorkflowService(
         var r = (await requests.LoadAsync(projectId, requestId, ct)).Value;
         if (input.Confirm != true) throw AppException.Invalid("confirm must be true: deleting a request cannot be undone.");
         var reason = SecretMasker.Apply(RequestService.Text(input.Reason, "reason", 500));
-        if (!r.Simulated && (reason is null || reason.Length < 5))
-            throw AppException.Invalid("A real request needs a reason (at least 5 characters): it is kept in the audit trail.");
+        if (!r.DryRun && (reason is null || reason.Length < 5))
+            throw AppException.Invalid("A real request or a live simulation needs a reason (at least 5 characters): it is kept in the audit trail.");
+        // Review 7 Nov 2026, finding 5: a live simulation is what makes its test account the project's own, so Offboard user
+        // can remove it. Deleted while its access stands, nothing could offboard it any more: offboard first.
+        if (r.Simulated && !r.DryRun && (await stores.ResponseDocument.GetAsync(projectId, requestId, ct))?.Value is { State: ResponseState.Approved or ResponseState.Assigned })
+            throw AppException.Conflict("offboard_first",
+                "This live simulation's access is still granted in Entra or Azure. Remove it with Offboard user first (the request page, PMO or Operator), then delete the simulation.");
         var status = r.Flow is null ? "legacy v1" : StatusText.Label(r.Flow.Status);
 
         // The request first, so the agent stops at once (its next save finds nothing); then what belongs to it.
@@ -131,7 +136,7 @@ public sealed partial class WorkflowService(
         var issueCount = await RemoveAsync(stores.Issues, x => x.RequestId == requestId);
         // Request-bound escalations: all of a simulation; of a real request only an undecided Prod one (nothing left to decide).
         var escalations = await RemoveAsync(stores.Escalations, x => x.RequestId == requestId
-            && (r.Simulated || (x.Kind == EscalationKind.ProdWrite && x.Status == EscalationStatus.Open)));
+            && (r.DryRun || (x.Kind == EscalationKind.ProdWrite && x.Status == EscalationStatus.Open)));
         var record = (await stores.ResponseDocument.GetAsync(projectId, requestId, ct))?.Value;
         var keep = record is not null && record.State is not (ResponseState.PendingApproval or ResponseState.Rejected);
         if (record is not null && !keep) await stores.ResponseDocument.DeleteAsync(projectId, requestId, ct);
@@ -146,7 +151,7 @@ public sealed partial class WorkflowService(
         }, ct);
         logger.LogInformation("request deleted request={RequestId} simulated={Simulated} by={UserId} cid={Cid}", requestId, r.Simulated, caller.UserId, cid);
         return new DeletedRequest(requestId, r.Simulated, status, runs, mails, issueCount, escalations, keep,
-            r.DryRun ? "Simulation deleted." : r.Simulated ? "Live simulation deleted. What the agent created or assigned in Entra or Azure stays: use Offboard user to remove it." : "Request deleted. Access already granted in Entra or Azure stays: use Offboard user to remove it.");
+            r.DryRun ? "Simulation deleted." : r.Simulated ? "Live simulation deleted. Its access had been offboarded or never granted; the response document keeps its record." : "Request deleted. Access already granted in Entra or Azure stays: use Offboard user to remove it.");
     }
 
     // ---- Stage 1 ------------------------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_ENVIRONMENTS, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor } from './lib/access';
+import { ALL_ENVIRONMENTS, NOT_NEEDED, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor } from './lib/access';
 import type { ResolveResult, ResolvedAccess } from './lib/types';
 
 const g = (groupName: string, accessLevel: string, sources: string[], status: ResolvedAccess['status'] = 'Auto', groupObjectId = ''): ResolvedAccess =>
@@ -21,12 +21,20 @@ describe('request form: an access level per resource instead of Entra groups (7 
     ]);
   });
 
-  it('preselects a resource\'s only level and keeps a choice that is still offered', () => {
+  it('preselects only a single resource\'s only level; with several resources nothing is preselected', () => {
     const offered = levelsByResource([dev], ['PH', 'FIN']);
-    expect(settleLevels({}, offered)).toEqual({ FIN: 'Viewer' });
-    expect(settleLevels({ PH: 'support reader', FIN: 'Gone' }, offered)).toEqual({ PH: 'Support Reader', FIN: 'Viewer' });
+    expect(settleLevels({}, offered)).toEqual({}); // finding 8: never more access than the requester picked
+    expect(settleLevels({}, levelsByResource([dev], ['FIN']))).toEqual({ FIN: 'Viewer' });
+    expect(settleLevels({ PH: 'support reader', FIN: 'Gone' }, offered)).toEqual({ PH: 'Support Reader' });
+    expect(settleLevels({ PH: NOT_NEEDED, FIN: 'Viewer' }, offered)).toEqual({ PH: NOT_NEEDED, FIN: 'Viewer' });
     expect(levelsComplete({ FIN: 'Viewer' }, offered)).toBe(false); // PH still to choose
-    expect(levelsComplete({ PH: 'Data Engineer', FIN: 'Viewer' }, offered)).toBe(true);
+    expect(levelsComplete({ PH: NOT_NEEDED, FIN: 'Viewer' }, offered)).toBe(true);
+    expect(levelsComplete({ PH: NOT_NEEDED, FIN: NOT_NEEDED }, offered)).toBe(false); // nothing requested
+    expect(chosenLevels({ PH: NOT_NEEDED, FIN: 'Viewer' })).toEqual(['Viewer']);
+  });
+
+  it('"Not needed" requests nothing for that resource', () => {
+    expect(plan([dev], { PH: NOT_NEEDED, FIN: 'Viewer' })[0].groups).toEqual(['grp-dev-fin-view']);
   });
 
   it('requests every requestable group of the chosen levels and nothing else (two resources, two levels)', () => {

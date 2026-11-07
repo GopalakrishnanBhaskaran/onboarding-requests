@@ -25,6 +25,9 @@ const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase();
 /** The chosen level per resource (resource name as the server lists it in a group's sources). */
 export type LevelChoice = Record<string, string>;
 
+/** Several resources: a resource can be left out ("Not needed"), so nothing is requested that was not chosen. */
+export const NOT_NEEDED = '__none__';
+
 /** Per chosen resource, the access levels its requestable groups offer (each level once, first-seen spelling). */
 export function levelsByResource(results: ResolveResult[], resources: string[]): { resource: string; levels: string[] }[] {
   return resources.map((resource) => {
@@ -35,24 +38,33 @@ export function levelsByResource(results: ResolveResult[], resources: string[]):
   });
 }
 
-/** Keep a choice that is still offered; preselect a resource's only level; otherwise the requester chooses. */
+/**
+ * Keep a choice that is still offered (or "Not needed"). Preselect only one resource's only level: with several resources
+ * nothing is preselected, so no access is requested that the requester did not pick (review 7 Nov 2026, finding 8).
+ */
 export function settleLevels(current: LevelChoice, offered: { resource: string; levels: string[] }[]): LevelChoice {
   const next: LevelChoice = {};
   for (const { resource, levels } of offered) {
-    const kept = levels.find((l) => norm(l) === norm(current[resource]));
+    const kept = current[resource] === NOT_NEEDED && offered.length > 1 ? NOT_NEEDED : levels.find((l) => norm(l) === norm(current[resource]));
     if (kept) next[resource] = kept;
-    else if (levels.length === 1) next[resource] = levels[0];
   }
+  if (offered.length === 1 && offered[0].levels.length === 1 && !next[offered[0].resource]) next[offered[0].resource] = offered[0].levels[0];
   return next;
 }
 
-/** Every resource that has a requestable level has one chosen (a resource with none cannot be requested here). */
+/** Every resource with a requestable level has a level or "Not needed", and at least one has a level. */
 export function levelsComplete(choice: LevelChoice, offered: { resource: string; levels: string[] }[]): boolean {
   const open = offered.filter((o) => o.levels.length > 0);
-  return open.length > 0 && open.every((o) => Boolean(choice[o.resource]));
+  return open.length > 0 && open.every((o) => Boolean(choice[o.resource])) && open.some((o) => choice[o.resource] && choice[o.resource] !== NOT_NEEDED);
 }
 
-const wanted = (a: ResolvedAccess, choice: LevelChoice) => a.sources.some((s) => choice[s] && norm(choice[s]) === norm(a.accessLevel));
+/** The levels actually requested (without "Not needed"). */
+export function chosenLevels(choice: LevelChoice): string[] {
+  return [...new Set(Object.values(choice).filter((l) => l && l !== NOT_NEEDED))];
+}
+
+const wanted = (a: ResolvedAccess, choice: LevelChoice) =>
+  a.sources.some((s) => choice[s] && choice[s] !== NOT_NEEDED && norm(choice[s]) === norm(a.accessLevel));
 
 /** One submission per environment: the requestable groups of the chosen levels (environments with none are left out). */
 export function plan(results: ResolveResult[], choice: LevelChoice): { environment: string; selectedResources: string[]; groups: string[]; access: ResolvedAccess[] }[] {

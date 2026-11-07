@@ -492,17 +492,20 @@ agent_privileged() {
 # / the allow-list give it; this lets a Developer's simulation use them, in test environments and test tenants only.
 simulation_live() {
   local mode="$1" name swa env prov roleassign tenant
-  name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  name=$(worker_name)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
   if [[ "$mode" == "off" ]]; then
-    az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=false -o none
-    az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=false -o none
+    # Always allowed, also with no worker: the website stops marking new simulations live.
+    [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" --settings SIMULATION_LIVE_WRITES=false -o none
+    [[ -n "$swa" ]] && az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" --setting-names SIMULATION_LIVE_WRITES=false -o none
     echo "Live simulations switched off on $name and $swa: new simulations are dry runs again; an open live simulation is"
     echo "not written to any more (its next agent step goes to the Developer as the ID team / role assignment team)."
     return 0
   fi
   [[ "$mode" == "on" ]] || { echo "simulation live on|off"; return 1; }
-  env=$(worker_setting "$name" APP_ENVIRONMENT); prov=$(worker_setting "$name" AGENT_PROVISIONING)
+  [[ -n "$name" ]] || { echo "No worker found."; return 1; }
+  env=$(worker_setting "$name" APP_ENVIRONMENT)
+  [[ "${env:-pilot}" != "prod" ]] || { echo "Refused: APP_ENVIRONMENT=prod. Live simulations are for test environments only (nothing changed)."; return 1; }; prov=$(worker_setting "$name" AGENT_PROVISIONING)
   roleassign=$(worker_setting "$name" AGENT_ROLE_ASSIGNMENT); tenant=$(worker_setting "$name" AGENT_TENANT_ID)
   echo "Checks:"
   echo "  APP_ENVIRONMENT: ${env:-pilot} (must not be prod)"
@@ -511,11 +514,12 @@ simulation_live() {
   echo "Plan for $name and $swa, expected cost 0, no permission change:"
   echo "  Settings: SIMULATION_LIVE_WRITES=true (worker + SWA)"
   echo "  Effect: a Developer submits a simulation (form switch Simulation) and approves as Owner and Security; the AI agent"
-  echo "  then creates the user, group and membership and assigns the allow-listed roles in Entra and Azure FOR REAL, and"
-  echo "  verifies them. Only in projects that name tenant ${tenant:-?} and are marked not production; never a Prod"
-  echo "  environment or a guest; mails only when every mail goes to the test mailbox (NOTIFY_REDIRECT_TO)."
+  echo "  then creates a NEW user, the group and membership and assigns the allow-listed roles in Entra and Azure FOR REAL,"
+  echo "  and verifies them. Only in projects that name tenant ${tenant:-?} where every project of that tenant is marked not"
+  echo "  production; never a Prod environment (or a row for every environment), a guest, an account that already exists or"
+  echo "  the developer's own; never an agent TAP (the developer issues the pass); mails only to the test mailbox (NOTIFY_REDIRECT_TO)."
   echo "  Separation of duties does not apply to these simulations (one person approves): keep it to test accounts."
-  echo "  Clean up what a live simulation created with Offboard user (deleting the simulation leaves the access)."
+  echo "  Clean up with Offboard user (PMO or Operator, on the request page); a live simulation with granted access cannot be deleted before."
   if [[ -z "${APPROVED_BY:-}" ]]; then
     echo "Dry run: nothing changed. After an explicit approval re-run with --approved-by \"<name> <date>\"."
     return 0
@@ -668,10 +672,14 @@ set_environment() {
   if [[ -n "$redirect" && ! "$redirect" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then echo "--redirect must be one mail address."; return 1; fi
   name=$(worker_name); swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
   tenant=$(az account show --query tenantId -o tsv)
+  # Live simulations are refused at start-up in prod (7 Nov 2026): going to prod switches them off in the same call.
+  local extra=()
+  [[ "$env" == "prod" ]] && extra=("SIMULATION_LIVE_WRITES=false")
   [[ -n "$name" ]] && az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none \
-    --settings "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant"
+    --settings "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant" ${extra[@]+"${extra[@]}"}
   az staticwebapp appsettings set -n "$swa" -g "$RG_DEFAULT" -o none \
-    --setting-names "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant"
+    --setting-names "APP_ENVIRONMENT=$env" "NOTIFY_REDIRECT_TO=$redirect" "AGENT_TENANT_ID=$tenant" ${extra[@]+"${extra[@]}"}
+  [[ "$env" == "prod" ]] && echo "Live simulations switched off (SIMULATION_LIVE_WRITES=false): never in production."
   echo "Environment $env on ${name:-no worker} and $swa; mail redirect: ${redirect:-none (real recipients)}; agent tenant $tenant."
 }
 
@@ -1194,5 +1202,5 @@ PY
     echo "$(git -C "$ROOT" rev-parse --short HEAD) $(date -u +%FT%TZ)" > "$ROOT/.local/last-app-deploy"
     "$ROOT/tools/cost_check.sh" "$RG"
     ;;
-  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|offboarding|environment|email|databricks ..."; exit 1 ;;
+  *) echo "usage: deploy_free.sh whatif|apply|app|status|params|worker|grant-graph|revoke-graph-writes|provisioning|tap|privileged|simulation|offboarding|environment|email|databricks ..."; exit 1 ;;
 esac

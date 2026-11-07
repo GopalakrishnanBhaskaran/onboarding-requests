@@ -260,14 +260,14 @@ test('Resource* checkboxes: All ticks every resource, unticking one clears All, 
   for (const name of ['Engineering', 'Finance', 'Sales']) await expect(group.getByRole('checkbox', { name, exact: true })).toBeChecked();
   await group.getByRole('checkbox', { name: 'Sales', exact: true }).uncheck();
   await expect(group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' })).not.toBeChecked();
-  // One access level per resource (each offers Admin and a lower level here): the requester chooses each.
+  // One access level per resource, nothing preselected with several resources (never more access than picked).
   await expect(page.getByRole('combobox', { name: 'Access level for Sales' })).toHaveCount(0);
-  await expect(page.getByRole('combobox', { name: 'Access level for Finance' })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Access level for Collaboration' })).toHaveValue('');
   await page.getByRole('combobox', { name: 'Access level for Finance' }).selectOption('Viewer');
+  await page.getByRole('combobox', { name: 'Access level for Collaboration' }).selectOption({ label: 'Not needed' });
   await expect(page.getByText(/requests? will be created/)).toHaveCount(0); // Engineering's level not chosen yet
   await page.getByRole('combobox', { name: 'Access level for Engineering' }).selectOption('User');
-  // Collaboration (still ticked) has one level, Edit, so it is preselected: every chosen resource is requested.
-  await expect(page.getByText(/^\d+ requests will be created, each through the whole flow\.$/)).toBeVisible();
+  await expect(page.getByText('2 requests will be created, each through the whole flow.')).toBeVisible();
   await page.getByLabel('Enterprise ID').fill(enterpriseId('bundle'));
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');

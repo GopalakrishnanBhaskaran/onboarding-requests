@@ -33,7 +33,29 @@ public sealed partial class WorkflowAgent
     /// The agent mails the pass itself: switched on, the TAP mail sender configured (Graph, <c>TAP_MAIL_SENDER</c>) and a
     /// member account. Where it goes is decided only by <see cref="TapRecipient"/>: the approved Enterprise ID, never another body field.
     /// </summary>
-    private bool TapByAgent(AccessRequest r) => settings.AgentTap && directMail?.Delivers == true && !r.Guest;
+    /// Never for a simulation (review 7 Nov 2026, finding 1): its recipient was approved by the developer alone.
+    private bool TapByAgent(AccessRequest r) => settings.AgentTap && directMail?.Delivers == true && !r.Guest && !r.Simulated;
+
+    /// <summary>Nothing of this task was written to Entra yet (a live simulation stopped here can continue as a dry run).</summary>
+    private static bool NothingWritten(AgentWork w) => !(w.UserCreated || w.GroupCreated || w.MemberAdded || w.RoleAssigned || w.TapIssuedAt is not null);
+
+    /// <summary>
+    /// A live simulation the agent may not write for (any more). Nothing written yet: it continues as a dry run (the developer
+    /// does the team steps, the checks are simulated, it leaves the response document; review finding 6). Otherwise what is
+    /// in Entra is real: the developer finishes the ID step by hand or removes it with Offboard user.
+    /// </summary>
+    private Step LiveStopped(AccessRequest r, TeamTask task, AgentWork work, Project? project, string why, DateTimeOffset now)
+    {
+        if (!(r.Simulated && r.LiveWrites && NothingWritten(work))) return ToIdTeam(r, task, work with { Manual = why }, project, now, IssueSeverity.Info);
+        var dry = r with
+        {
+            LiveWrites = false,
+            Flow = r.Flow!.Log(now, Agent, "simulation", $"{why}. Nothing was written to Entra or Azure, so it continues as a dry-run simulation: the developer does the team steps and the checks are simulated."),
+        };
+        var step = ToIdTeam(dry, task, work with { Manual = why }, project, now, IssueSeverity.Info);
+        step.Effects.Add(c => stores.ResponseDocument.DeleteAsync(r.ProjectId, r.Id, c));
+        return step;
+    }
 
     /// <summary>The people inventory entry for the account the agent creates (F2: checks and backs up the TAP recipient).</summary>
     private async Task<Person?> PersonAsync(AccessRequest r, CancellationToken ct) =>
@@ -150,8 +172,9 @@ public sealed partial class WorkflowAgent
 
         if (!BothApprovalsCurrent(flow))
             return ToIdTeam(r, task, work with { Manual = "the Owner and Security approvals are not both current" }, project, now, IssueSeverity.High);
-        var manual = LiveSimulation.RefusedNow(settings, project, r)
-            ?? Tenants.NotConnected(project, settings.AgentTenantId)
+        if (LiveSimulation.RefusedNow(settings, project, r, row, (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value)) is { } stopped)
+            return LiveStopped(r, task, work, project, stopped, now);
+        var manual = Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (r.Guest ? "guest accounts are invited by the ID team, not created by the agent"
             : PrivilegedReason(row, scope)
             ?? (row?.Flag == RowFlag.Red ? $"mapping row {scope.MappingRowId} is flagged red (needs a human decision)" : null));
@@ -170,6 +193,10 @@ public sealed partial class WorkflowAgent
             }
             if (user?.IsGuest == true)
                 return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is a guest account" }, project, now, IssueSeverity.Info);
+            // Review 7 Nov 2026, finding 2: a live simulation (one person approved it) creates new test accounts only; it never
+            // adds an account that already exists (a colleague, the developer) to a group.
+            if (r.Simulated && user is not null && !work.UserCreated)
+                return LiveStopped(r, task, work, project, $"live simulation stopped: {r.DomainId} already exists in Entra, and a live simulation only creates new test accounts", now);
             // Before an account is created for the agent TAP, there must be a mailbox for its pass (the approved Enterprise
             // ID, else the people inventory); otherwise the account is still created and the ID team hands the pass over.
             if (user is null && work.TapLeft is null && TapByAgent(r) && TapRecipient.Before(await PersonAsync(r, ct), r.DomainId!.ToLowerInvariant(), r) is { Ok: false } pre)
@@ -491,7 +518,7 @@ public sealed partial class WorkflowAgent
         // too (one row per plane), so a request is never completed with only half of its access in place.
         var databricksRow = Databricks.DatabricksPolicy.IsDatabricksScope(scope.RoleScope);
         var manual = !BothApprovalsCurrent(flow) ? "the Owner and Security approvals are not both current (not assigned)"
-            : LiveSimulation.RefusedNow(settings, project, r)
+            : LiveSimulation.RefusedNow(settings, project, r, row, (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value))
             ?? Tenants.NotConnected(project, settings.AgentTenantId)
             ?? (row is null ? $"mapping row {scope.MappingRowId} not found"
             : PrivilegedReason(row, scope)

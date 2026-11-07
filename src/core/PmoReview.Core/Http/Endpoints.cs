@@ -47,6 +47,7 @@ public static class Endpoints
         host.Map("GET", "me", async c =>
         {
             var projects = new List<ProjectSummary>();
+            var allProjects = (await stores.Projects.ListAllAsync(c.Ct)).Select(x => x.Value).ToList();
             foreach (var (projectId, roles) in c.Caller.Grants.OrderBy(g => g.Key, StringComparer.Ordinal))
             {
                 var p = await stores.Projects.GetAsync(projectId, projectId, c.Ct);
@@ -54,7 +55,7 @@ public static class Endpoints
                 {
                     // Every standard environment (plus the project's own), so one with no groups yet can still be chosen.
                     TenantName = p?.Value.TenantName, Environments = Domain.Environments.Of(p?.Value), DomainIdSuffix = p?.Value.DomainIdSuffix,
-                    LiveSimulationRefused = Workflow.LiveSimulation.Refused(workflow.Settings, p?.Value, null, false),
+                    LiveSimulationRefused = Workflow.LiveSimulation.Refused(workflow.Settings, p?.Value, null, false, allProjects),
                 });
             }
             var s = workflow.Settings;

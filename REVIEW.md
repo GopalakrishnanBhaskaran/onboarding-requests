@@ -300,3 +300,40 @@ Tests on this re-check: .NET **535** (534 pass, 1 opt-in Cosmos emulator skip; 3
 | Low | 5 | 5 (near-duplicate remainder), 15, 18, 19, 33 (remainder) |
 
 Deployment gate (spec P6): **still met** (Critical = 0, High = 0). 30 and 34 take effect only after the `app` deploy.
+
+## Re-check 7 (independent; commit 402a556 vs 34c5331, 2026-11-07)
+Scope: the 7 Nov change. Live simulations (`SIMULATION_LIVE_WRITES`: the Developer approves every stage and the agent writes to Entra and Azure for real; Gokul's choice), an access level per resource instead of ticking Entra groups, *Select all environments*, and Entra-valid addresses (F136).
+**Independent**: a separate reviewer agent read the diff and the rules, not the author's notes. It confirmed findings 35, 36, 37, 39 and 40 with throwaway probe tests (since deleted). The fixes were written by the author session, so a later reviewer should re-read them.
+
+| # | severity | status | evidence (file:line) | note |
+|---|---|---|---|---|
+| 35 | High | **Closed** | `WorkflowAgent.Provisioning.cs` `TapByAgent` (`&& !r.Simulated`); test `The_agent_never_issues_or_mails_a_tap_for_a_live_simulation` (mutant killed) | **(probe)** With AGENT_TAP on, a live simulation made the agent create a TAP and mail it, with the initial password, to any company-domain address the Developer typed. The recipient check assumes two other people approved the address. The mail is never redirected. Fix: the agent never issues a TAP for any simulation; the Developer, acting as ID team, issues it. |
+| 36 | High | **Closed** | `WorkflowAgent.Provisioning.cs` (existing account → `LiveStopped`), `RequestService.CreateAsync` (own account never live); tests `…never_adds_an_account_that_already_exists…` (mutant killed), `…developers_own_account_is_never_live` | **(probe)** "Test accounts only" was not enforced: an existing account (a colleague, the Developer) was added to the group and got the group's roles. Fix: a live simulation creates new accounts only; an existing account stops it (dry run when nothing was written). A simulation for the caller's own Enterprise ID or domain ID is never live. Residual (same as a real request): the allow-listed role is assigned to the mapping row's group, which may already have members. |
+| 37 | Medium | **Closed** | `LiveSimulation.RefusedNow` (`ProdGuard.Effective(row, env)`); test `A_row_for_every_environment_counts_as_prod…` | **(probe)** A mapping row with no environment counts as Prod (ProdGuard), but the live check read only the request's environment. |
+| 38 | Medium | **Closed** | `deploy_free.sh` `set_environment` | `environment … prod` with live simulations on would make start-up refuse (API and worker down). Going to prod now writes `SIMULATION_LIVE_WRITES=false` in the same call. `apply` resets the worker to the template's `false`, then `restore_worker_settings` puts the earlier value back, so the worker and the website stay the same. |
+| 39 | Medium | **Closed** | `WorkflowService.DeleteAsync`; test `A_live_simulation_is_provisioned…` (400 without a reason, 409 `offboard_first`) | **(probe)** Deleting a live simulation removed the only thing that made its account offboardable, while the note said "use Offboard user". It now needs a reason, keeps escalations, and is refused while its response-document record is Approved or Assigned. |
+| 40 | Medium | **Partly closed** | `WorkflowAgent.Provisioning.cs` `LiveStopped`; test `Switched_off_after_the_approvals…` | **(probe)** A live simulation stopped mid-flight (switch off, refused) could only be finished by real Entra work. When nothing was written, it now continues as a dry run (LiveWrites false, out of the response document, simulated checks). **Left by design:** after a write, the Developer finishes the step by hand or uses Offboard user. |
+| 41 | Medium | **Closed** | `LiveSimulation.Refused` (every project of the tenant); test `A_tenant_another_project_calls_production…` | The test-tenant mark was per project; another project naming the same tenant as production (or unmarked) now stops live writes. |
+| 42 | Low | **Closed** | `src/web/src/lib/access.ts` `settleLevels`, `NOT_NEEDED`; SPA tests, e2e | With several resources, a resource's only level was preselected, so the form requested more than picked. Now only a single resource's only level is preselected; with several resources each needs a level or *Not needed*. |
+| 43 | Low | **Closed** | `RequestFormPage.tsx` submit, banner | Across environments, a partial failure now says how many requests were created and which environments failed. Zero created is shown as an error, and submit stays usable. |
+| 44 | Low | **Closed** | `RequestFormPage.tsx` options effect | An environment change now clears the resource options at once, so nothing is resolved under the previous environment. |
+| 45 | Low | **Partly closed** | `RequestService.cs` trail, `WorkflowService.Prod.cs:65`, `deploy_free.sh` | Fixed: the trail note, the stale comment, the prod refusal in the dry run, the usage line, and `off` with no worker. **Open:** response-document records of live simulations carry no SIMULATION marker; `verify_features.sh` / `workflow_diag.sh` do not show `SIMULATION_LIVE_WRITES`. |
+
+Checked and OK (reviewer):
+- `LiveWrites` is set only by the server (at submit; kept on resubmit and re-review).
+- `RefusedNow` runs before every agent write path (user, group, membership, TAP, role, Databricks).
+- Every `Simulated`→`DryRun` switch is right.
+- Mail routing, start-up refusal, `/me` and Cosmos serialisation (`DryRun` is not stored).
+- The address rules, the new deploy command and the Bicep line.
+
+Tests after the fixes: .NET **640** (639 pass, 1 opt-in Cosmos skip; 15 live-simulation tests, 14 address tests), build 0 warnings; SPA 58/58, tsc, web build; Playwright 15/15 (fresh local emulator). Mutants: removing the TAP guard, the existing-account guard or the write-time re-check each fails a test.
+
+### Summary of OPEN findings after re-check 7
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 5 | 7, 8, 9 (partly), 11, 12 |
+| Low | 7 | 5 (remainder), 15, 18, 19, 33 (remainder), 40 (remainder, by design), 45 (remainder) |
+
+Deployment gate (spec P6): **met** (Critical = 0, High = 0).

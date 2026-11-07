@@ -12,7 +12,131 @@
 3. **Select all environments** button: one submission per environment.
 4. **Enterprise ID** with a dot right before '@' (or a leading or double dot) is refused (F136): Entra cannot create that domain ID.
 
-**Tests (this container, 7 Nov):** .NET 635 (634 pass, 1 opt-in Cosmos skip), build 0 warnings; SPA 57/57, tsc, web build; Playwright 15/15 (fresh local emulator). Not run: `bicep build`, anything against Azure.
+**Independent review (REVIEW.md re-check 7):** 2 High, 5 Medium, 4 Low found and fixed. The agent never mails a TAP for a simulation. A live simulation only creates new accounts, never the Developer's own. A row for every environment counts as Prod, and every project of the tenant must be marked test. A live simulation can't be deleted before Offboard user. Stopped before any write, it continues as a dry run. Several resources are never preselected. `environment … prod` switches live simulations off. Open (Low): no SIMULATION marker on response-document records; `verify_features` does not show the switch.
+
+**Tests (this container, 7 Nov, after the fixes):** .NET 640 (639 pass, 1 opt-in Cosmos skip), build 0 warnings; SPA 58/58, tsc, web build; Playwright 15/15 (fresh local emulator). Not run: `bicep build`, anything against Azure.
+
+### Deploy from scratch (fresh Cloud Shell, one block at a time)
+Every block starts the same way (subscription, cache clean-up, clone or update of the branch) and is safe to run in a fresh Cloud Shell. Blocks 1–4 change no Azure resource or permission. Blocks 5–6 are approval-gated: run the dry run, read it, reply "approved", then run the `--approved-by` block.
+
+**Block 1: read-only settings check.** Expect `AGENT_TENANT_ID` a GUID, `OFFBOARD_SUBSCRIPTIONS` the pilot subscription, `NOTIFY_SENDER` `AcsEmail`, `APP_ENVIRONMENT` `test`, `NOTIFY_REDIRECT_TO` the test mailbox, `TAP_MAIL_SENDER` empty. `SIMULATION_LIVE_WRITES` is missing (new). Note `AGENT_PROVISIONING`, `AGENT_ROLE_ASSIGNMENT`, `AGENT_PRIVILEGED` and the role allow-list.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+az functionapp config appsettings list -g rg-pmo-review-pilot -n func-pmo-worker-pkt2ofpqmlf3e --query "[?contains('AGENT_TENANT_ID OFFBOARD_SUBSCRIPTIONS NOTIFY_SENDER NOTIFY_REDIRECT_TO APP_ENVIRONMENT TAP_MAIL_SENDER AGENT_PROVISIONING AGENT_ROLE_ASSIGNMENT AGENT_PRIVILEGED AGENT_TAP AGENT_OFFBOARDING OFFBOARD_DELETE_USER ROLE_ASSIGN_ALLOWED_ROLES ROLE_ASSIGN_SCOPES SIMULATION_LIVE_WRITES', name)].{name:name, value:value}" -o table
+az staticwebapp appsettings list -n swa-pmo-pilot-pkt2ofpqmlf3e -g rg-pmo-review-pilot --query "properties.{AGENT_TENANT_ID:AGENT_TENANT_ID, NOTIFY_SENDER:NOTIFY_SENDER, APP_ENVIRONMENT:APP_ENVIRONMENT, AGENT_PROVISIONING:AGENT_PROVISIONING, SIMULATION_LIVE_WRITES:SIMULATION_LIVE_WRITES}" -o table
+```
+
+**Block 2: deploy the worker, then the app** (code only, no approval; worker first: an older worker ignores the simulation flags). Expect `Worker deployed: … (commit …)`, `API runtime: dotnet-isolated 10.0`, `Deployed commit … to https://icy-smoke-04dcd4300.6.azurestaticapps.net`. Then sign in, open *New request*: the form shows *Select all environments* and an *Access level* dropdown, with no group checkboxes.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+df -h ~
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-07"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+If every page says "The app's server did not answer (… Backend call failure)": roll back with Block 9.
+
+**Block 3: health check (read-only).** Expect about 12 worker runs an hour, no `worker-job:` / `agent-error:` / `api:` lines under NEEDS DEVELOPER, and `verify_features` lines 1, 16, 17 PASS; 5b and 15 WAIT. Log it as live check U.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+bash tools/workflow_diag.sh $SUB
+bash tools/verify_features.sh $SUB | tee .local/verify.txt
+```
+(Line 1 compares with the deploy stamps of Block 2: run Block 3 in the same Cloud Shell, or line 1 reads WAIT.)
+
+**Block 4: the Developer role** (skip if `--list` already shows `Developer` for the Gmail tester). Registering **replaces** a person's roles, so keep every role `--list` shows and add `Developer`.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+PY=$(tools/cosmos_python.sh)
+export COSMOS_CONNECTION_STRING=$(az cosmosdb keys list -g rg-pmo-review-pilot -n cosmos-pmo-pilot-pkt2ofpqmlf3e --type connection-strings --query "connectionStrings[0].connectionString" -o tsv)
+$PY tools/register_user.py --project PEST --list
+$PY tools/register_user.py --project VESTACY --list
+# Only if Developer is missing (keep every role listed; expected: Requester,Owner,IdTeam,RoleTeam,PMO,Operator,DataSteward):
+# $PY tools/register_user.py --project PEST --user gopalakrishnan.baskaran@gmail.com --roles Requester,Owner,IdTeam,RoleTeam,PMO,Operator,DataSteward,Developer
+unset COSMOS_CONNECTION_STRING
+```
+
+**Block 5a: live simulations, dry run** (approval-gated, changes nothing). Expect: APP_ENVIRONMENT test, provisioning and role assignment true, the agent tenant, the plan, "Dry run: nothing changed".
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh simulation $SUB live on
+```
+**Block 5b: switch it on, only after you have replied "approved" to 5a.** Expect `Live simulations on (approved by Gokul 2026-11-07)`. The command sets the worker and the website; later `app` deploys copy the worker's value.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh simulation $SUB live on --approved-by "Gokul 2026-11-07"
+```
+
+**Block 6 (optional): let the agent do the privileged Data Engineer row too.** Without it, a Data Engineer live simulation creates the user, group and membership only after `privileged … on`, and leaves roles not on the allow-list to you as the role assignment team. Two dry runs first (both change nothing):
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh privileged $SUB on
+tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access --from-sheet PEST
+```
+Read both: privileged rows lists the allow-listed roles. `--from-sheet` lists the sheet's roles it would add at `rg-pmo-sample-access`, never Owner, Contributor, User Access Administrator and the like. It replaces the constrained RBAC Administrator assignment with the new role list. Then, only after "approved":
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/determined-heisenberg-yzubb2
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh provisioning $SUB on /subscriptions/$SUB/resourceGroups/rg-pmo-sample-access --from-sheet PEST --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh privileged $SUB on --approved-by "Gokul 2026-11-07"
+```
+A newly granted Azure right can take a few minutes; a Graph one up to 24 h (F61).
+
+**Block 7: the live E2E test on the site** (no Cloud Shell).
+1. *New request* → tenant PEST → environment **Dev** → resource *PH* (or *Support Reader* first: no privileged row needed) → access level → Enterprise ID a **new** test address, e.g. `pmo.livetest01@<any company domain>` (no dot before '@'; never your own) → justification → Owner → switch **Simulation (LIVE: real Entra and Azure writes)** on → *Submit simulation*.
+2. The request page shows **LIVE SIMULATION**. Approve as Owner, then as Security (you act for both).
+3. Within about 5 minutes the agent creates the group (if new), the user `pmo.livetest01@gopalakrishnanbaskarangmail.onmicrosoft.com` and the membership, then assigns the allow-listed roles. Check in Entra (Users, Groups) and Azure (`rg-pmo-sample-access` → Access control).
+4. As the ID team: Entra → the user → Authentication methods → Add → Temporary Access Pass, **One-time use: Yes**, at most 60 minutes. Record only issued time, expiry, one-time and issued-by on the request.
+5. The agent verifies the ID step, the roles and the access: **Completed**. Mails go to the test mailbox only.
+6. Anything it leaves to you is named on the trail (`agent-manual`): e.g. a privileged row without Block 6, a role not on the allow-list, an existing account.
+
+**Block 8: clean up the test account.** As PMO or Operator on the request page: *Offboard user* → Reason → plan → *Confirm*. The agent revokes sessions, removes the TAP and membership, disables and (deletion on) soft-deletes the account. Azure role assignments of the user stay with the role assignment team; the group keeps its role. Then *Delete simulation* with a reason. Before the offboarding it is refused (`offboard_first`).
+
+**Block 9: rollback** (only if Block 2 broke the site). Redeploys the 4 Nov merge (`34c5331`, .NET 10), worker then app:
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/optimistic-thompson-jj8a4u
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1
+tools/deploy_free.sh simulation $SUB live off
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-07"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-07"
+```
+(The older branch has no `simulation` command; that line then prints a usage message and changes nothing. Run it from this branch first if live simulations were switched on.)
+
+**Dates:** .NET 9 support ends **10 Nov 2026**: Block 2 ships the .NET 10 API.
 
 
 ## 4 Nov 2026 — one branch again (superseded by 7 Nov: deploy from `claude/determined-heisenberg-yzubb2`): `claude/optimistic-thompson-jj8a4u`

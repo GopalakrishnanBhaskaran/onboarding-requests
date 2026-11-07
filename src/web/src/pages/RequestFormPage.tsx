@@ -7,7 +7,7 @@ import { Copy16Regular, Send20Regular, TextAdd20Regular } from '@fluentui/react-
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
 import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess, StatusLine } from '../lib/types';
-import { ALL_ENVIRONMENTS, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
+import { ALL_ENVIRONMENTS, NOT_NEEDED, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
 import { correctionFor, missingTasks, privilegedJobRows, returnedSiblings } from '../lib/resubmit';
 import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
 import { FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, justificationTemplate, whoDoesWhat } from '../lib/flow';
@@ -72,7 +72,8 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   // A returned request of a bundle ("All" or several resources): the other returned requests of the same submission.
   const [siblings, setSiblings] = useState<StatusLine[]>([]);
   const [include, setInclude] = useState<string[]>([]);
-  const [partial, setPartial] = useState<{ done: number; failed: { label: string; why: string }[] } | null>(null);
+  // A resubmission (requests) or, for a new request with All environments, the submissions per environment.
+  const [partial, setPartial] = useState<{ done: number; failed: { label: string; why: string }[]; created?: boolean } | null>(null);
   const environments = project.environments ?? [];
   const allEnvironments = fields.environment === ALL_ENVIRONMENTS;
   // Live simulations (7 Nov 2026): the server decides per simulation; null means this project's simulations write for real.
@@ -103,7 +104,11 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     setSelected([]);
     setResolvedList([]);
     setLevelChoice({});
-    if (!envChosen) { setOptions(null); setOptionsByEnv({}); return; }
+    // At once, not when the new options arrive: nothing is picked or resolved under the previous environment (finding 10).
+    setOptions(null);
+    setOptionsByEnv({});
+    setPartial(null);
+    if (!envChosen) return;
     let current = true; // a slower answer for an earlier choice never overwrites the latest one
     // One environment, or every one ("All environments"): the resources any of them offers.
     const envs = environments.length === 0 ? [fields.environment] : chosenEnvironments;
@@ -185,7 +190,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const mailError = fields.enterpriseId && !ENTERPRISE_MAIL.test(fields.enterpriseId.trim())
     ? 'Use the joiner’s enterprise mail address, e.g. jane.doe@company.com.' : undefined;
   const template = isNew
-    ? justificationTemplate([...new Set(Object.values(levelChoice))].join(', ') || [...new Set(tickedAccess.map((a) => a.accessLevel))].join(', '), chosen.join(', '), envLabel)
+    ? justificationTemplate(chosenLevels(levelChoice).join(', ') || [...new Set(tickedAccess.map((a) => a.accessLevel))].join(', '), chosen.join(', '), envLabel)
     : justificationTemplate(fields.accessLevel, fields.resource, fields.environment);
   const templateLeft = TEMPLATE_PLACEHOLDER.test(fields.justification)
     ? 'Replace every [ … ] of the template with your own details.' : undefined;
@@ -224,7 +229,11 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             failed.push({ label: x.environment || 'request', why: e instanceof Error ? e.message : 'not submitted' });
           }
         }
-        if (failed.length > 0) { setPartial({ done: created.length, failed }); return; }
+        if (failed.length > 0) {
+          if (created.length === 0) throw new Error(`No request was created: ${failed.map((x) => `${x.label} (${x.why})`).join('; ')}`);
+          setPartial({ done: created.length, failed, created: true });
+          return;
+        }
         navigate(created.length === 1 ? { page: 'request', requestId: created[0] } : { page: 'requests' });
         return;
       }
@@ -321,8 +330,12 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
       {partial && (
         <MessageBar intent="warning" role="alert" layout="multiline">
           <MessageBarBody>
-            <MessageBarTitle>{`${partial.done} of ${partial.done + partial.failed.length} requests resubmitted`}</MessageBarTitle>
-            {`Not resubmitted: ${partial.failed.map((x) => `${x.label} (${x.why})`).join('; ')}. Open each from the requests list to fix it.`}
+            <MessageBarTitle>{partial.created
+              ? `${partial.done} request${partial.done === 1 ? '' : 's'} created; ${partial.failed.length} environment${partial.failed.length === 1 ? '' : 's'} not submitted`
+              : `${partial.done} of ${partial.done + partial.failed.length} requests resubmitted`}</MessageBarTitle>
+            {partial.created
+              ? `Not submitted: ${partial.failed.map((x) => `${x.label} (${x.why})`).join('; ')}. Start a new request for ${partial.failed.length === 1 ? 'that environment' : 'those environments'}; the others are in the requests list.`
+              : `Not resubmitted: ${partial.failed.map((x) => `${x.label} (${x.why})`).join('; ')}. Open each from the requests list to fix it.`}
             <div><Button size="small" onClick={() => navigate({ page: 'requests' })}>Go to requests</Button></div>
           </MessageBarBody>
         </MessageBar>
@@ -429,6 +442,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
                           onChange={(_, d) => setLevelChoice((cur) => ({ ...cur, [resource]: d.value }))}>
                           <option value="">Choose…</option>
                           {offered.map((l) => <option key={l} value={l}>{l}</option>)}
+                          {levelOptions.length > 1 && <option value={NOT_NEEDED}>Not needed</option>}
                         </Select>
                       </Field>
                     ))}

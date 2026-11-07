@@ -91,10 +91,14 @@ public sealed partial class RequestService(DataStores stores, IClock clock, Work
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
         // Live simulation (Gokul, 7 Nov 2026): decided here by the server only, and re-checked before every agent write.
-        var liveRefused = simulated ? (settings is null ? "live simulations are switched off" : LiveSimulation.Refused(settings, project, environment, clean.Guest ?? false)) : null;
+        var liveRefused = !simulated ? null
+            : settings is null ? "live simulations are switched off"
+            : LiveSimulation.Refused(settings, project, environment, clean.Guest ?? false, (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value))
+              // Review 7 Nov finding 2: never for the developer's own account (nobody else approves it).
+              ?? (caller.Is(clean.EnterpriseId) || caller.Is(DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix)) ? "a simulation for your own account is never live" : null);
         var live = simulated && liveRefused is null;
         if (live)
-            flow = flow.Log(now, caller.UserId, "simulation", $"LIVE SIMULATION by {caller.DisplayName}: the developer acts for every stage, and the AI agent creates the user, group and membership and assigns the roles in Entra and Azure for real (same switches, allow-lists and checks as a real request). Mails go out as for a real request. Clean up with Offboard user.");
+            flow = flow.Log(now, caller.UserId, "simulation", $"LIVE SIMULATION by {caller.DisplayName}: the developer acts for every stage, and the AI agent creates a NEW user, the group and membership and assigns the roles in Entra and Azure for real (same switches, allow-lists and checks as a real request; an account that already exists and the one-time pass are left to the developer). Mails go only to the test mailbox, when one is set. Clean up with Offboard user before deleting it.");
         else if (simulated)
             flow = flow.Log(now, caller.UserId, "simulation", $"SIMULATION by {caller.DisplayName}: nothing is created in Entra or Azure, mails stay in the app, and the developer acts for every stage" +
                 (settings?.SimulationLiveWrites == true ? $" (not live: {liveRefused})." : "."));
