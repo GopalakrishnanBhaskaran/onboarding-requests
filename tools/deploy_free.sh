@@ -383,7 +383,7 @@ tap_policy() {
 }
 
 agent_tap() {
-  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" via="${4:-graph}" name mi swa graph role assignment policy max prov appid mailsend notify acs from raise_policy=0
+  local mode="$1" lifetime="${2:-480}" tap_sender="${3:-}" via="${4:-graph}" name mi swa graph role assignment policy max="" prov appid mailsend notify acs from raise_policy=0
   name=$(worker_name); [[ -n "$name" ]] || { echo "No worker found."; return 1; }
   mi=$(az functionapp identity show -g "$RG_DEFAULT" -n "$name" --query principalId -o tsv)
   swa=$(az staticwebapp list -g "$RG_DEFAULT" --query "[0].name" -o tsv)
@@ -450,7 +450,7 @@ agent_tap() {
   echo "  Worker settings: AGENT_TAP=true AGENT_TAP_LIFETIME_MINUTES=$lifetime TAP_MAX_LIFETIME_MINUTES=$lifetime (a pass the ID team records) TAP_MAIL_VIA=$via TAP_MAIL_SENDER=${tap_sender:-<empty>}; SWA: the same"
   [[ "$raise_policy" == 1 ]] && echo "  Tenant TAP policy: maximumLifetimeInMinutes $max -> $lifetime (PATCH; you need Authentication Policy Administrator)"
   [[ "$via" == "graph" ]] && echo "  Exchange admin, once (Exchange Online PowerShell; Application Mail.Send for this app on this one mailbox only, F81):"
-  echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
+  [[ "$via" == "graph" ]] && echo "    New-ServicePrincipal -AppId $appid -ObjectId $mi -DisplayName \"$name\""
   [[ "$via" == "graph" ]] && echo "    New-ManagementScope -Name \"pmo-tap-sender\" -RecipientRestrictionFilter \"PrimarySmtpAddress -eq '$tap_sender'\""
   [[ "$via" == "graph" ]] && echo "    New-ManagementRoleAssignment -App $appid -Role \"Application Mail.Send\" -CustomResourceScope \"pmo-tap-sender\""
   [[ "$via" == "graph" ]] && echo "    Test-ServicePrincipalAuthorization -Identity $appid -Resource $tap_sender   # InScope = True"
