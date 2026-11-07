@@ -102,6 +102,14 @@ public sealed partial class WorkflowAgent
 
     private const string PrivilegedLeft = " is privileged access (agent privileged provisioning is off)";
     private const string ProvisioningSwitchedOff = "AI agent provisioning was switched off (AGENT_PROVISIONING=false) while the task waited for the agent";
+    /// <summary>What to change when Entra refuses the agent's pass (7 Nov 2026).</summary>
+    private string TapHint(string category) => category switch
+    {
+        "TapLifetimeOutsidePolicy" or "GraphError" =>
+            $": check that the tenant TAP policy allows a {settings.AgentTapLifetimeMinutes}-minute pass (Entra > Authentication methods > Temporary Access Pass > Maximum lifetime, default 8 hours; tools/deploy_free.sh tap … on --lifetime {settings.AgentTapLifetimeMinutes} raises it)",
+        "TapRefusedByPolicy" => ": the tenant TAP policy refused it (is the method enabled, and one-time use allowed?)",
+        _ => "",
+    };
     private const string DryRunTeamStep = "this is a dry-run simulation: the AI agent writes nothing to Entra or Azure, so the developer does this step (a live simulation needs SIMULATION_LIVE_WRITES at submit)";
     private const string RoleAssignmentSwitchedOff = "AI agent role assignment was switched off (AGENT_ROLE_ASSIGNMENT=false) while the task waited for the agent";
 
@@ -381,7 +389,7 @@ public sealed partial class WorkflowAgent
         }
         catch (DirectoryReadException e) when (e is DirectoryWriteException { Forbidden: true } || e.Category is not ("NotReplicated" or "GraphUnavailable" or "IdentityUnavailable"))
         {
-            return work with { TapLeft = $"Entra did not create the Temporary Access Pass ({e.Category})" };
+            return work with { TapLeft = $"Entra did not create the Temporary Access Pass ({e.Category}){TapHint(e.Category)}" };
         }
         work = work with { TapIssuedAt = tap.IssuedAt, TapExpiresAt = tap.ExpiresAt };
         var (subject, body) = Messages.SignInDetails(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);

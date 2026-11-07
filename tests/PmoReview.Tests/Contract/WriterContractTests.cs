@@ -145,6 +145,17 @@ public class GraphDirectoryWriterTests
         Assert.Equal((category, forbidden), (e.Category, e.Forbidden));
     }
 
+    [Theory]
+    [InlineData("""{"error":{"code":"badRequest","message":"The lifetime of the Temporary Access Pass exceeds the maximum allowed by the policy."}}""", "TapLifetimeOutsidePolicy")]
+    [InlineData("""{"error":{"code":"badRequest","message":"Temporary Access Pass is not allowed by the authentication methods policy."}}""", "TapRefusedByPolicy")]
+    [InlineData("""{"error":{"code":"badRequest","message":"Invalid value"}}""", "GraphError")]
+    public async Task A_refused_tap_names_the_policy_reason(string json, string category)
+    {
+        var (writer, _) = Writer(h => h.On(HttpMethod.Post, $"{G}users/{UserId}/authentication/temporaryAccessPassMethods", json, HttpStatusCode.BadRequest));
+        var e = await Assert.ThrowsAsync<DirectoryWriteException>(() => writer.CreateTemporaryAccessPassAsync(UserId, 2880, CancellationToken.None));
+        Assert.Equal(category, e.Category);
+    }
+
     [Fact]
     public async Task Ids_that_are_not_guids_never_reach_graph()
     {

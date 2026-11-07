@@ -207,6 +207,9 @@ public sealed class GraphDirectoryWriter(HttpClient http, TokenCredential creden
                     HttpStatusCode.NotFound => "NotReplicated",
                     HttpStatusCode.BadRequest when text.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
                         || text.Contains("don't exist", StringComparison.OrdinalIgnoreCase) => "NotReplicated",
+                    // 7 Nov 2026 (live: "Entra did not create the Temporary Access Pass (GraphError)"): name the TAP policy refusals.
+                    HttpStatusCode.BadRequest when url.EndsWith(TapSuffix, StringComparison.Ordinal) && text.Contains("lifetime", StringComparison.OrdinalIgnoreCase) => "TapLifetimeOutsidePolicy",
+                    HttpStatusCode.BadRequest when url.EndsWith(TapSuffix, StringComparison.Ordinal) && text.Contains("polic", StringComparison.OrdinalIgnoreCase) => "TapRefusedByPolicy",
                     _ when retryable => "GraphUnavailable",
                     _ => "GraphError",
                 });

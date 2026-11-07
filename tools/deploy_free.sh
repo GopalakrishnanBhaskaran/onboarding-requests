@@ -441,6 +441,9 @@ agent_tap() {
   else
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
+  # Live 7 Nov 2026: the policy could not be read, so a 2880-minute lifetime was set without raising the maximum (default
+  # 8 hours) and Entra refused every agent pass. Unknown maximum and a lifetime above the default: the apply sets it.
+  if [[ -z "$max" && "$lifetime" -gt 480 ]]; then raise_policy=1; max="unknown"; echo "  Lifetime $lifetime > the default policy maximum (480) and the maximum could not be read: the apply sets the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
   [[ "$lifetime" -ge 60 && "$lifetime" -le 43200 ]] || { echo "Lifetime must be 60 to 43200 minutes (30 days, F139)."; return 1; }
   echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
