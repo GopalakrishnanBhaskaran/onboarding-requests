@@ -245,6 +245,12 @@ test('All environments: one button selects every environment and the form says h
   await expect(page.getByRole('button', { name: 'All environments selected' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('combobox', { name: 'Environment' })).toHaveValue('__all__');
   await expect(page.getByText(/One submission per environment/)).toBeVisible();
+  // A name with a digit is refused in the form, once, before anything is sent (7 Nov 2026: it came back once per environment).
+  await page.getByLabel('First name').fill('Live01');
+  await expect(page.getByText(/Letters, spaces, dots, hyphens and apostrophes only/)).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Submit/ })).toBeDisabled();
+  await page.getByLabel('First name').fill('Live');
+  await expect(page.getByText(/Letters, spaces, dots, hyphens and apostrophes only/)).toHaveCount(0);
   await page.getByRole('button', { name: 'All environments selected' }).click(); // a second click clears it
   await expect(page.getByRole('combobox', { name: 'Environment' })).toHaveValue('');
   await alice.ctx.close();

@@ -7,6 +7,7 @@ import { Copy16Regular, Send20Regular, TextAdd20Regular } from '@fluentui/react-
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
 import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess, StatusLine } from '../lib/types';
+import { nameError } from '../lib/names';
 import { ALL_ENVIRONMENTS, NOT_NEEDED, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
 import { correctionFor, missingTasks, privilegedJobRows, returnedSiblings } from '../lib/resubmit';
 import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
@@ -194,7 +195,9 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
     : justificationTemplate(fields.accessLevel, fields.resource, fields.environment);
   const templateLeft = TEMPLATE_PLACEHOLDER.test(fields.justification)
     ? 'Replace every [ … ] of the template with your own details.' : undefined;
-  const invalid = Boolean(ownerError || mailError || templateLeft) || (isNew && !canSubmit(selected, ticked));
+  const firstNameError = nameError(fields.firstName);
+  const lastNameError = nameError(fields.lastName);
+  const invalid = Boolean(ownerError || mailError || templateLeft || firstNameError || lastNameError) || (isNew && !canSubmit(selected, ticked));
 
   async function copyTemplate() {
     try {
@@ -225,7 +228,8 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
             }, simulate);
             created.push(...result.requests.map((r) => r.requestId));
           } catch (e) {
-            if (submissions.length === 1) throw e;
+            // The first one refused: the same details go to every environment, so say it once (nothing was created).
+            if (submissions.length === 1 || created.length === 0 && failed.length === 0) throw e;
             failed.push({ label: x.environment || 'request', why: e instanceof Error ? e.message : 'not submitted' });
           }
         }
@@ -280,7 +284,7 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
   const readiness: ReadinessItem[] = [
     {
       label: 'Joiner details',
-      ok: Boolean(fields.enterpriseId.trim() && !mailError && fields.firstName.trim() && fields.lastName.trim()),
+      ok: Boolean(fields.enterpriseId.trim() && !mailError && fields.firstName.trim() && fields.lastName.trim() && !firstNameError && !lastNameError),
       hint: 'Enterprise mail address, first and last name.',
     },
     {
@@ -365,10 +369,10 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
               <Input type="email" value={fields.enterpriseId} onChange={(_, d) => set('enterpriseId')(d.value)} maxLength={200} autoComplete="off" />
             </Field>
             <div className={f.two}>
-              <Field label="First name" required>
+              <Field label="First name" required validationMessage={firstNameError}>
                 <Input value={fields.firstName} onChange={(_, d) => set('firstName')(d.value)} maxLength={100} />
               </Field>
-              <Field label="Last name" required>
+              <Field label="Last name" required validationMessage={lastNameError}>
                 <Input value={fields.lastName} onChange={(_, d) => set('lastName')(d.value)} maxLength={100} />
               </Field>
             </div>

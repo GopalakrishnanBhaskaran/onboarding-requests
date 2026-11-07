@@ -83,7 +83,7 @@ export function ErrorBar({ error }: { error: unknown }) {
   return (
     <MessageBar intent="error" role="alert">
       <MessageBarBody>
-        <MessageBarTitle>{e?.status === 404 ? 'Not found' : e?.status === 403 ? 'Not permitted' : 'Something went wrong'}</MessageBarTitle>
+        <MessageBarTitle>{e?.status === 404 ? 'Not found' : e?.status === 403 ? 'Not permitted' : e?.status === 400 ? 'Please correct the request' : 'Something went wrong'}</MessageBarTitle>
         {e?.message ?? (error instanceof Error ? error.message : 'Unexpected error.')}
         {e?.correlationId && <Caption1 block>Reference: {e.correlationId}</Caption1>}
       </MessageBarBody>
