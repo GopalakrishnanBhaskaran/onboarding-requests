@@ -437,13 +437,13 @@ agent_tap() {
       || echo "  WARNING: the TAP method is not enabled in the tenant: Entra refuses the pass and the ID team gets the task."
     # 7 Nov 2026 (Gokul: "TAP can be valid for 48 hours"): a lifetime above the policy maximum raises the tenant maximum
     # (PATCH maximumLifetimeInMinutes, F139; needs Authentication Policy Administrator) instead of shortening the pass.
-    if [[ -n "$max" && "$lifetime" -gt "$max" ]]; then raise_policy=1; echo "  Lifetime $lifetime > policy maximum $max: the apply raises the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
+    if [[ -n "$max" && "$lifetime" -gt "$max" && "${TAP_POLICY_DONE:-}" != 1 ]]; then raise_policy=1; echo "  Lifetime $lifetime > policy maximum $max: the apply raises the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
   else
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
   # Live 7 Nov 2026: the policy could not be read, so a 2880-minute lifetime was set without raising the maximum (default
   # 8 hours) and Entra refused every agent pass. Unknown maximum and a lifetime above the default: the apply sets it.
-  if [[ -z "$max" && "$lifetime" -gt 480 ]]; then raise_policy=1; max="unknown"; echo "  Lifetime $lifetime > the default policy maximum (480) and the maximum could not be read: the apply sets the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
+  if [[ -z "$max" && "$lifetime" -gt 480 && "${TAP_POLICY_DONE:-}" != 1 ]]; then raise_policy=1; max="unknown"; echo "  Lifetime $lifetime > the default policy maximum (480) and the maximum could not be read: the apply sets the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
   [[ "$lifetime" -ge 60 && "$lifetime" -le 43200 ]] || { echo "Lifetime must be 60 to 43200 minutes (30 days, F139)."; return 1; }
   echo "Plan for $name (managed identity $mi, app id $appid), expected cost 0:"
   echo "  Graph application permission: $GRAPH_TAP_ROLE ${assignment:+(already held)}"
@@ -474,7 +474,10 @@ agent_tap() {
     az rest --method PATCH --url "https://graph.microsoft.com/v1.0/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/TemporaryAccessPass" \
       --headers "Content-Type=application/json" \
       --body "{\"@odata.type\":\"#microsoft.graph.temporaryAccessPassAuthenticationMethodConfiguration\",\"maximumLifetimeInMinutes\":$lifetime}" -o none \
-      || { echo "Could not raise the tenant TAP policy maximum (needs Authentication Policy Administrator). Nothing else changed."; return 1; }
+      || { echo "Could not raise the tenant TAP policy maximum. Nothing else changed."
+           echo "Live 7 Nov 2026: Azure CLI's sign-in gets accessDenied here even for an administrator. Set it in the portal instead:"
+           echo "  Entra admin center > Entra ID > Authentication methods > Policies > Temporary Access Pass > Configure > Maximum lifetime $lifetime minutes > Update > Save"
+           echo "then re-run this command with --policy-done (skips this step)."; return 1; }
     echo "Tenant TAP policy maximum lifetime: $lifetime minutes (approved by $APPROVED_BY)"
   fi
   az functionapp config appsettings set -g "$RG_DEFAULT" -n "$name" -o none --settings AGENT_TAP=true "AGENT_TAP_LIFETIME_MINUTES=$lifetime" "TAP_MAX_LIFETIME_MINUTES=$lifetime" "TAP_MAIL_SENDER=$tap_sender" "TAP_MAIL_VIA=$via"
@@ -1226,6 +1229,7 @@ PY
         --lifetime) LIFETIME="${2:?minutes}"; shift 2 ;;
         --sender) TAP_SENDER="${2:?sender mailbox}"; shift 2 ;;
         --via) TAP_VIA="${2:?graph or acs}"; shift 2 ;;
+        --policy-done) TAP_POLICY_DONE=1; echo "  The tenant TAP policy maximum was set in the portal (--policy-done): not changed here."; shift ;;
         --approved-by) APPROVED_BY="${2:?name and date}"; echo "Approval recorded (tap $MODE): $2" | tee -a "$ROOT/.local/approval.txt"; shift 2 ;;
         *) echo "unknown argument $1"; exit 1 ;;
       esac
