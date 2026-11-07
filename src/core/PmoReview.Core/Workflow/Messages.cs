@@ -204,28 +204,29 @@ public static class Messages
     /// sign-in, F133), the access, keep it safe.
     /// </summary>
     public static (string Subject, string Body) SignInDetails(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass,
-        DateTimeOffset expires, WorkflowSettings s)
+        DateTimeOffset expires, WorkflowSettings s, TimeSpan? lifetime = null)
     {
-        var m = SignInMail.For(r, scope, project, upn, password, pass, expires, s);
+        var m = SignInMail.For(r, scope, project, upn, password, pass, expires, s, lifetime);
         return (m.Subject, m.Text());
     }
 
     /// <summary>The same mail as HTML (for the mail's HTML part).</summary>
     public static string SignInDetailsHtml(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass,
-        DateTimeOffset expires, WorkflowSettings s) => SignInMail.For(r, scope, project, upn, password, pass, expires, s).Html();
+        DateTimeOffset expires, WorkflowSettings s, TimeSpan? lifetime = null) => SignInMail.For(r, scope, project, upn, password, pass, expires, s, lifetime).Html();
 
     private sealed record SignInMail(string Subject, string Greeting, string Intro, string? Simulation, IReadOnlyList<(string Label, string Value, bool Secret)> Details,
         string ExpiryLine, string Important, IReadOnlyList<string> Before, IReadOnlyList<string> Steps, string Access, IReadOnlyList<string> Safe, string Footer)
     {
-        public static SignInMail For(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass, DateTimeOffset expires, WorkflowSettings s)
+        public static SignInMail For(AccessRequest r, ReviewedScope scope, Project? project, string upn, string? password, string pass, DateTimeOffset expires, WorkflowSettings s, TimeSpan? issued = null)
         {
             var tenant = project?.TenantName ?? project?.Name;
             var where = $"{(tenant is null ? "" : $" for {tenant}")}{(r.Environment is null ? "" : $" ({r.Environment})")}";
             var grants = scope.Grants();
             var access = grants.Count == 0 ? $"{scope.Role}{(scope.RoleScope is null ? "" : $" at {scope.RoleScope}")}"
                 : string.Join(", ", grants.Select(g => g.RoleName).Distinct(StringComparer.OrdinalIgnoreCase));
-            var lifetime = TimeSpan.FromMinutes(s.AgentTapLifetimeMinutes);
-            var valid = lifetime.TotalHours >= 1 ? $"{lifetime.TotalHours:0.#} hours" : $"{(int)lifetime.TotalMinutes} minutes";
+            // The lifetime Entra actually gave the pass (shorter when the tenant policy refused the configured one).
+            var lifetime = issued is { TotalMinutes: >= 1 } t ? t : TimeSpan.FromMinutes(s.AgentTapLifetimeMinutes);
+            var valid = lifetime.TotalHours >= 1 ? $"{lifetime.TotalHours:0.#} hour{(lifetime.TotalHours == 1 ? "" : "s")}" : $"{(int)lifetime.TotalMinutes} minutes";
             return new SignInMail(
                 $"{(r.Simulated ? "[LIVE SIMULATION] " : "")}Your new account{(tenant is null ? "" : $" for {tenant}")}: sign-in details — change your password right after you sign in",
                 $"Hello {r.FirstName},",

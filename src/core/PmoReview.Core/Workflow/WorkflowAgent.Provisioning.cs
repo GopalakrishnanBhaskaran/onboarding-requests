@@ -110,6 +110,15 @@ public sealed partial class WorkflowAgent
         "TapRefusedByPolicy" => ": the tenant TAP policy refused it (is the method enabled, and one-time use allowed?)",
         _ => "",
     };
+    /// <summary>The configured pass lifetime, then 8 hours and 1 hour when shorter (the tenant policy defaults, F139).</summary>
+    private IReadOnlyList<int> TapLifetimes() =>
+        new[] { settings.AgentTapLifetimeMinutes, 480, 60 }.Where(m => m <= settings.AgentTapLifetimeMinutes).Distinct().ToList();
+
+    /// <summary>Trail note when the policy refused the configured lifetime and a shorter pass went out.</summary>
+    private static string Shortened(AgentWork w) => w.TapRefusedMinutes is not { } refused ? ""
+        : $" The tenant TAP policy refused a {refused}-minute pass, so the agent issued a {(int)(w.TapExpiresAt!.Value - w.TapIssuedAt!.Value).TotalMinutes}-minute pass: " +
+          $"raise the policy maximum to {refused} minutes (Entra > Protection > Authentication methods > Temporary Access Pass > Edit > Maximum lifetime) for the full lifetime.";
+
     private const string DryRunTeamStep = "this is a dry-run simulation: the AI agent writes nothing to Entra or Azure, so the developer does this step (a live simulation needs SIMULATION_LIVE_WRITES at submit)";
     private const string RoleAssignmentSwitchedOff = "AI agent role assignment was switched off (AGENT_ROLE_ASSIGNMENT=false) while the task waited for the agent";
 
@@ -353,7 +362,7 @@ public sealed partial class WorkflowAgent
         };
         var mailedNote = byMail
             ? $"The agent mailed the sign-in details (one-time Temporary Access Pass valid until {Messages.Time(work.TapExpiresAt)}" +
-              $"{(work.PasswordMailed ? ", initial password" : "")}, MFA set-up steps, change the password right after signing in) to {work.SignInDetailsSentTo} ({work.SignInDetailsFrom ?? TapRecipient.FromInventorySource}). Nobody else saw them; the app keeps no copy."
+              $"{(work.PasswordMailed ? ", initial password" : "")}, MFA set-up steps, change the password right after signing in) to {work.SignInDetailsSentTo} ({work.SignInDetailsFrom ?? TapRecipient.FromInventorySource}). Nobody else saw them; the app keeps no copy." + Shortened(work)
             : "Existing account: no Temporary Access Pass needed.";
         var verify = (flow with { Scope = newScope, IdTeamTask = reported }).Waiting(WaitingOn.Agent, now)
             .Log(now, Agent, "agent-provisioned", $"{done} {mailedNote} Verified on the next agent run.");
@@ -383,17 +392,33 @@ public sealed partial class WorkflowAgent
         if (!check.Ok) return work with { TapLeft = await TapMismatchAsync(r, check.Reason!, cid, ct) };
         var to = check.To!;
         IssuedTap tap;
+        int? refusedMinutes = null;
         try
         {
-            tap = await writer!.CreateTemporaryAccessPassAsync(work.UserObjectId!, settings.AgentTapLifetimeMinutes, ct);
+            // 7 Nov 2026 (live: TapLifetimeOutsidePolicy after the portal change): a lifetime the tenant policy refuses steps
+            // down to 8 hours, then 1 hour (the policy defaults), so the joiner still gets a pass. A refused create makes nothing.
+            var lifetimes = TapLifetimes();
+            for (var i = 0; ; i++)
+            {
+                try
+                {
+                    tap = await writer!.CreateTemporaryAccessPassAsync(work.UserObjectId!, lifetimes[i], ct);
+                    break;
+                }
+                catch (DirectoryWriteException e) when (e.Category == "TapLifetimeOutsidePolicy" && i < lifetimes.Count - 1)
+                {
+                    refusedMinutes ??= lifetimes[i];
+                }
+            }
         }
         catch (DirectoryReadException e) when (e is DirectoryWriteException { Forbidden: true } || e.Category is not ("NotReplicated" or "GraphUnavailable" or "IdentityUnavailable"))
         {
             return work with { TapLeft = $"Entra did not create the Temporary Access Pass ({e.Category}){TapHint(e.Category)}" };
         }
-        work = work with { TapIssuedAt = tap.IssuedAt, TapExpiresAt = tap.ExpiresAt };
-        var (subject, body) = Messages.SignInDetails(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);
-        var html = Messages.SignInDetailsHtml(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings);
+        work = work with { TapIssuedAt = tap.IssuedAt, TapExpiresAt = tap.ExpiresAt, TapRefusedMinutes = refusedMinutes };
+        var lifetime = tap.ExpiresAt - tap.IssuedAt;
+        var (subject, body) = Messages.SignInDetails(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings, lifetime);
+        var html = Messages.SignInDetailsHtml(r, scope, project, upn, password?.Reveal(), tap.Pass.Reveal(), tap.ExpiresAt, settings, lifetime);
         var key = Ids.Key(r.Id, $"{task.Id}:sign-in");
         var masked = TapRecipient.Masked(to);
         try

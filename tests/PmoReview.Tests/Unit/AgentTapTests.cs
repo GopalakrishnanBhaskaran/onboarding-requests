@@ -248,6 +248,52 @@ public class AgentTapTests
         Assert.Single(app.Writer.Passes); // not retried by the agent: the ID team issues the next one
     }
 
+    [Theory]
+    // 7 Nov 2026 (live: TapLifetimeOutsidePolicy): a 48-hour pass the tenant policy refuses steps down to 8 hours, then 1 hour.
+    [InlineData(480, new[] { 480 }, "valid for 8 hours")]
+    [InlineData(60, new[] { 60 }, "valid for 1 hour,")]
+    public async Task A_lifetime_the_tenant_policy_refuses_steps_down_so_the_joiner_still_gets_a_pass(int policyMax, int[] issued, string valid)
+    {
+        var settings = On();
+        settings = settings with { Workflow = settings.Workflow with { AgentTapLifetimeMinutes = 2880 } };
+        var (app, id) = await Approved(settings, arrange: a => a.Writer.TapPolicyMaxMinutes = policyMax);
+        await app.RunWorker();
+
+        Assert.Equal(issued.Select(m => $"create-tap {Upn} {m}"), app.Writer.Calls.Where(c => c.StartsWith("create-tap", StringComparison.Ordinal)));
+        var mail = Assert.Single(app.Mail.Sent);
+        Assert.Contains(valid, mail.Body);
+        Assert.DoesNotContain("48 hours", mail.Body);
+        var r = await app.Request(id);
+        Assert.Null(r.Flow!.IdTeamTask!.Agent!.TapLeft);
+        Assert.Equal(2880, r.Flow.IdTeamTask.Agent.TapRefusedMinutes);
+        Assert.Contains(r.Flow.Events, e => e.Note.Contains("The tenant TAP policy refused a 2880-minute pass", StringComparison.Ordinal)
+            && e.Note.Contains($"issued a {issued[^1]}-minute pass", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_lifetime_the_policy_allows_is_issued_as_configured_and_the_mail_says_48_hours()
+    {
+        var settings = On();
+        settings = settings with { Workflow = settings.Workflow with { AgentTapLifetimeMinutes = 2880 } };
+        var (app, id) = await Approved(settings, arrange: a => a.Writer.TapPolicyMaxMinutes = 2880);
+        await app.RunWorker();
+
+        Assert.Contains($"create-tap {Upn} 2880", app.Writer.Calls);
+        Assert.Contains("valid for 48 hours", Assert.Single(app.Mail.Sent).Body);
+        Assert.Null((await app.Request(id)).Flow!.IdTeamTask!.Agent!.TapRefusedMinutes);
+    }
+
+    [Fact]
+    public async Task When_even_one_hour_is_refused_the_pass_is_left_to_the_id_team_with_the_policy_hint()
+    {
+        var (app, id) = await Approved(On(), arrange: a => a.Writer.TapPolicyMaxMinutes = 30);
+        await app.RunWorker();
+
+        Assert.Equal([$"create-group {Group}", $"create-user {Upn}", $"add-member {Upn} {Group}"], app.Writer.Calls);
+        Assert.Contains("(TapLifetimeOutsidePolicy): check that the tenant TAP policy", (await app.Request(id)).Flow!.IdTeamTask!.Agent!.TapLeft);
+        Assert.Empty(app.Mail.Sent);
+    }
+
     [Fact]
     public async Task A_pass_entra_refuses_is_left_to_the_id_team_with_the_reason()
     {

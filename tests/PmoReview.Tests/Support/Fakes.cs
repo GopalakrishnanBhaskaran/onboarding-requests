@@ -234,6 +234,8 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory, Func<DateTimeOf
     public string? TapFailWith { get; set; }
     /// <summary>The next TAP call fails once with this category (e.g. NotReplicated right after the user was created).</summary>
     public string? TapFailOnce { get; set; }
+    /// <summary>The tenant TAP policy maximum: a longer pass is refused (TapLifetimeOutsidePolicy, F139); null = any.</summary>
+    public int? TapPolicyMaxMinutes { get; set; }
     /// <summary>The passes handed out, in order (each replaces the previous one on the account).</summary>
     public List<string> Passes { get; } = [];
     /// <summary>The Entra <c>mail</c> a created account comes back with (F2 cross-check), by UPN; none by default.</summary>
@@ -257,6 +259,7 @@ public sealed class FakeDirectoryWriter(FakeDirectory directory, Func<DateTimeOf
             TapFailOnce = null;
             throw new DirectoryWriteException(once);
         }
+        if (lifetimeMinutes > TapPolicyMaxMinutes) throw new DirectoryWriteException("TapLifetimeOutsidePolicy");
         var upn = directory.UpnOf(userObjectId)!;
         Write($"create-tap {upn} {lifetimeMinutes}");
         var pass = $"SAMPLE-TAP-{Passes.Count + 1:00}-x7Q";

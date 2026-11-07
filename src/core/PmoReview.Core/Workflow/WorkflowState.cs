@@ -184,6 +184,8 @@ public sealed record AgentWork
     public string? SignInDetailsFrom { get; init; }
     /// <summary>The initial password was in that mail (the account was created in the same run).</summary>
     public bool PasswordMailed { get; init; }
+    /// <summary>Agent TAP: the lifetime the tenant policy refused before a shorter pass was issued (null = the configured one).</summary>
+    public int? TapRefusedMinutes { get; init; }
     /// <summary>Agent TAP: why the pass was left to the ID team (the rest of the agent's work still counts).</summary>
     public string? TapLeft { get; init; }
 }
