@@ -109,6 +109,7 @@ def world():
             req("r5", "sample.tester@sample.onmicrosoft.invalid", "sample.tester@corp.invalid"),
             req("r6", "sample.x@other.invalid", "sample.x@other.invalid"),
             req("r7", "sample.sheet@sample.onmicrosoft.invalid", "sample.sheet@corp.invalid", {"groupCreated": False, "groupObjectId": "g-sheet"}),
+            req("r8", "sample.never@sample.onmicrosoft.invalid", "sample.never@corp.invalid"),  # no account in Entra (never created / gone)
         ],
         "reviewRuns": [{"id": "run1", "projectId": P}],
         "escalations": [{"id": "e1", "projectId": P}],
@@ -117,7 +118,9 @@ def world():
         "issues": [{"id": "i1", "projectId": P, "requestId": "r2"}, {"id": "i-platform", "projectId": P, "requestId": None}],
         "responseDocument": [{"id": "r1", "projectId": P, "requestId": "r1"}, {"id": "imported-1", "projectId": P, "requestId": None}],
         "peopleInventory": [{"id": "person-1", "projectId": P, "enterpriseId": "sample.new@corp.invalid", "status": "Leaver"},
-                            {"id": "person-2", "projectId": P, "enterpriseId": "sample.keep@corp.invalid", "status": "Active"}],
+                            {"id": "person-2", "projectId": P, "enterpriseId": "sample.keep@corp.invalid", "status": "Active"},
+                            {"id": "person-3", "projectId": P, "enterpriseId": "sample.never@sample.onmicrosoft.invalid", "status": "Leaver"},
+                            {"id": "person-4", "projectId": P, "enterpriseId": "sample.admin@sample.onmicrosoft.invalid", "status": "Leaver"}],
         "groupResolutions": [{"id": "grp-1", "projectId": P, "objectId": "g-agent"}, {"id": "grp-2", "projectId": P, "objectId": "g-sheet"}],
         "mappingSheet": [{"id": "R1", "projectId": P, "entraGroup": "SAMPLE-GRP-NEW", "groupState": "Exists", "version": 2},
                          {"id": "R2", "projectId": P, "entraGroup": "sample-grp-sheet", "groupState": "Exists", "version": 1}],
@@ -156,9 +159,11 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(ids["responseDocument"], ["r1"])
         self.assertEqual(ids["notifications"], ["n1"])
         self.assertEqual(ids["issues"], ["i1"])
-        self.assertEqual(ids["peopleInventory"], ["person-1"])  # the Leaver row that would refuse a rehire
+        # The Leaver rows that would refuse a rehire, also for a name with no account left in Entra (person-3);
+        # never another person's (person-2) or a kept account's (person-4, a directory-role holder).
+        self.assertEqual(ids["peopleInventory"], ["person-1", "person-3"])
         self.assertEqual(ids["groupResolutions"], ["grp-1"])
-        self.assertEqual(len(ids["requests"]), 7)
+        self.assertEqual(len(ids["requests"]), 8)
         self.assertEqual([d["id"] for d in p.mapping_reverts], ["R1"])
 
     def test_apply_deletes_in_order_purges_and_records_one_audit_event(self):

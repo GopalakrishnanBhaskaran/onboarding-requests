@@ -14,7 +14,8 @@ What it deletes (the plan lists every item first):
   Azure   - every role assignment of those accounts and groups.
   Cosmos  - per project: every request, review run, escalation and offboarding run; the mails and issues of those requests;
             the response-document records of those requests (records imported from the workbook, with no request, stay);
-            the people-inventory rows of the deleted accounts (a Leaver row or an offboarding run is what refuses a rehire);
+            the people-inventory rows of every person named on a request or an offboarding run, also when the account is no
+            longer in Entra (a Leaver row or an offboarding run is what refuses a rehire; a kept account's row stays);
             the group-resolution cache of the deleted groups; mapping rows of a deleted agent group go back to
             "to be created". One audit event per project records the clean-up.
 Never deleted (hard-coded, no flag): the signed-in account, any account with an Entra directory role, any account
@@ -104,6 +105,7 @@ def build_plan(db, gcall, assignments_all: list[dict], projects: list[str], me: 
                 c["id"] = run["objectId"]
 
     seen_ids: set[str] = set()
+    protected: set[str] = set()   # names of accounts that are kept: their people-inventory rows stay too
     for key, c in sorted(candidates.items()):
         u = graph_get(gcall, f"/users/{urllib.parse.quote(c.get('id') or c['upn'])}?$select=id,userPrincipalName,mail,userType,displayName")
         if u is None:
@@ -126,6 +128,7 @@ def build_plan(db, gcall, assignments_all: list[dict], projects: list[str], me: 
                 why = "holds an Entra directory role (" + ", ".join(r.get("displayName", "?") for r in roles) + ")"
         if why:
             p.kept.append(f"account {upn}: {why}")
+            protected.update({upn, mail, low(c.get("upn"))} | set(c.get("mails", set())))
         else:
             p.users.append({"id": u["id"], "upn": upn, "project": c["project"], "mails": sorted(c.get("mails", set()) - {""})})
 
@@ -147,6 +150,10 @@ def build_plan(db, gcall, assignments_all: list[dict], projects: list[str], me: 
                      for a in assignments_all if a.get("principalId") in principals]
 
     deleted_upns = {x["upn"] for x in p.users} | {x["upn"] for x in p.purge_only} | {m for x in p.users for m in x.get("mails", [])}
+    # Every person named on a request or an offboarding run, also when the account is not (or no longer) in Entra: a Leaver
+    # row left for such a name would refuse the next request for it as a rehire. Never a kept account's row.
+    named = {low(c.get("upn")) for c in candidates.values()} | {m for c in candidates.values() for m in c.get("mails", set())}
+    inventory_names = (deleted_upns | named) - protected - {""}
     group_names = {low(x["name"]) for x in p.groups}
     group_ids = {x["id"] for x in p.groups} | {x["id"] for x in p.purge_only}
     for project in projects:
@@ -165,7 +172,7 @@ def build_plan(db, gcall, assignments_all: list[dict], projects: list[str], me: 
             if d.get("requestId") in req_ids:  # imported workbook records (no request) stay
                 add("responseDocument", d)
         for d in db.get_container_client("peopleInventory").query_items("SELECT c.id, c.enterpriseId FROM c WHERE c.projectId = @p", **q):
-            if low(d.get("enterpriseId")) in deleted_upns:
+            if low(d.get("enterpriseId")) in inventory_names:
                 add("peopleInventory", d)
         for d in db.get_container_client("groupResolutions").query_items("SELECT c.id, c.objectId FROM c WHERE c.projectId = @p", **q):
             if d.get("objectId") in group_ids:
