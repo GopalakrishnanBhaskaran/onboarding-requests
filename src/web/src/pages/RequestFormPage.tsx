@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import {
   Badge, Body1, Body1Strong, Button, Caption1, Checkbox, Field, Input, MessageBar, MessageBarBody, MessageBarTitle, Select, Subtitle2, Switch, Table,
-  TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Textarea, makeStyles, tokens,
+  TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Textarea, makeStyles, tokens,
 } from '@fluentui/react-components';
 import { Copy16Regular, Send20Regular, TextAdd20Regular } from '@fluentui/react-icons';
 import { api, ApiError } from '../lib/api';
 import { navigate } from '../lib/router';
 import type { IntakeFields, MappingRow, ProjectSummary, ResolveResult, ResolvedAccess, StatusLine } from '../lib/types';
 import { nameError } from '../lib/names';
-import { ALL_ENVIRONMENTS, NOT_NEEDED, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
+import { ALL_ENVIRONMENTS, NOT_NEEDED, onlyLevel, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor, type LevelChoice } from '../lib/access';
 import { correctionFor, missingTasks, privilegedJobRows, returnedSiblings } from '../lib/resubmit';
 import { canSubmit, forApi, fromDropdown, toDropdown, toggle, type SelectionMode } from '../lib/resources';
 import { FLOW_OVERVIEW, TEMPLATE_PLACEHOLDER, justificationTemplate, whoDoesWhat } from '../lib/flow';
@@ -438,7 +438,13 @@ export function RequestFormPage({ project, projects = [project], onProject, requ
                 <ErrorBar error={resolveError} />
                 {resolvedList.length > 0 && (
                   <div className={f.resolved} aria-label="Access level and groups" role="region">
-                    {levelOptions.map(({ resource, levels: offered }) => (
+                    {levelOptions.map(({ resource, levels: offered }) => onlyLevel({ levels: offered }) ? (
+                      // One level only (e.g. a centralized group): nothing to choose, so no dropdown (7 Nov 2026).
+                      <Field key={resource} label={levelOptions.length === 1 ? 'Access level' : `Access level for ${resource}`}
+                        hint="The only level the mapping sheet has for this resource; the Entra group follows from it. Untick the resource to leave it out.">
+                        <Text weight="semibold" aria-label={`Access level for ${resource}: ${offered[0]}`}>{offered[0]}</Text>
+                      </Field>
+                    ) : (
                       <Field key={resource} label={levelOptions.length === 1 ? 'Access level' : `Access level for ${resource}`} required
                         hint={levelOptions.length === 1 ? 'The levels the mapping sheet has for this resource. The Entra groups follow from the mapping sheet.' : undefined}
                         validationMessage={offered.length === 0 ? 'No group of this resource can be requested here (unresolved groups are escalated to PMO).' : undefined}>

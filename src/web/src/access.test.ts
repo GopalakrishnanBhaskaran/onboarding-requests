@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ALL_ENVIRONMENTS, NOT_NEEDED, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor } from './lib/access';
+import { ALL_ENVIRONMENTS, NOT_NEEDED, onlyLevel, chosenLevels, environmentsFor, levelsByResource, levelsComplete, plan, settleLevels, unionOptions, unresolvedFor } from './lib/access';
 import type { ResolveResult, ResolvedAccess } from './lib/types';
 
 const g = (groupName: string, accessLevel: string, sources: string[], status: ResolvedAccess['status'] = 'Auto', groupObjectId = ''): ResolvedAccess =>
@@ -21,11 +21,14 @@ describe('request form: an access level per resource instead of Entra groups (7 
     ]);
   });
 
-  it('preselects only a single resource\'s only level; with several resources nothing is preselected', () => {
+  it('a resource with only one level is that level (no dropdown); a resource with several is never preselected', () => {
     const offered = levelsByResource([dev], ['PH', 'FIN']);
-    expect(settleLevels({}, offered)).toEqual({}); // finding 8: never more access than the requester picked
+    expect(settleLevels({}, offered)).toEqual({ FIN: 'Viewer' }); // FIN has one level (7 Nov 2026: "remove that button"); PH is not preselected (finding 8)
+    expect(settleLevels({ FIN: NOT_NEEDED }, offered)).toEqual({ FIN: 'Viewer' }); // no dropdown for it: untick the resource instead
+    expect(onlyLevel(offered[1])).toBe('Viewer');
+    expect(onlyLevel(offered[0])).toBeUndefined();
     expect(settleLevels({}, levelsByResource([dev], ['FIN']))).toEqual({ FIN: 'Viewer' });
-    expect(settleLevels({ PH: 'support reader', FIN: 'Gone' }, offered)).toEqual({ PH: 'Support Reader' });
+    expect(settleLevels({ PH: 'support reader', FIN: 'Gone' }, offered)).toEqual({ PH: 'Support Reader', FIN: 'Viewer' });
     expect(settleLevels({ PH: NOT_NEEDED, FIN: 'Viewer' }, offered)).toEqual({ PH: NOT_NEEDED, FIN: 'Viewer' });
     expect(levelsComplete({ FIN: 'Viewer' }, offered)).toBe(false); // PH still to choose
     expect(levelsComplete({ PH: NOT_NEEDED, FIN: 'Viewer' }, offered)).toBe(true);

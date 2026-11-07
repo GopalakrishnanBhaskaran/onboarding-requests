@@ -39,18 +39,23 @@ export function levelsByResource(results: ResolveResult[], resources: string[]):
 }
 
 /**
- * Keep a choice that is still offered (or "Not needed"). Preselect only one resource's only level: with several resources
- * nothing is preselected, so no access is requested that the requester did not pick (review 7 Nov 2026, finding 8).
+ * Keep a choice that is still offered (or "Not needed"). A resource with only one level (e.g. a centralized Databricks group)
+ * is always that level: the requester chose the resource, and there is nothing else to pick, so no dropdown is shown
+ * (Gokul, 7 Nov 2026: "remove that button, since its a centralized one"); unticking the resource leaves it out. A resource
+ * with several levels is never preselected (never more access than picked; review 7 Nov 2026, finding 8).
  */
 export function settleLevels(current: LevelChoice, offered: { resource: string; levels: string[] }[]): LevelChoice {
   const next: LevelChoice = {};
   for (const { resource, levels } of offered) {
+    if (levels.length === 1) { next[resource] = levels[0]; continue; }
     const kept = current[resource] === NOT_NEEDED && offered.length > 1 ? NOT_NEEDED : levels.find((l) => norm(l) === norm(current[resource]));
     if (kept) next[resource] = kept;
   }
-  if (offered.length === 1 && offered[0].levels.length === 1 && !next[offered[0].resource]) next[offered[0].resource] = offered[0].levels[0];
   return next;
 }
+
+/** A resource whose only level is chosen for the requester (shown as text, no dropdown). */
+export const onlyLevel = (o: { levels: string[] }) => (o.levels.length === 1 ? o.levels[0] : undefined);
 
 /** Every resource with a requestable level has a level or "Not needed", and at least one has a level. */
 export function levelsComplete(choice: LevelChoice, offered: { resource: string; levels: string[] }[]): boolean {

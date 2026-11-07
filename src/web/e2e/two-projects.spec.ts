@@ -256,7 +256,7 @@ test('All environments: one button selects every environment and the form says h
   await alice.ctx.close();
 });
 
-test('Resource* checkboxes: All ticks every resource, unticking one clears All, two groups become two requests', async ({ browser }) => {
+test('Resource* checkboxes: All ticks every resource, unticking one clears All, a single-level resource needs no choice, each group becomes a request', async ({ browser }) => {
   const alice = await as(browser, 'sample-user-alice');
   const page = alice.page;
   await page.goto('/#/requests/new');
@@ -266,14 +266,15 @@ test('Resource* checkboxes: All ticks every resource, unticking one clears All, 
   for (const name of ['Engineering', 'Finance', 'Sales']) await expect(group.getByRole('checkbox', { name, exact: true })).toBeChecked();
   await group.getByRole('checkbox', { name: 'Sales', exact: true }).uncheck();
   await expect(group.getByRole('checkbox', { name: 'All Domains + PH + ACQ' })).not.toBeChecked();
-  // One access level per resource, nothing preselected with several resources (never more access than picked).
+  // One access level per resource. A resource with several levels is never preselected (never more access than picked);
+  // one with a single level (Collaboration) is that level, shown as text with no dropdown (7 Nov 2026: "remove that button").
   await expect(page.getByRole('combobox', { name: 'Access level for Sales' })).toHaveCount(0);
-  await expect(page.getByRole('combobox', { name: 'Access level for Collaboration' })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Access level for Collaboration' })).toHaveCount(0);
+  await expect(page.getByLabel(/^Access level for Collaboration: /)).toBeVisible();
   await page.getByRole('combobox', { name: 'Access level for Finance' }).selectOption('Viewer');
-  await page.getByRole('combobox', { name: 'Access level for Collaboration' }).selectOption({ label: 'Not needed' });
   await expect(page.getByText(/requests? will be created/)).toHaveCount(0); // Engineering's level not chosen yet
   await page.getByRole('combobox', { name: 'Access level for Engineering' }).selectOption('User');
-  await expect(page.getByText('2 requests will be created, each through the whole flow.')).toBeVisible();
+  await expect(page.getByText('5 requests will be created, each through the whole flow.')).toBeVisible();
   await page.getByLabel('Enterprise ID').fill(enterpriseId('bundle'));
   await page.getByLabel('First name').fill('Sample');
   await page.getByLabel('Last name').fill('Joiner');
