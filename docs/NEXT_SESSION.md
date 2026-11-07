@@ -1,6 +1,21 @@
-# Next session — handoff (updated 4 Nov 2026: three diverged branches merged into `claude/optimistic-thompson-jj8a4u`; code only, nothing deployed from it yet)
+# Next session — handoff (updated 7 Nov 2026: live simulations, access level per resource, All environments; code only, not deployed yet)
 
-## 4 Nov 2026 (latest) — one branch again: `claude/optimistic-thompson-jj8a4u`
+## 7 Nov 2026 (latest) — branch `claude/determined-heisenberg-yzubb2`
+**Start the next session with:**
+> Continue the PMO Access Portal on branch `claude/determined-heisenberg-yzubb2`. Read `CLAUDE.md`, this section of `docs/NEXT_SESSION.md` and the last 4 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Deploy from scratch* below, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
+
+**Branch:** `claude/determined-heisenberg-yzubb2` = `claude/optimistic-thompson-jj8a4u` (`34c5331`, the 4 Nov merge of every app branch) + this session. It contains everything live and everything from 4 Nov. Deploy from this branch only. No PR.
+
+**What changed (details: the 7 Nov row of `DEPLOYMENT_LOG.md`):**
+1. **Live simulations** (Gokul chose "Developer approves all, real writes"): with `SIMULATION_LIVE_WRITES` on, a Developer's simulation in PEST or VESTACY (they name the agent's tenant and are marked not production) is provisioned, assigned and verified in Entra and Azure for real. The Developer still acts as Owner, Security and the teams. Never in prod, never a Prod environment, never a guest. Same agent switches and allow-lists as a real request, so the privileged Data Engineer row also needs `privileged … on` and its roles on the allow-list. Clean-up: *Offboard user*.
+2. **Request form:** no Entra groups to tick. Pick an access level per resource; the groups are under *Show the Entra groups (reference only)*.
+3. **Select all environments** button: one submission per environment.
+4. **Enterprise ID** with a dot right before '@' (or a leading or double dot) is refused (F136): Entra cannot create that domain ID.
+
+**Tests (this container, 7 Nov):** .NET 635 (634 pass, 1 opt-in Cosmos skip), build 0 warnings; SPA 57/57, tsc, web build; Playwright 15/15 (fresh local emulator). Not run: `bicep build`, anything against Azure.
+
+
+## 4 Nov 2026 — one branch again (superseded by 7 Nov: deploy from `claude/determined-heisenberg-yzubb2`): `claude/optimistic-thompson-jj8a4u`
 **Start the next session with:**
 > Continue the PMO Access Portal on branch `claude/optimistic-thompson-jj8a4u`. Read `CLAUDE.md`, this section of `docs/NEXT_SESSION.md` and the last 6 rows of `docs/DEPLOYMENT_LOG.md`. Then guide me through *Next steps* below, one full Cloud Shell block at a time. Log every result in `DEPLOYMENT_LOG.md`.
 
