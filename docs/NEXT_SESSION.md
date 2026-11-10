@@ -1,4 +1,54 @@
-# Next session — handoff (updated 10 Nov 2026: pre-go-live review fixes on `claude/friendly-franklin-k890fe`; code only, not deployed yet)
+# Next session — handoff (closed 10 Nov 2026: review fixes live in the pilot; next: review, then the real Vestacy environment, ~17 Nov)
+
+## Closure, 10 Nov 2026 — start here next week
+**Start the next session with:**
+> Continue the PMO Access Portal on branch `claude/friendly-franklin-k890fe`. Read `CLAUDE.md`, the "Closure, 10 Nov 2026" section of `docs/NEXT_SESSION.md`, `REVIEW.md` re-check 8 and `docs/ENTERPRISE_HANDOFF.md` sections 2 and 6. I want to review the open items and plan the deploy to the real Vestacy environment. Start with the decisions list, then propose the plan; no Azure change without my approval.
+
+### 1. Where it stands (facts, with evidence)
+- **Pilot is live on the reviewed code:** `worker` and `app` of `2c698f6` (live check V, 10 Nov 03:36 UTC: line 1 PASS, 18 PASS / 5 WAIT / 0 FAIL; `DEPLOYMENT_LOG.md`).
+- **Review:** three independent reviewers ran in parallel on the whole 7 Nov session (`REVIEW.md` re-check 8):
+  - closed: 1 Critical, 9 High, 3 Medium, 1 Low;
+  - still open: 4 Medium (2 are your decisions) and 3 Low, plus older open items.
+  - The P6 deployment gate (Critical = 0, High = 0) is met.
+- **Tests:**
+  - .NET 681: 680 pass, 1 opt-in skip;
+  - SPA 61/61 and tsc;
+  - cleanup tool 9/9;
+  - `verify_features` self-test passes.
+  - Not run: Playwright, `bicep build`.
+- **Branches:** this branch has everything (7 Nov + review). `main` is still at `5824f22` (31 Oct): merging this branch into `main` before the Vestacy work keeps one source of truth (PR on request).
+
+### 2. Pilot items left (small, any time)
+- Line 10d (no pass mailed by the agent yet):
+  - Set the tenant TAP maximum to 2 days in the Entra admin center (Authentication methods > Temporary Access Pass; it is 23 hours now, so the agent sends an 8-hour pass).
+  - Then run one new live simulation with a fresh Enterprise ID and check the mail.
+- Line 13: close the 30 Oct offboarding issue (test account) on the Issues page once the account is handled.
+- Line 6b: one SAMPLE mapping row: `python3 tools/seed_sample_data.py --remove-sample` (lists) then `--yes`.
+
+### 3. Decisions for you (blocking the real deploy)
+1. **ProdApprover stage** (`REVIEW.md` 60). It is off in the pilot (`PROD_APPROVAL_REQUIRED=false`), and going to prod does not switch it on. Recommendation: **on** in the real tenants (four eyes on Prod write).
+2. **Live simulations in the real tenants** (`REVIEW.md` 61). One Developer approves every stage, the agent writes for real, and the pass can go to a personal mailbox. Recommendation: **off** in Vestacy (`SIMULATION_LIVE_WRITES`, `SIMULATION_LIVE_TAP` false; start-up already refuses them with `APP_ENVIRONMENT=prod`). Use dry-run simulations only.
+3. **Which agent switches go to Vestacy on day 1.** In the pilot all of these are on:
+   - provisioning, role assignment, privileged rows;
+   - TAP (via ACS);
+   - offboarding with account deletion.
+
+   Recommendation: start with provisioning and role assignment. Add each other switch after a week of clean runs (each is its own approval).
+4. **Hosting path for Vestacy:**
+   - (a) **The agreed design:** private endpoint only, App Service, managed identity to Cosmos, encrypted sign-in mail, pipeline. It needs the code work in `ENTERPRISE_CLAUDE_PROMPTS.md` prompt A (gaps G1–G11 in `ENTERPRISE_HANDOFF.md` section 2) and your written approval for resources the pilot rules forbid (App Service, VNet, private endpoints, Key Vault, App Insights).
+   - (b) **The fast path** `docs/GO_LIVE_ACTUAL_TENANT.md`: the same scripts, a public site; not the agreed design.
+
+   Checked 10 Nov: none of G1–G11 is in the code yet. `deploy_free.sh` still has the pilot resource group hard-coded, there is no `src/webhost` and no encrypted sign-in mail. **So the real Vestacy deploy is not a redeploy:** with (a) it is prompt A first (code only, several sessions), then prompt B per tenant.
+
+### 4. Never carry over from the pilot to Vestacy
+- `NOTIFY_REDIRECT_TO` and the test contacts;
+- `--test-scope` / `--test-contact` imports;
+- SAMPLE data;
+- `APP_ENVIRONMENT=test`;
+- `SIMULATION_LIVE_*` true;
+- the Azure-managed mail domain (10 mails an hour; one request needs about 7, F70): use a verified custom domain.
+- Never run `tools/cleanup_test_data.py` there: it now refuses any tenant not marked as test, but it should not be part of the real runbook at all.
+
 
 ## 10 Nov 2026 (latest): independent pre-go-live review of the 7 Nov session — deploy this branch
 **Branch:** `claude/friendly-franklin-k890fe` = `claude/determined-heisenberg-yzubb2` (`e39c3b2`, everything of 7 Nov) + the review fixes. Deploy from this branch from now on. No PR.
