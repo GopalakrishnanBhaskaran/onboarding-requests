@@ -18,6 +18,7 @@ public class LiveSimulationTests
 {
     private const string Dev = "sample-user-dev"; // Developer in SAMPLE-ALPHA (sample data)
     private const string Tenant = "00000000-0000-4000-8000-0000000000a1";
+    private const string OtherTenant = "00000000-0000-4000-8000-0000000000b2";
     private const string Scope = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-sample-access";
     private const string FinanceUser = "sample.e2001@sample.invalid";
     private const string FinanceGroup = "SAMPLE-GRP-ALPHA-FIN-VIEW";
@@ -39,6 +40,11 @@ public class LiveSimulationTests
         var app = TestApp.With(settings: Settings(live, redirect, tap, liveTap));
         var p = (await app.Stores.Projects.GetAsync(TestApp.Alpha, TestApp.Alpha))!;
         await app.Stores.Projects.ReplaceAsync(p.Value with { TenantId = Tenant, IsProductionTenant = production }, p.ETag);
+        // The other sample projects have no tenant id, which counts as the agent's own tenant (Tenants.Connected): give them their
+        // own tenant, as real projects in other tenants have (review 10 Nov 2026, finding S1).
+        foreach (var other in await app.Stores.Projects.ListAllAsync())
+            if (other.Value.ProjectId != TestApp.Alpha && string.IsNullOrWhiteSpace(other.Value.TenantId))
+                await app.Stores.Projects.ReplaceAsync(other.Value with { TenantId = OtherTenant }, other.ETag);
         var v = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, "A-FIN-VIEW"))!;
         await app.Stores.MappingSheet.ReplaceAsync(v.Value with
         {
@@ -270,6 +276,49 @@ public class LiveSimulationTests
         Assert.Contains(r.Flow!.Events, e => e.Step == "simulation" && e.Note!.Contains("your own account"));
     }
 
+    [Fact]
+    public async Task A_non_developer_never_gives_both_approvals_of_a_live_simulation()
+    {
+        // Review 10 Nov 2026, finding S2: the four-eyes relaxations are the developer's, not every caller's on a simulation.
+        var app = await App();
+        var id = await Simulate(app, TestApp.Intake(enterpriseId: "sample.e2001@sample-corp.invalid", resource: "SAMPLE Finance Reports",
+            accessLevel: "Viewer", owner: TestApp.SignIn(TestApp.Dual)));
+        Assert.True((await app.Request(id)).LiveWrites);
+        await app.RunWorker();
+        Assert.Equal(200, (await app.Approve(id, TestApp.Dual)).Status); // the named Owner
+        var second = await app.Approve(id, TestApp.Dual);                 // and again as Security: refused
+        Assert.Equal(409, second.Status);
+        Assert.Contains("same_approver", second.Body);
+        Assert.Equal(RequestStatus.AwaitingSecurity, await app.Status(id));
+        await app.RunWorker();
+        Assert.Empty(app.Writer.Calls);
+    }
+
+    [Fact]
+    public async Task Only_a_developer_resubmits_a_simulation_and_a_live_one_is_checked_again()
+    {
+        // Review 10 Nov 2026, finding S3: a returned live simulation is changed by a developer only, and stays live only if the
+        // submit-time rules still hold (here: the resubmitting developer's own account, so it becomes a dry run).
+        var app = await App();
+        var id = await Simulate(app, TestApp.Intake(enterpriseId: "sample.e2001@sample-corp.invalid",
+            resource: "SAMPLE Finance Reports", accessLevel: "Viewer", justification: "SAMPLE: x."));
+        Assert.True((await app.Request(id)).LiveWrites);
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.Returned, await app.Status(id));
+        var etag = (await app.View(id, Dev)).Json.GetProperty("request").GetProperty("etag").GetString();
+
+        var byRequester = await app.Call(TestApp.Alice, "PUT", $"projects/{TestApp.Alpha}/requests/{id}",
+            TestApp.Intake(enterpriseId: "sample.other@sample-corp.invalid", resource: "SAMPLE Finance Reports", accessLevel: "Viewer"), etag);
+        Assert.Equal(403, byRequester.Status);
+
+        var own = await app.Call(Dev, "PUT", $"projects/{TestApp.Alpha}/requests/{id}",
+            TestApp.Intake(enterpriseId: TestApp.SignIn(Dev), resource: "SAMPLE Finance Reports", accessLevel: "Viewer"), etag);
+        Assert.True(own.Status == 200, own.Body);
+        var r = await app.Request(id);
+        Assert.True(r is { Simulated: true, LiveWrites: false });
+        Assert.Contains(r.Flow!.Events, e => e.Step == "simulation" && e.Note!.Contains("your own account"));
+    }
+
     [Theory]
     [InlineData("Prod", "Prod")]   // a Prod environment of a test tenant (Gokul, 7 Nov 2026: "Yes, Prod too")
     [InlineData("Dev", null)]      // a row for every environment
@@ -301,7 +350,22 @@ public class LiveSimulationTests
         var id = await Simulate(app, Finance());
         var r = await app.Request(id);
         Assert.False(r.LiveWrites); // finding 7: the tenant is shared
-        Assert.Contains(r.Flow!.Events, e => e.Step == "simulation" && e.Note!.Contains("same tenant"));
+        Assert.Contains(r.Flow!.Events, e => e.Step == "simulation" && e.Note!.Contains("another project"));
+    }
+
+    [Fact]
+    public async Task A_project_with_no_tenant_id_counts_as_the_agents_tenant_and_keeps_simulations_dry()
+    {
+        // Review 10 Nov 2026, finding S1: an empty tenant id is the agent's tenant for the agent's writes (Tenants.Connected),
+        // so a production (or unmarked) project without one keeps every simulation in that tenant a dry run.
+        var app = await App();
+        var beta = (await app.Stores.Projects.GetAsync(TestApp.Beta, TestApp.Beta))!;
+        await app.Stores.Projects.ReplaceAsync(beta.Value with { TenantId = null, IsProductionTenant = true }, beta.ETag);
+        var id = await Simulate(app, Finance());
+        Assert.False((await app.Request(id)).LiveWrites);
+        var me = await app.Call(Dev, "GET", "me");
+        var alpha = me.Json.GetProperty("projects").EnumerateArray().Single(p => p.GetProperty("projectId").GetString() == TestApp.Alpha);
+        Assert.DoesNotContain(TestApp.Beta, alpha.GetProperty("liveSimulationRefused").GetString()); // no other project's id on /me
     }
 
     [Fact]

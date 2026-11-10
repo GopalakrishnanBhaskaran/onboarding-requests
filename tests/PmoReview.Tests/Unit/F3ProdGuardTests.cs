@@ -168,6 +168,53 @@ public class F3ProdGuardTests
     }
 
     [Fact]
+    public async Task F3_a_recorded_prod_rejection_stands_when_the_stage_is_switched_off()
+    {
+        // Review 10 Nov 2026, W3: the ProdApprover's rejection is saved first; if the request update lost the race, the agent
+        // applies it. Switching the stage off must never turn that rejection into a grant.
+        var app = await App();
+        var id = await BothApproved(app);
+        Assert.Equal(RequestStatus.AwaitingProdApproval, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+        var e = (await app.Stores.Escalations.GetAsync(TestApp.Pest, (await TheEscalation(app, id)).Id))!;
+        await app.Stores.Escalations.ReplaceAsync(e.Value with
+        {
+            Status = EscalationStatus.Rejected, DecidedBy = Petra, DecidedByName = "Petra", DecidedAt = app.Clock.UtcNow, Remarks = "SAMPLE: not for Prod.",
+        }, e.ETag);
+
+        var off = app.Restart(On(prodApproval: false));
+        await off.RunWorker();
+        Assert.Equal(RequestStatus.Rejected, (await off.Request(id, TestApp.Pest)).Flow!.Status);
+        Assert.Empty(off.Writer.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)] // switched off before Security approved
+    [InlineData(true)]  // switched off while the request waited for a ProdApprover
+    public async Task F3_switching_the_prod_stage_on_again_does_not_bounce_a_request_that_passed_while_it_was_off(bool waitedFirst)
+    {
+        // Review 10 Nov 2026, W2: a request granted while the stage was off is not sent back with "nothing was granted".
+        var app = await App(prodApproval: waitedFirst);
+        var id = await BothApproved(app);
+        if (waitedFirst)
+        {
+            Assert.Equal(RequestStatus.AwaitingProdApproval, (await app.Request(id, TestApp.Pest)).Flow!.Status);
+            app = app.Restart(On(prodApproval: false));
+        }
+        await app.RunWorker();
+        Assert.Contains(app.Writer.Calls, c => c.StartsWith("add-member", StringComparison.Ordinal) || c.StartsWith("create-user", StringComparison.Ordinal));
+        var passed = (await app.Request(id, TestApp.Pest)).Flow!.Status;
+        Assert.NotEqual(RequestStatus.AwaitingProdApproval, passed);
+        Assert.Equal(ResponseState.Approved, (await app.Stores.ResponseDocument.GetAsync(TestApp.Pest, id))!.Value.State);
+
+        var on = app.Restart(On(prodApproval: true));
+        await on.RunWorker();
+        var r = await on.Request(id, TestApp.Pest);
+        Assert.NotEqual(RequestStatus.AwaitingProdApproval, r.Flow!.Status);
+        Assert.DoesNotContain(r.Flow.Events, x => x.Step == "prod-guard");
+        Assert.DoesNotContain(await on.Stores.Issues.ListAsync(TestApp.Pest), i => i.Value.Kind == IssueKind.ProdWriteBlocked);
+    }
+
+    [Fact]
     public void F3_the_prod_approval_stage_stays_unless_switched_off_explicitly()
     {
         Assert.True(PilotSettings.FromEnvironment(_ => null).Workflow.ProdApprovalRequired);

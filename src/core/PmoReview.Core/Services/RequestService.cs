@@ -91,11 +91,7 @@ public sealed partial class RequestService(DataStores stores, IClock clock, Work
         var flow = WorkflowState.Start(now, caller.UserId);
         if (fixes.Count > 0) flow = flow.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
         // Live simulation (Gokul, 7 Nov 2026): decided here by the server only, and re-checked before every agent write.
-        var liveRefused = !simulated ? null
-            : settings is null ? "live simulations are switched off"
-            : LiveSimulation.Refused(settings, project, environment, clean.Guest ?? false, (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value))
-              // Review 7 Nov finding 2: never for the developer's own account (nobody else approves it).
-              ?? (caller.Is(clean.EnterpriseId) || caller.Is(DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix)) ? "a simulation for your own account is never live" : null);
+        var liveRefused = !simulated ? null : await LiveRefusedAsync(caller, project, environment, clean, ct);
         var live = simulated && liveRefused is null;
         if (live)
             flow = flow.Log(now, caller.UserId, "simulation", $"LIVE SIMULATION by {caller.DisplayName}: the developer acts for every stage, and the AI agent creates a NEW user, the group and membership and assigns the roles in Entra and Azure for real (same switches, allow-lists and checks as a real request; an account that already exists and the one-time pass are left to the developer). Mails go only to the test mailbox, when one is set. Clean up with Offboard user before deleting it.");
@@ -155,6 +151,13 @@ public sealed partial class RequestService(DataStores stores, IClock clock, Work
                 $"{domainId} was offboarded in this project. A rehire is added to the people inventory as Active by the Data Steward first.");
     }
 
+    /// <summary>Null when a simulation submitted (or resubmitted) by <paramref name="caller"/> may write for real; otherwise why not.</summary>
+    private async Task<string?> LiveRefusedAsync(CallerContext caller, Project? project, string? environment, RequestInput clean, CancellationToken ct) =>
+        settings is null ? "live simulations are switched off"
+        : LiveSimulation.Refused(settings, project, environment, clean.Guest ?? false, (await stores.Projects.ListAllAsync(ct)).Select(p => p.Value))
+          // Review 7 Nov finding 2: never for the developer's own account (nobody else approves it).
+          ?? (caller.Is(clean.EnterpriseId) || caller.Is(DomainIds.Derive(clean.EnterpriseId!, project?.DomainIdSuffix)) ? "a simulation for your own account is never live" : null);
+
     /// <summary>Edits a Returned request and submits it again (new revision, back to AI review).</summary>
     public async Task<Versioned<AccessRequest>> ResubmitAsync(
         CallerContext caller, string projectId, string requestId, RequestInput input, string? ifMatch, CancellationToken ct)
@@ -162,7 +165,9 @@ public sealed partial class RequestService(DataStores stores, IClock clock, Work
         if (!caller.InProject(projectId)) throw AppException.NotFound("Project");
         if (string.IsNullOrWhiteSpace(ifMatch)) throw AppException.EtagRequired();
         var current = await LoadAsync(projectId, requestId, ct);
-        WorkflowService.RequireFor(caller, current.Value, Permission.SubmitRequests); // a simulation: the developer resubmits it
+        // A simulation is resubmitted by a developer only (independent review 10 Nov 2026, finding S3): a live one writes for real.
+        if (current.Value.Simulated) caller.Require(projectId, Permission.Simulate);
+        else caller.Require(projectId, Permission.SubmitRequests);
         var (clean, fixes) = Validate(input);
         if (current.ETag != ifMatch) throw AppException.Stale();
         var flow = current.Value.Flow ?? throw AppException.Conflict("legacy_request", "This is a v1 request and cannot be changed. Submit a new request.");
@@ -176,8 +181,17 @@ public sealed partial class RequestService(DataStores stores, IClock clock, Work
         var now = clock.UtcNow;
         var next = flow.To(RequestStatus.Submitted, WaitingOn.Agent, now, caller.UserId, "resubmit", "Request corrected and submitted again.");
         if (fixes.Count > 0) next = next.Log(now, WorkflowState.AgentActor, Workflow.WorkflowAgent.IntakeFormatStep, $"Auto-fixed format: {string.Join(", ", fixes)}.");
+        // A live simulation stays live only if the submit-time rules still hold for the edited request and this caller
+        // (finding S3: tenant, environment, guest, never the resubmitting developer's own account). It never becomes live here.
+        var live = current.Value.LiveWrites;
+        if (live && await LiveRefusedAsync(caller, project, environment, clean, ct) is { } liveRefused)
+        {
+            live = false;
+            next = next.Log(now, caller.UserId, "simulation", $"SIMULATION is now a dry run (not live: {liveRefused}): nothing is created in Entra or Azure.");
+        }
         var updated = current.Value with
         {
+            LiveWrites = live,
             EnterpriseId = clean.EnterpriseId,
             FirstName = clean.FirstName,
             LastName = clean.LastName,

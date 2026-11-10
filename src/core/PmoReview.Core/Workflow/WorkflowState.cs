@@ -226,6 +226,12 @@ public sealed record WorkflowState
     public IReadOnlyList<CheckResult> FinalChecks { get; init; } = [];
     public DateTimeOffset? RemindedAt { get; init; }
     public DateTimeOffset? EscalatedAt { get; init; }
+    /// <summary>
+    /// The review run whose Prod stage was waived because <c>PROD_APPROVAL_REQUIRED=false</c> when Security approved (or while
+    /// it waited for a ProdApprover). Switching the stage on again does not bounce that request back (review 10 Nov 2026, W2);
+    /// a new review run (a new revision or scope) needs the stage again.
+    /// </summary>
+    public string? ProdWaivedReviewRunId { get; init; }
     public AdoLink? Ado { get; init; }
     /// <summary>Latest return, rejection or failure reason (masked).</summary>
     public string? LastReason { get; init; }

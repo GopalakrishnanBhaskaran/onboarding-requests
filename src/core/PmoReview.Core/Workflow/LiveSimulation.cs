@@ -25,8 +25,11 @@ public static class LiveSimulation
         if (string.IsNullOrWhiteSpace(project?.TenantId) || string.IsNullOrWhiteSpace(s.AgentTenantId) || !Same(project.TenantId, s.AgentTenantId))
             return $"tenant {Tenants.Label(project)} is not named as the AI agent's own tenant";
         if (project.IsProductionTenant != false) return $"tenant {Tenants.Label(project)} is not marked as a test (non-production) tenant";
-        if (allProjects.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.TenantId) && Same(p.TenantId, project.TenantId) && p.IsProductionTenant != false) is { } other)
-            return $"project {other.ProjectId} uses the same tenant and is not marked as a test tenant";
+        // Every project the agent writes into this tenant, including one with no tenant id (Tenants.Connected treats an empty
+        // tenant id as the agent's own): one that is not marked as a test tenant keeps every simulation a dry run
+        // (independent review 10 Nov 2026, finding S1). The reason names no other project (it is shown on /me).
+        if (allProjects.Any(p => Tenants.Connected(p, s.AgentTenantId) && p.IsProductionTenant != false))
+            return "another project the AI agent writes into this tenant is not marked as a test (non-production) tenant";
         // Gokul, 7 Nov 2026 ("Yes, Prod too (test tenant)"): every environment of a test tenant, Prod included (review finding 3
         // closed that path; the owner reopened it). The tenant checks above keep it to a tenant marked not production.
         if (guest) return "guest accounts are invited by people, never by the agent";

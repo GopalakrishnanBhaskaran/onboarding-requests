@@ -224,7 +224,10 @@ public sealed partial class WorkflowService(
 
         var project = (await stores.Projects.GetAsync(projectId, projectId, ct))?.Value;
         // A simulation: the developer acts for the Owner and Security (nothing is granted from it).
-        var authorized = (r.Simulated && caller.Has(projectId, Permission.Simulate)) || (stage == ApprovalStage.Owner
+        // Independent review 10 Nov 2026, finding S2: the four-eyes relaxations follow the caller (the developer acting on a
+        // simulation), never the request alone: a live simulation writes for real, so anyone else approves under the normal rules.
+        var simActor = r.Simulated && caller.Has(projectId, Permission.Simulate);
+        var authorized = simActor || (stage == ApprovalStage.Owner
             ? caller.Has(projectId, Permission.ApproveAsOwner) && caller.Is(r.Owner)
             : caller.Has(projectId, Permission.ApproveAsSecurity));
         if (!authorized)
@@ -244,7 +247,7 @@ public sealed partial class WorkflowService(
         if (decision == ApprovalDecision.Rejected && remarks is null) throw AppException.Invalid("Remarks are required when rejecting.");
         if (flow.Scope is null || input.ReviewRunId != flow.Scope.ReviewRunId)
             throw AppException.Conflict("stale_review", "The AI review changed since you opened this page. Refresh and read the current summary before deciding.");
-        if (stage == ApprovalStage.Security && !r.Simulated && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
+        if (stage == ApprovalStage.Security && !simActor && flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId)
             throw AppException.Conflict("same_approver", "You gave the Owner approval. The Security approval must come from a different person.");
 
         // Mapping sheet changed after the AI review (or the reviewed row was retired or ended): re-run the review before continuing.
@@ -297,6 +300,8 @@ public sealed partial class WorkflowService(
             }
             else
             {
+                // Waived for this review run only (review 10 Nov 2026, W2): switching the stage on again does not bounce it.
+                if (aboveRead is not null) next = next with { ProdWaivedReviewRunId = flow.Scope.ReviewRunId };
                 var (fulfil, fx) = agent.ToIdTeam(r, next, project, caller.UserId, "security-approved", aboveRead is null
                     ? "Security approved risk and access level."
                     : $"Security approved risk and access level. Production above Read ({aboveRead}): no ProdApprover stage, it is switched off (PROD_APPROVAL_REQUIRED=false).");

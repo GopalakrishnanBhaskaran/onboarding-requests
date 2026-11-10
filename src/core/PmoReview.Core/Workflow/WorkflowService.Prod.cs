@@ -63,11 +63,13 @@ public sealed partial class WorkflowService
         // Four eyes: whoever submitted or resubmitted any revision, the person who gets the access, and the people who
         // approved the earlier stages never decide the Prod stage.
         // (The developer acts for every stage of a simulation. A live simulation is never written for Prod: LiveSimulation.RefusedNow.)
-        if (!r.Simulated && SubmittedBy(r, caller))
+        // Review 10 Nov 2026, finding S2: relaxed only for the developer acting on a simulation, not for anyone on one.
+        var simActor = r.Simulated && caller.Has(projectId, Permission.Simulate);
+        if (!simActor && SubmittedBy(r, caller))
             throw new AppException(ErrorKind.Forbidden, "requester_cannot_approve", "You submitted or changed this request; another ProdApprover must decide it.");
-        if (!r.Simulated && (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId)))
+        if (!simActor && (caller.Is(r.EnterpriseId) || caller.Is(r.DomainId)))
             throw new AppException(ErrorKind.Forbidden, "beneficiary_cannot_approve", "This request gives you access; another ProdApprover must decide it.");
-        if (!r.Simulated && (flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId || flow.CurrentApproval(ApprovalStage.Security)?.By == caller.UserId))
+        if (!simActor && (flow.CurrentApproval(ApprovalStage.Owner)?.By == caller.UserId || flow.CurrentApproval(ApprovalStage.Security)?.By == caller.UserId))
             throw AppException.Conflict("same_approver", "You approved an earlier stage of this request; another ProdApprover must decide the Prod stage.");
         var sheet = await sources.ReadMappingSheetAsync(projectId, ct);
         if (!MappingSheet.AsReviewed(sheet, r.Resource, scope.SheetFingerprint, scope.MappingRowId, clock.UtcNow))
@@ -148,7 +150,7 @@ public sealed partial class WorkflowService
     private async Task RequireProdApprovedAsync(AccessRequest r, CancellationToken ct)
     {
         var scope = r.Flow?.Scope;
-        if (scope is null || !settings.ProdApprovalRequired) return;
+        if (scope is null || !settings.ProdApprovalRequired || ProdGuard.Waived(r.Flow!, scope)) return;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var e = (await stores.Escalations.GetAsync(r.ProjectId, ProdGuard.EscalationId(r, scope), ct))?.Value;
         if (!ProdGuard.MayFulfil(r, scope, row, e, out var reason))

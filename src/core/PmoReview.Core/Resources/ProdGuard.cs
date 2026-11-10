@@ -67,6 +67,13 @@ public static class ProdGuard
         Escalation.MakeId(EscalationKind.ProdWrite, $"{r.ProjectId}|{r.Id}|r{r.Revision}|{Fingerprint(r, scope)}");
 
     /// <summary>
+    /// True when this reviewed scope passed the Prod stage while it was switched off (<c>PROD_APPROVAL_REQUIRED=false</c>):
+    /// the grant points then let it finish when the stage is switched on again (review 10 Nov 2026, W2).
+    /// </summary>
+    public static bool Waived(WorkflowState flow, ReviewedScope scope) =>
+        !string.IsNullOrEmpty(flow.ProdWaivedReviewRunId) && flow.ProdWaivedReviewRunId == scope.ReviewRunId;
+
+    /// <summary>
     /// The one check every grant point runs. True when the access may be fulfilled: not Prod-above-Read, or a ProdWrite
     /// escalation for this request, this revision and this exact scope is Approved.
     /// </summary>

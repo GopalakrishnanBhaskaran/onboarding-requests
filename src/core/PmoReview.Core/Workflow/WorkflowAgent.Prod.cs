@@ -90,11 +90,13 @@ public sealed partial class WorkflowAgent
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         var e = await ProdEscalationAsync(r, scope, ct);
         var now = clock.UtcNow;
-        if (!settings.ProdApprovalRequired)
+        // Switched off (Gokul, 7 Nov 2026): a request still waiting moves on, like a new one. A decision a ProdApprover already
+        // recorded always stands (review 10 Nov 2026, W3): a rejection is never turned into a grant by the switch.
+        if (!settings.ProdApprovalRequired && e?.Status is null or EscalationStatus.Open)
         {
-            // Switched off (Gokul, 7 Nov 2026): a request already waiting moves on, like a new one.
-            var (n, fx) = ToIdTeam(r, flow, project, Agent, "prod-approval-off",
+            var (n, fx) = ToIdTeam(r, flow with { ProdWaivedReviewRunId = scope.ReviewRunId }, project, Agent, "prod-approval-off",
                 "The ProdApprover stage is switched off (PROD_APPROVAL_REQUIRED=false): no ProdApprover decision is needed.");
+            fx.Insert(0, c => UpdateResponseAsync(r, x => x with { State = ResponseState.Approved }, c));
             return new Step(r with { Flow = n }, fx);
         }
         if (e is null)
@@ -143,7 +145,7 @@ public sealed partial class WorkflowAgent
     private async Task<Step?> ProdBlockAsync(AccessRequest r, CancellationToken ct)
     {
         var flow = r.Flow!;
-        if (flow.Scope is not { } scope || !settings.ProdApprovalRequired) return null;
+        if (flow.Scope is not { } scope || !settings.ProdApprovalRequired || ProdGuard.Waived(flow, scope)) return null;
         var row = (await sources.ReadMappingSheetAsync(r.ProjectId, ct)).FirstOrDefault(x => x.RowId == scope.MappingRowId);
         if (ProdGuard.AboveReadInProd(r, scope, row) is not { } reason) return null;
         var e = await ProdEscalationAsync(r, scope, ct);
