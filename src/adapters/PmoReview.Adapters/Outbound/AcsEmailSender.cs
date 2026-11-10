@@ -11,14 +11,16 @@ namespace PmoReview.Adapters.Outbound;
 /// Communication Services Email from the Azure-managed DoNotReply address, with the worker's managed identity (no
 /// connection string or key; VERIFIED_FACTS F63). Bodies are already masked and never contain a Temporary Access Pass.
 /// The send is queued by the service (WaitUntil.Started): delivery to the inbox is tracked by the service, not here.
+/// With <paramref name="confirmSend"/> (the agent's sign-in details, TAP_MAIL_VIA=acs) it waits until the service has sent
+/// it, and anything but Succeeded is a failure, so the pass is left to the ID team (independent review 10 Nov 2026).
 /// </summary>
-public sealed class AcsEmailSender(EmailClient client, string senderAddress) : INotificationSender
+public sealed class AcsEmailSender(EmailClient client, string senderAddress, bool confirmSend = false) : INotificationSender
 {
     public string Name => "AcsEmail";
     public bool Delivers => true;
 
-    public AcsEmailSender(Uri endpoint, TokenCredential credential, string senderAddress)
-        : this(new EmailClient(endpoint, credential), senderAddress)
+    public AcsEmailSender(Uri endpoint, TokenCredential credential, string senderAddress, bool confirmSend = false)
+        : this(new EmailClient(endpoint, credential), senderAddress, confirmSend)
     {
     }
 
@@ -37,7 +39,9 @@ public sealed class AcsEmailSender(EmailClient client, string senderAddress) : I
                 {
                     UserEngagementTrackingDisabled = true,
                 };
-                await client.SendAsync(WaitUntil.Started, message, ct);
+                var operation = await client.SendAsync(confirmSend ? WaitUntil.Completed : WaitUntil.Started, message, ct);
+                if (confirmSend && operation.Value.Status != EmailSendStatus.Succeeded)
+                    throw new OutboundException("MailNotSent");
             }
         }
         catch (RequestFailedException e)

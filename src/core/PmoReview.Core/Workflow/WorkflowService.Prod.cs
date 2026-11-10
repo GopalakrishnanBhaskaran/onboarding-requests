@@ -62,7 +62,8 @@ public sealed partial class WorkflowService
                 $"The request changed after this escalation was raised (now revision {r.Revision}). Nothing was approved; read the current request and its escalation.");
         // Four eyes: whoever submitted or resubmitted any revision, the person who gets the access, and the people who
         // approved the earlier stages never decide the Prod stage.
-        // (The developer acts for every stage of a simulation. A live simulation is never written for Prod: LiveSimulation.RefusedNow.)
+        // (The developer acts for every stage of a simulation, Prod included: since 7 Nov 2026 a live simulation in a test
+        // tenant is written for Prod too, LiveSimulation. Anyone else decides under these rules, review 10 Nov 2026 S2.)
         // Review 10 Nov 2026, finding S2: relaxed only for the developer acting on a simulation, not for anyone on one.
         var simActor = r.Simulated && caller.Has(projectId, Permission.Simulate);
         if (!simActor && SubmittedBy(r, caller))

@@ -73,7 +73,7 @@ var host = new HostBuilder()
             IDirectMail? directMail = !can.TapMail ? null
                 : settings.Workflow.TapMailViaAcs
                     ? new DirectMail(Uri.TryCreate(Env("ACS_ENDPOINT"), UriKind.Absolute, out var tapAcs) && !string.IsNullOrWhiteSpace(Env("NOTIFY_FROM"))
-                        ? new AcsEmailSender(tapAcs, credential, Env("NOTIFY_FROM")!)
+                        ? new AcsEmailSender(tapAcs, credential, Env("NOTIFY_FROM")!, confirmSend: true)
                         : new MisconfiguredSender("TAP_MAIL_VIA=acs needs ACS_ENDPOINT and NOTIFY_FROM"))
                     : new DirectMail(new GraphMailSender(Http(), credential, settings.Workflow.TapMailSender!));
             // v1.2 (AGENT_DATABRICKS, approval-gated: deploy_free.sh databricks): the Databricks set-up of a request's group, after
@@ -110,8 +110,9 @@ var host = new HostBuilder()
             return new WorkflowWorker(parts.Agent,
                 new NotificationDispatcher(parts.Stores, sender, parts.Issues, clock, loggers.CreateLogger<NotificationDispatcher>(),
                     redirectTo: settings.Workflow.MailRedirectTo, environment: settings.Workflow.AppEnvironment,
-                    // Within the sender's limits (F70). The sign-in details no longer use this queue (F2: Graph, TAP_MAIL_SENDER).
-                    limits: settings.Workflow.MailLimits),
+                    // Within the sender's limits (F70). The sign-in details never use this queue (F2); through ACS
+                    // (TAP_MAIL_VIA=acs) they share its hourly limit, so the queue keeps two mails an hour free for them (review 10 Nov 2026).
+                    limits: settings.Workflow.MailLimits, reserve: settings.Workflow.TapMailViaAcs && can.TapMail ? 2 : 0),
                 new AdoSync(parts.Stores, tracker, parts.Issues, clock, loggers.CreateLogger<AdoSync>()),
                 new DailySummaryJob(parts.Stores, parts.Notifier, clock, int.TryParse(Env("DAILY_SUMMARY_HOUR_UTC"), out var hour) ? hour : 6, assistant),
                 // v1.1 (F1): mapping group names resolved in Entra (read-only), unresolved groups escalated.

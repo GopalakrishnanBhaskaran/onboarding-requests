@@ -410,6 +410,11 @@ agent_tap() {
   if [[ "$via" == "acs" ]]; then
     notify=$(worker_setting "$name" NOTIFY_SENDER || true); acs=$(worker_setting "$name" ACS_ENDPOINT || true); from=$(worker_setting "$name" NOTIFY_FROM || true)
     [[ "$notify" == "AcsEmail" && -n "$acs" && -n "$from" ]] || { echo "--via acs needs the app mail on ACS first (NOTIFY_SENDER=AcsEmail, ACS_ENDPOINT, NOTIFY_FROM: tools/deploy_free.sh email). Now: NOTIFY_SENDER=${notify:-not set}."; return 1; }
+    # Review 10 Nov 2026: the website refuses to start with TAP_MAIL_VIA=acs unless its own NOTIFY_SENDER is AcsEmail too
+    # (PilotSettings), and only `app` copies it there: check it, so this command never takes the site down.
+    local swa_notify
+    swa_notify=$(az staticwebapp appsettings list -n "$swa" -g "$RG_DEFAULT" --query "properties.NOTIFY_SENDER" -o tsv 2>/dev/null || true)
+    [[ "$swa_notify" == "AcsEmail" ]] || { echo "--via acs: the website's NOTIFY_SENDER is ${swa_notify:-not set}, not AcsEmail. Run tools/deploy_free.sh app <sub> first (it copies the mail settings), then this command."; return 1; }
     tap_sender=""
   else
     tap_sender="${tap_sender:-$(worker_setting "$name" TAP_MAIL_SENDER || true)}"
@@ -438,6 +443,11 @@ agent_tap() {
     # 7 Nov 2026 (Gokul: "TAP can be valid for 48 hours"): a lifetime above the policy maximum raises the tenant maximum
     # (PATCH maximumLifetimeInMinutes, F139; needs Authentication Policy Administrator) instead of shortening the pass.
     if [[ -n "$max" && "$lifetime" -gt "$max" && "${TAP_POLICY_DONE:-}" != 1 ]]; then raise_policy=1; echo "  Lifetime $lifetime > policy maximum $max: the apply raises the tenant TAP policy maximum to $lifetime (tenant-wide)."; fi
+    # Review 10 Nov 2026: --policy-done only skips the PATCH; a maximum read below the lifetime is never hidden (live 7 Nov:
+    # the portal maximum was 23 hours, below 2880 minutes, and every pass was refused).
+    if [[ -n "$max" && "$lifetime" -gt "$max" && "${TAP_POLICY_DONE:-}" == 1 ]]; then
+      echo "The tenant TAP policy maximum reads $max minutes, below --lifetime $lifetime. Set the maximum to at least $lifetime minutes in the portal, or use --lifetime $max. Nothing changed."; return 1
+    fi
   else
     echo "  Tenant TAP policy: could not read it (needs Policy.Read.All for you). Check Entra > Authentication methods > Temporary Access Pass."
   fi
@@ -474,7 +484,7 @@ agent_tap() {
     az rest --method PATCH --url "https://graph.microsoft.com/v1.0/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/TemporaryAccessPass" \
       --headers "Content-Type=application/json" \
       --body "{\"@odata.type\":\"#microsoft.graph.temporaryAccessPassAuthenticationMethodConfiguration\",\"maximumLifetimeInMinutes\":$lifetime}" -o none \
-      || { echo "Could not raise the tenant TAP policy maximum. Nothing else changed."
+      || { echo "Could not raise the tenant TAP policy maximum. No setting changed (the Graph permission above stays as reported)."
            echo "Live 7 Nov 2026: Azure CLI's sign-in gets accessDenied here even for an administrator. Set it in the portal instead:"
            echo "  Entra admin center > Entra ID > Authentication methods > Policies > Temporary Access Pass > Configure > Maximum lifetime $lifetime minutes > Update > Save"
            echo "then re-run this command with --policy-done (skips this step)."; return 1; }

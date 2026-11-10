@@ -109,7 +109,8 @@ public sealed partial class WorkflowAgent
     /// <summary>What to change when Entra refuses the agent's pass (7 Nov 2026).</summary>
     private string TapHint(string category) => category switch
     {
-        "TapLifetimeOutsidePolicy" or "GraphError" =>
+        // Only a lifetime refusal points at the policy lifetime (review 10 Nov 2026); a generic Graph error does not.
+        "TapLifetimeOutsidePolicy" =>
             $": check that the tenant TAP policy allows a {settings.AgentTapLifetimeMinutes}-minute pass (Entra > Authentication methods > Temporary Access Pass > Maximum lifetime, default 8 hours; tools/deploy_free.sh tap … on --lifetime {settings.AgentTapLifetimeMinutes} raises it)",
         "TapRefusedByPolicy" => ": the tenant TAP policy refused it (is the method enabled, and one-time use allowed?)",
         _ => "",
