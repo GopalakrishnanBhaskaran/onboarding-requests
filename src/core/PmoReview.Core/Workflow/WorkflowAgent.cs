@@ -515,7 +515,24 @@ public sealed partial class WorkflowAgent(
         Instructions = Messages.IdTeamInstructions(r, flow.Scope!, flow, settings.TapMaxLifetimeMinutes),
         CreatedAt = clock.UtcNow,
         SinceAt = clock.UtcNow,
+        Agent = CarriedAccount(flow.IdTeamTask?.Agent),
     };
+
+    /// <summary>
+    /// The account the agent created earlier in this request, carried into a new ID team task (re-review after a mapping
+    /// change, a Prod bounce): without it the agent took its own account for an existing one, so a live simulation became a
+    /// dry run with a real account left in Entra, and a pending pass was dropped (independent review 10 Nov 2026, W1).
+    /// Only the account and its sign-in details; the group, membership and roles are checked again for the new scope.
+    /// </summary>
+    private AgentWork? CarriedAccount(AgentWork? earlier) => earlier is { UserCreated: true, UserObjectId: not null } e
+        ? new AgentWork
+        {
+            At = clock.UtcNow, UserObjectId = e.UserObjectId, UserCreated = true,
+            TapIssuedAt = e.TapIssuedAt, TapExpiresAt = e.TapExpiresAt, SignInDetailsSentAt = e.SignInDetailsSentAt,
+            SignInDetailsSentTo = e.SignInDetailsSentTo, SignInDetailsFrom = e.SignInDetailsFrom, PasswordMailed = e.PasswordMailed,
+            TapRefusedMinutes = e.TapRefusedMinutes, TapLeft = e.TapLeft,
+        }
+        : null;
 
     private async Task<Step?> IdTeamAsync(AccessRequest r, string cid, CancellationToken ct)
     {

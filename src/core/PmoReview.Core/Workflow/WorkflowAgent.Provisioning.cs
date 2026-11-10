@@ -48,7 +48,11 @@ public sealed partial class WorkflowAgent
     /// </summary>
     private Step LiveStopped(AccessRequest r, TeamTask task, AgentWork work, Project? project, string why, DateTimeOffset now)
     {
-        if (!(r.Simulated && r.LiveWrites && NothingWritten(work))) return ToIdTeam(r, task, work with { Manual = why }, project, now, IssueSeverity.Info);
+        // Nothing written by this task and nothing by an earlier one of this request (review 10 Nov 2026, W1: a re-review gives a
+        // new task; the trail keeps what the agent did before).
+        var wroteBefore = r.Flow!.Events.Any(e => e.Actor == Agent && e.Step is "agent-provisioned" or "agent-role-assigned");
+        if (!(r.Simulated && r.LiveWrites && NothingWritten(work) && !wroteBefore))
+            return ToIdTeam(r, task, work with { Manual = why }, project, now, IssueSeverity.Info);
         var dry = r with
         {
             LiveWrites = false,
@@ -215,7 +219,8 @@ public sealed partial class WorkflowAgent
                 return ToIdTeam(r, task, work with { Manual = $"{r.DomainId} is a guest account" }, project, now, IssueSeverity.Info);
             // Review 7 Nov 2026, finding 2: a live simulation (one person approved it) creates new test accounts only; it never
             // adds an account that already exists (a colleague, the developer) to a group.
-            if (r.Simulated && user is not null && !work.UserCreated)
+            // An account the agent created earlier in this request (carried into a new task, W1) is its own, by object id only.
+            if (r.Simulated && user is not null && !(work.UserCreated && string.Equals(user.ObjectId, work.UserObjectId, StringComparison.OrdinalIgnoreCase)))
                 return LiveStopped(r, task, work, project, $"live simulation stopped: {r.DomainId} already exists in Entra, and a live simulation only creates new test accounts", now);
             // Before an account is created for the agent TAP, there must be a mailbox for its pass (the approved Enterprise
             // ID, else the people inventory); otherwise the account is still created and the ID team hands the pass over.

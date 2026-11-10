@@ -277,6 +277,32 @@ public class LiveSimulationTests
     }
 
     [Fact]
+    public async Task A_re_reviewed_live_simulation_keeps_the_account_the_agent_created_and_stays_live()
+    {
+        // Review 10 Nov 2026, W1: a mapping change after the agent provisioned re-reviews the request and gives a new ID task.
+        // The agent's own account is not taken for an existing one: no dry run, the response record stays for Offboard user.
+        var app = await App();
+        var id = await SimulatedAndApproved(app, Finance());
+        await app.RunWorker();
+        Assert.Contains(app.Writer.Calls, c => c.StartsWith("create-user", StringComparison.Ordinal));
+
+        var v = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, "A-FIN-VIEW"))!;
+        // A reviewed field changes (the role's display scope): the fingerprint differs, so the request is reviewed again.
+        await app.Stores.MappingSheet.ReplaceAsync(v.Value with { RoleScope = Scope + "/providers/SAMPLE.reports", Version = v.Value.Version + 1 }, v.ETag);
+        await app.RunWorker();
+        Assert.Equal(RequestStatus.AwaitingOwner, await app.Status(id));
+        Assert.Equal(200, (await app.Approve(id, Dev)).Status);
+        Assert.Equal(200, (await app.Approve(id, Dev)).Status);
+        await app.RunWorker();
+        await app.RunWorker();
+
+        var r = await app.Request(id);
+        Assert.True(r.LiveWrites);
+        Assert.DoesNotContain(r.Flow!.Events, e => e.Note.Contains("continues as a dry-run", StringComparison.Ordinal));
+        Assert.NotNull(await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, id));
+    }
+
+    [Fact]
     public async Task A_non_developer_never_gives_both_approvals_of_a_live_simulation()
     {
         // Review 10 Nov 2026, finding S2: the four-eyes relaxations are the developer's, not every caller's on a simulation.
