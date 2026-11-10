@@ -33,11 +33,13 @@ public class DatabricksAgentTests
     };
 
     /// <summary>PMO makes A-FIN-VIEW a Databricks row (and optionally renames its group or adds an Azure role).</summary>
-    private static async Task DatabricksRow(TestApp app, string group = Group, bool azureRole = false)
+    private static async Task DatabricksRow(TestApp app, string group = Group, bool azureRole = false, bool existing = false)
     {
         var v = (await app.Stores.MappingSheet.GetAsync(TestApp.Alpha, "A-FIN-VIEW"))!;
+        var made = existing ? app.Directory.AddGroup(group) : null;
         await app.Stores.MappingSheet.ReplaceAsync(v.Value with
         {
+            GroupState = existing ? GroupState.Exists : v.Value.GroupState, GroupObjectId = made?.ObjectId ?? v.Value.GroupObjectId,
             EntraGroup = group, Role = "Databricks workspace user", RoleScope = Scope,
             AzureRoleDefinitionId = azureRole ? FakeRoleWriter.Reader : null, AzureScope = azureRole ? TestApp.SampleAccessScope : null,
             AzureRoles = azureRole ? [new AzureRoleGrant { RoleName = "Reader", RoleDefinitionId = FakeRoleWriter.Reader, Scope = TestApp.SampleAccessScope }] : [],
@@ -73,16 +75,30 @@ public class DatabricksAgentTests
     {
         // Gokul, 7 Nov 2026: "only need to add in centralized group. that will take care of adding the people directly via entra connection".
         var app = TestApp.With(settings: Settings(databricks: agentDatabricks, viaGroup: true));
-        await DatabricksRow(app);
+        await DatabricksRow(app, existing: true); // the centralized group is already set up in Databricks
         var id = await ToRoleStep(app);
         await app.RunWorker();
         var r = await app.Request(id);
         Assert.Equal(RequestStatus.Completed, r.Flow!.Status);
+        Assert.Equal(ResponseState.Assigned, (await app.Stores.ResponseDocument.GetAsync(TestApp.Alpha, id))!.Value.State); // review W4
         Assert.Empty(app.Databricks.Calls); // nothing written in Databricks per request
         Assert.Equal(TeamTaskState.Verified, r.Flow.RoleTeamTask!.State);
         Assert.Contains(r.Flow.Events, e => e.Step == "role-team-task" && e.Note!.Contains("automatic identity management", StringComparison.Ordinal));
         Assert.DoesNotContain(await app.Notifications(id), n => n.Kind == NotificationKind.TeamTask && n.IdempotencyKey.Contains("role-team", StringComparison.Ordinal));
         Assert.Contains(r.Flow.FinalChecks, c => c.Status == CheckStatus.Pass && c.Detail.Contains("is a member of", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Via_the_entra_group_a_group_created_for_the_request_still_goes_through_the_role_step()
+    {
+        // Review 10 Nov 2026, W4: a brand-new group has no workspace or catalog access, so the membership alone is not the grant.
+        var app = TestApp.With(settings: Settings(databricks: false, viaGroup: true));
+        await DatabricksRow(app); // "to be created": the agent creates it
+        var id = await ToRoleStep(app);
+        await app.RunWorker();
+        var r = await app.Request(id);
+        Assert.Equal(RequestStatus.WithRoleTeam, r.Flow!.Status);
+        Assert.DoesNotContain(r.Flow.Events, e => e.Step == "role-team-task" && e.Note!.Contains("automatic identity management", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -588,7 +588,10 @@ public sealed partial class WorkflowAgent(
         // A Databricks row with no Azure role (7 Nov 2026): the membership just verified is the whole grant. Automatic identity
         // management brings the group's members into Databricks; the group's workspace and catalog access is set up once per
         // group. Nothing for a role team to do: straight on to the final check (the membership, read again).
-        if (settings.DatabricksAccessViaGroup && Databricks.DatabricksPolicy.IsDatabricksScope(flow.Scope!.RoleScope) && flow.Scope.Grants().Count == 0)
+        // Only a group that already existed (review 10 Nov 2026, W4): a group created for this request has no workspace or
+        // catalog access yet, so the role step (agent set-up and live test, or the role team) still runs for it.
+        var groupNew = flow.Scope!.GroupState == GroupState.ToBeCreated || task.Agent?.GroupCreated == true || task.IdReport?.GroupCreated == true;
+        if (settings.DatabricksAccessViaGroup && !groupNew && Databricks.DatabricksPolicy.IsDatabricksScope(flow.Scope.RoleScope) && flow.Scope.Grants().Count == 0)
         {
             var viaGroup = new TeamTask
             {
@@ -604,8 +607,10 @@ public sealed partial class WorkflowAgent(
                 .Log(now, Agent, "id-team-verified", "AI verified the ID team's work: user, group, membership, mapping sheet and TAP rules.")
                 .Log(now, Agent, "role-team-task", $"Databricks access through the Entra group {flow.Scope.EntraGroup} (automatic identity management): no role assignment step.")
                 .To(RequestStatus.Verifying, WaitingOn.Agent, now, Agent, "verify-start", "Final verification: the AI agent checks the account and the group membership.");
-            return new Step(r with { Flow = direct },
-                [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.GroupNameMismatch, IssueKind.VerificationMismatch, IssueKind.TaskSlaBreached], c)]);
+            List<Func<CancellationToken, Task>> fx = [c => issues.ResolveAsync(r.ProjectId, r.Id, [IssueKind.GroupNameMismatch, IssueKind.VerificationMismatch, IssueKind.TaskSlaBreached], c)];
+            // The membership is the grant: the response record says so (reports, duplicates, offboarding; review W4).
+            if (!r.DryRun) fx.Add(c => UpdateResponseAsync(r, x => x with { State = ResponseState.Assigned, AssignedBy = AgentName, AssignedAt = now }, c));
+            return new Step(r with { Flow = direct }, fx);
         }
 
         // Passed: the role assignment team gets user, group and role from the response document (a simulation is never in it).
