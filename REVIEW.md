@@ -341,3 +341,42 @@ Tests after the fixes: .NET **640** (639 pass, 1 opt-in Cosmos skip; 15 live-sim
 | Low | 7 | 5 (remainder), 15, 18, 19, 33 (remainder), 40 (remainder, by design), 45 (remainder) |
 
 Deployment gate (spec P6): **met** (Critical = 0, High = 0).
+
+## Re-check 8 (independent, pre-go-live; commits 34c5331..e39c3b2, 2026-11-10)
+Scope: the whole 7 Nov session (21 commits, 59 files), including the evening commits a004b66..e39c3b2 that re-check 7 did not cover (ProdApprover switch, live simulations in Prod, 48-hour TAP and its step-down, TAP mail through ACS, Databricks via the group, `cleanup_test_data.py`).
+**Independent**: three separate reviewer agents worked in parallel, each in its own worktree: (1) security and the hard rules, (2) workflow correctness and data integrity, (3) tools, infra, front end and test fidelity. They proved most findings with throwaway tests or a stand-in `az` (since deleted). The author session checked every finding against the code before fixing it. Every fix has a test that fails on e39c3b2 and passes after.
+
+| # | severity | status | evidence (file:line) | note |
+|---|---|---|---|---|
+| 46 | Critical | **Closed** | `tools/cleanup_test_data.py` `check_projects`, `build_plan`; `test_cleanup_test_data.py` 9/9 | Found by all three reviewers. By default the tool ran on every project, never checked whether a tenant is production, and deleted and purged every account named on any request, including hand-made accounts. Now `--project` is required. Every named project, and every project in its tenant, must be marked a test tenant. Only simulations and agent-created accounts are in scope by default. |
+| 47 | High | **Closed** | same; `plan_digest` | `--apply` rebuilt the plan and deleted whatever it found then. It now needs `--plan-digest` and refuses if the plan changed. |
+| 48 | High | **Closed** | same | Not protected before: PIM-eligible, custom-role, admin-unit-scoped and privileged Azure role holders, and people registered under an address other than the UPN. Real leavers were purged and their Leaver row and offboarding run deleted, which removed the rehire block. All are now kept. An Entra failure now leaves Cosmos as it is, and kept accounts keep their records. |
+| 49 | High | **Closed** | `LiveSimulation.Refused`; test `A_project_with_no_tenant_id_counts_as_the_agents_tenant…` | **(probe)** A project with no tenant id counts as the agent's tenant (`Tenants.Connected`), but the test-tenant scan skipped it, so a production project like that did not stop live writes. `/me` named other projects; it no longer does. |
+| 50 | High | **Closed** | `WorkflowService.ApproveAsync`, `DecideProdEscalationAsync` (`simActor`); test `A_non_developer_never_gives_both_approvals…` | **(probe)** On any simulation the four-eyes checks were skipped for every caller. A non-Developer holding Owner and Security alone approved a live simulation, and the agent wrote. The relaxation now applies only to the Developer acting on it. |
+| 51 | High | **Closed** | `RequestService.ResubmitAsync`; test `Only_a_developer_resubmits…` | **(probe)** Any Requester could resubmit a live simulation with a new Enterprise ID; it stayed live and the submit rules were not re-checked. Now only a Developer resubmits it, and it stays live only if the rules still hold for that caller. |
+| 52 | High | **Closed** | `WorkflowAgent.Prod.cs` `ProdApprovalAsync`; test `F3_a_recorded_prod_rejection_stands…` | **(probe)** With the switch off, a ProdApprover rejection that was recorded but not yet applied became a grant. A recorded decision now always stands. |
+| 53 | High | **Closed** | `WorkflowState.ProdWaivedReviewRunId`, `ProdGuard.Waived`; theory `F3_switching_the_prod_stage_on_again…` | **(probe)** Switching the stage back on bounced already-granted requests back to Prod approval ("nothing was granted"), and the pending TAP was then lost. The waiver is now bound to the review run, and the response record is set to Approved. |
+| 54 | High | **Closed** | `WorkflowAgent.NewIdTeamTask` (`CarriedAccount`), `LiveStopped`; test `A_re_reviewed_live_simulation_keeps…` | **(probe)** After a re-review the agent took its own account for an existing one. The live simulation became a dry run, its response record was deleted and the real account was orphaned. The new task now carries the agent's account (matched by object id), and earlier agent writes in the trail prevent the dry-run switch. |
+| 55 | High | **Closed** | `WorkflowAgent.IdTeamAsync`; test `Via_the_entra_group_a_group_created_for_the_request…` | `DATABRICKS_ACCESS_VIA_GROUP` (default on, owner's choice) completed a request even for a group created moments before, which has no workspace or catalog access. Now only for a group that already existed. The response record is set to Assigned. |
+| 56 | Medium | **Closed** | `AcsEmailSender` `confirmSend`, worker `reserve` | TAP through ACS: "sent" meant only queued; the queue left no room in the hourly limit. |
+| 57 | Medium | **Closed** | `deploy_free.sh tap` | `--policy-done` hid a readable maximum below the lifetime (the live 23-hour case). `--via acs` did not check the website's `NOTIFY_SENDER`, which could stop the API from starting. Checked with a stand-in `az`. |
+| 57a | Low | **Closed** | `TapHint`, `WorkflowService.Prod.cs` comment | Generic Graph error pointed at the lifetime policy; stale comment. |
+| 58 | Medium | **Open** | `WorkflowAgent.Prod.cs` | When the stage is switched off, an open ProdWrite escalation stays Open (deciding it answers 409 `not_awaiting_prod`). Harmless, but it clutters the Escalations page. Needs a "withdrawn" status. |
+| 59 | Medium | **Open** (pre-existing) | `WorkflowAgent.Provisioning.cs` | If Graph creates the account but the request save is then lost, the next run sees "existing account" (no TAP; a live simulation becomes a dry run). Needs a marker saved before the write. |
+| 60 | Medium | **Open** (owner decision) | `deploy_free.sh environment … prod`, `verify_features` | `PROD_APPROVAL_REQUIRED=false` survives going to prod and is not shown in the go-live checks. Gokul chose "all requests"; confirm before go-live. |
+| 61 | Medium | **Open** (owner decision) | `LiveSimulation`, `TapRecipient` | Live simulation + live-simulation TAP + Prod: one Developer can give a new account the allow-listed roles on Prod scopes and receive its pass in a personal mailbox. Confirm, or keep `SIMULATION_LIVE_TAP` off for Prod. |
+| 62 | Low | **Open** | `cleanup_test_data.py` | Role assignments are read in the current subscription only (the plan says so). PIM eligibility that cannot be read (no P2) is a warning, not a stop. |
+| 63 | Low | **Open** | `RequestFormPage.tsx` | The form does not apply the server's domain-ID dot rule after `+` is stripped (the server refuses it with a 400). After a partial *All environments* submit the button stays enabled. |
+| 64 | Low | **Open** | `CarriedAccount` | After a re-review, an account whose pass the ID team had already issued gets a new pass task or mail (more passes, never fewer). |
+
+Tests after the fixes (this container, 2026-11-10): .NET **681** (680 pass, 1 opt-in Cosmos skip), build 0 warnings; SPA 61/61, tsc; `test_cleanup_test_data.py` 9/9; `verify_features.py --self-test`; `bash -n deploy_free.sh`. Not run: Playwright (no SPA change), `bicep build` (no Bicep change), anything against Azure.
+
+### Summary of OPEN findings after re-check 8
+| Severity | Count | Findings |
+|---|---|---|
+| Critical | 0 | — |
+| High | 0 | — |
+| Medium | 4 + earlier 5 | 58, 59, 60 (owner), 61 (owner); 7, 8, 9 (partly), 11, 12 |
+| Low | 3 + earlier 7 | 62, 63, 64; 5, 15, 18, 19, 33, 40, 45 (remainders) |
+
+Deployment gate (spec P6): **met** (Critical = 0, High = 0), once the fixed code is deployed (`worker`, then `app`).

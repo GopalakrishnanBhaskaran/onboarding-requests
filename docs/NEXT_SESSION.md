@@ -1,4 +1,33 @@
-# Next session — handoff (updated 7 Nov 2026: live simulations, access level per resource, All environments; code only, not deployed yet)
+# Next session — handoff (updated 10 Nov 2026: pre-go-live review fixes on `claude/friendly-franklin-k890fe`; code only, not deployed yet)
+
+## 10 Nov 2026 (latest): independent pre-go-live review of the 7 Nov session — deploy this branch
+**Branch:** `claude/friendly-franklin-k890fe` = `claude/determined-heisenberg-yzubb2` (`e39c3b2`, everything of 7 Nov) + the review fixes. Deploy from this branch from now on. No PR.
+**What changed:** `REVIEW.md` re-check 8 (1 Critical, 9 High, 3 Medium closed; 4 Medium and 3 Low open, two of them owner decisions). In short:
+- Live simulations: only the Developer gets the four-eyes relaxations; only a Developer resubmits; a project with no tenant id counts as the agent's tenant.
+- Prod stage switch: a recorded rejection always stands; requests that passed while it was off are not bounced back.
+- A re-reviewed live simulation keeps the agent's own account.
+- Databricks via the group only for a group that already existed.
+- TAP via ACS: waits for the send, with room kept in the hourly limit.
+- `deploy_free.sh tap` checks.
+- **`cleanup_test_data.py` production guard:** `--project` required, test tenants only, simulations and agent-created accounts by default, `--apply --plan-digest <digest>`.
+
+**R1: deploy worker, then app** (code only, no Azure resource or permission change). Expect `Worker deployed: … (commit …)`, `Deployed commit …`.
+```bash
+SUB=5b9f9810-0512-49e5-b7f7-0159bc488570; BR=claude/friendly-franklin-k890fe
+az account set --subscription $SUB
+rm -rf ~/.nuget/packages ~/.npm ~/.cache/pip ~/onboarding-requests/src/web/node_modules ~/onboarding-requests/.local/api ~/onboarding-requests/.local/worker*
+[ -d ~/onboarding-requests ] || git clone -q --depth 1 -b $BR https://github.com/GopalakrishnanBhaskaran/onboarding-requests.git ~/onboarding-requests
+cd ~/onboarding-requests && git fetch -q --depth 1 origin $BR && git checkout -q -B $BR FETCH_HEAD && git log --oneline -1 && mkdir -p .local
+tools/deploy_free.sh worker $SUB --approved-by "Gokul 2026-11-10"
+tools/deploy_free.sh app $SUB --approved-by "Gokul 2026-11-10"
+rm -rf ~/.nuget/packages ~/.npm src/web/node_modules .local/api .local/worker*
+```
+**R2: health check** (read-only): `bash tools/workflow_diag.sh $SUB` and `bash tools/verify_features.sh $SUB | tee .local/verify.txt` (same block start as R1).
+
+**Decide before go-live (REVIEW.md 60, 61):**
+- Keep the ProdApprover stage off in prod? `environment … prod` does not switch it back on.
+- Keep the live-simulation TAP on for Prod environments?
+
 
 ## 7 Nov 2026 (evening, latest): no holds — ProdApprover off, Prod live simulations, 48-hour TAP, readable mail, Databricks via the group
 Same branch. Details: the "7 Nov (evening)" row of `DEPLOYMENT_LOG.md`. Test data was cleaned up live (0 failures).
